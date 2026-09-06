@@ -1,0 +1,14 @@
+/.bsp/
+/.local/
+/.firebaserc
+/.claude/settings.local.json
+target/
+/.idea
+.venv
+.bloop/
+.lsp4ij/
+.metals/
+/project/project/
+*.iml
+/firebase-debug.log
+/firestore-debug.log

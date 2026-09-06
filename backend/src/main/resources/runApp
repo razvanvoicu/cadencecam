@@ -1,0 +1,14 @@
+#!/usr/bin/env sh
+set -eu
+
+# shellcheck disable=SC1007
+APP_HOME=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+set -a
+# shellcheck disable=SC1091
+. "$APP_HOME/prod.env"
+set +a
+
+# Replace this launcher instead of leaving a shell parent. Java consequently runs as PID 1 in the container and
+# receives Docker's SIGTERM directly, allowing ZIO's shutdown hook to interrupt and drain the HTTP server.
+exec java -Djava.net.preferIPv4Stack=true -cp "$APP_HOME/app.jar:$APP_HOME/lib/*" sgrv.be.Main "$@"

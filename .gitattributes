@@ -1,0 +1,13 @@
+# Default: normalize everything to LF, regardless of core.autocrlf on any given checkout. Most of this repo's
+# text files are only ever consumed by POSIX tools (sbt, the JVM, Docker's Linux build context) or don't care
+# either way; a handful of genuinely Windows-only files override this below.
+* text=auto eol=lf
+
+# Windows-native scripts: keep their conventional CRLF so native Windows tools that expect it stay happy.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Runs inside a Linux Docker build context and/or is sourced by a POSIX shell (runApp); CRLF here breaks both
+# (a corrupted shebang line fails outright under `ENTRYPOINT ["./runApp"]`).
+runApp text eol=lf
+Dockerfile text eol=lf
