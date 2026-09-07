@@ -6,10 +6,14 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.security.MessageDigest
 import java.time.Instant
 import scala.jdk.CollectionConverters.*
+import sgrv.api.CountingSession
 import sgrv.be.BackendCapabilities
-import sgrv.be.core.{CapabilitySet, LoginEvent, LoginListener}
+import sgrv.be.core.{CapabilitySet, CurrentUserContributor, LoginEvent, LoginListener, RequestContext}
+import sgrv.be.auth.Callback
 import sgrv.be.store.GoogleFuture
+import zio.http.Request
 import zio.{Task, ZIO}
+import zio.json.ast.Json
 
 private[sessions] object CountingSessionSchema:
   val collection = "CountingSessions"
@@ -60,9 +64,31 @@ object CountingSessionListener extends LoginListener:
   /** Derives the record's id from the browser session key by hashing, so one login maps to exactly one counting session
     * without the opaque session key being copied into a second collection.
     */
+  /** The counting session id for a request's browser session, or `None` when it carries no session cookie. */
+  private[sessions] def documentId(request: Request): Option[String] =
+    request.cookie(Callback.sessionCookieName).map(_.content).map(_.trim).filter(_.nonEmpty).map(documentId)
+
   private[sessions] def documentId(sessionKey: String): String =
     MessageDigest
       .getInstance("SHA-256")
       .digest(sessionKey.getBytes(UTF_8))
       .map(byte => f"${byte & 0xff}%02x")
       .mkString
+
+/** Tells the frontend which counting session the current login belongs to.
+  *
+  * The id is derived from the browser session key rather than read back from Firestore, so this costs nothing on a page
+  * load. It rides along on `/me`, which the frontend already calls on every load, instead of needing a request of its
+  * own — and the key it is filed under matches this contributor's id.
+  */
+object CountingSessionContributor extends CurrentUserContributor:
+  type Requires = Any
+
+  override val id = CountingSession.Key
+  override val requirements: CapabilitySet[Requires] = CapabilitySet.empty
+
+  override def contribute(context: RequestContext.Authenticated): ZIO[Requires, Throwable, Option[Json]] =
+    ZIO.succeed:
+      CountingSessionListener
+        .documentId(context.request)
+        .map(sessionId => Json.Obj("sessionId" -> Json.Str(sessionId)))

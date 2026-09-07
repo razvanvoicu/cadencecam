@@ -10,11 +10,23 @@ import scala.util.control.NonFatal
 private[fe] enum UserState:
   case Unknown
   case Unauthenticated
+
+  /** Believed signed in from persisted state, but not yet confirmed by `/me`. Lets the last view reappear on reload
+    * instead of a blank page, while still treating the backend as the only authority on whether the session is real.
+    */
+  case Restoring(email: String, displayName: String)
   case SignedIn(email: String, displayName: String)
   case AuthenticationFailed(message: String)
 
 private[fe] object UserState:
   given JsonCodec[UserState] = DeriveJsonCodec.gen[UserState]
+
+/** Matches the states that should render the application shell: confirmed, or optimistically restored. */
+private[fe] object Present:
+  def unapply(state: UserState): Option[String] = state match
+    case UserState.SignedIn(_, displayName)  => Some(displayName)
+    case UserState.Restoring(_, displayName) => Some(displayName)
+    case _                                   => None
 
 /** The role this device plays in a session. A signed-in device starts at [[Screen.Selection]] and stays on whichever
   * role it was given until the user goes back, so reopening the app on the capture phone returns it to capturing.
@@ -48,14 +60,30 @@ private[fe] object LogoutState:
 private[fe] final case class FrontendState(
     user: UserState,
     screen: Screen,
+    /** The counting session this login belongs to, as reported by `/me`. Persisted so a reload still knows which record
+      * it is working against before `/me` has answered again.
+      */
+    countingSessionId: Option[String],
     aboutState: AboutState,
     logoutState: LogoutState
 ):
   /** Authentication is always re-established from `/me` after a page load and transient UI operations are reset. The
     * selected screen survives, since it is a deliberate choice about this device rather than an in-flight operation.
+    *
+    * A previously signed-in user becomes [[UserState.Restoring]] rather than [[UserState.Unknown]], so the last view is
+    * painted immediately. That is presentation only: no authenticated request is issued and no session renewal is
+    * started until `/me` confirms the HttpOnly cookie, and a `401` replaces the view with the login page.
     */
   def prepareForStartup: FrontendState =
-    copy(user = UserState.Unknown, aboutState = AboutState.Closed, logoutState = LogoutState.Idle)
+    copy(
+      user = user match
+        case UserState.SignedIn(email, displayName)  => UserState.Restoring(email, displayName)
+        case UserState.Restoring(email, displayName) => UserState.Restoring(email, displayName)
+        case _                                       => UserState.Unknown
+      ,
+      aboutState = AboutState.Closed,
+      logoutState = LogoutState.Idle
+    )
 
 private[fe] object FrontendState:
   given JsonCodec[FrontendState] = DeriveJsonCodec.gen[FrontendState]
@@ -63,6 +91,7 @@ private[fe] object FrontendState:
   val Initial: FrontendState = FrontendState(
     user = UserState.Unknown,
     screen = Screen.Selection,
+    countingSessionId = None,
     aboutState = AboutState.Closed,
     logoutState = LogoutState.Idle
   )

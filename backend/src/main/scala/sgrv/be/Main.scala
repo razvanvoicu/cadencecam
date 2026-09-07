@@ -1,8 +1,8 @@
 package sgrv.be
 
 import sgrv.be.auth.{AppConfig, GoogleOAuth, SessionStore, TokenGenerator}
-import sgrv.be.core.LoginNotifier
-import sgrv.be.core.{CapabilityRegistry, LoginListeners, RouteDiscovery}
+import sgrv.be.core.{CurrentUserDetails, LoginNotifier}
+import sgrv.be.core.{CapabilityRegistry, CurrentUserContributors, LoginListeners, RouteDiscovery}
 import sgrv.be.store.FirestoreClient
 import zio.*
 import zio.http.*
@@ -132,10 +132,14 @@ object Main extends ZIOAppDefault:
       host <- bindAddress
       staticCacheCtrl <- staticCacheControl
       environment <- ZIO.environment[BackendEnvironment]
-      // Listeners resolve against the host's own services; the resulting notifier then joins the registry so
-      // route plugins (Callback in particular) can require it like any other capability.
-      notifier <- LoginListeners.notifier(CapabilityRegistry.fromEnvironment(environment))
-      registry = CapabilityRegistry.fromEnvironment(environment.add[LoginNotifier](notifier))
+      // Discovered modules resolve against the host's own services, and the services derived from them then join
+      // the registry, so route plugins can require them like any other capability.
+      hostServices = CapabilityRegistry.fromEnvironment(environment)
+      notifier <- LoginListeners.notifier(hostServices)
+      details <- CurrentUserContributors.details(hostServices)
+      registry = CapabilityRegistry.fromEnvironment(
+        environment.add[LoginNotifier](notifier).add[CurrentUserDetails](details)
+      )
       static = staticRoutes(staticCacheCtrl)
       reservedPatterns = static.routes.map(_.routePattern: Any).toSet
       applicationRoutes <- RouteDiscovery.routes(registry, reservedPatterns).map(static ++ _)

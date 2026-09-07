@@ -1,9 +1,17 @@
 package sgrv.api
 
 import zio.json.{DeriveJsonCodec, JsonCodec, jsonNoExtraFields}
+import zio.json.ast.Json
 
+/** The signed-in user as `/me` reports them.
+  *
+  * `extra` carries whatever the application's own `CurrentUserContributor`s added, keyed by contributor id, so an
+  * application can put its session data in front of the frontend without a second request and without the template
+  * growing fields only one application uses. It is absent, not empty, when nothing contributed — an application with no
+  * contributors sees exactly the payload this route always returned.
+  */
 @jsonNoExtraFields
-final case class CurrentUser(email: String, name: String)
+final case class CurrentUser(email: String, name: String, extra: Option[Map[String, Json]] = None)
 
 object CurrentUser:
   given JsonCodec[CurrentUser] = DeriveJsonCodec.gen[CurrentUser]
@@ -19,3 +27,12 @@ final case class AboutInfo(
 
 object AboutInfo:
   given JsonCodec[AboutInfo] = DeriveJsonCodec.gen[AboutInfo]
+
+/** What the backend's counting-session contributor files under its key in [[CurrentUser.extra]]. */
+@jsonNoExtraFields
+final case class CountingSession(sessionId: String)
+
+object CountingSession:
+  /** The contributor's id, which is also the key its entry appears under. Shared so the two ends cannot drift. */
+  val Key = "counting-session"
+  given JsonCodec[CountingSession] = DeriveJsonCodec.gen[CountingSession]

@@ -1,6 +1,7 @@
 package sgrv.be.auth
 
 import java.time.Instant
+import zio.json.ast.Json
 import zio.http.{Path, Method as ZioMethod}
 
 class AuthSuite extends munit.FunSuite:
@@ -109,6 +110,16 @@ class AuthSuite extends munit.FunSuite:
 
   test("serialises the signed-in user as escaped JSON"):
     assertEquals(Me.json(SessionUser("a@b.c", "Jane \"JJ\" Doe")), """{"email":"a@b.c","name":"Jane \"JJ\" Doe"}""")
+
+  test("carries contributions namespaced beside the user, and omits the field when there are none"):
+    val contributed = Me.json(
+      SessionUser("a@b.c", "Jane"),
+      Map("counting-session" -> Json.Obj("sessionId" -> Json.Str("a3f1")))
+    )
+
+    assertEquals(contributed, """{"email":"a@b.c","name":"Jane","extra":{"counting-session":{"sessionId":"a3f1"}}}""")
+    // An application with no contributors must see exactly the payload this route always returned.
+    assertEquals(Me.json(SessionUser("a@b.c", "Jane")), """{"email":"a@b.c","name":"Jane"}""")
 
   test("persists the OAuth tokens carried by SessionUser without duplicating them"):
     val createdAt = Instant.parse("2026-08-16T00:00:00Z")

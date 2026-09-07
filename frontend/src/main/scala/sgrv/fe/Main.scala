@@ -3,6 +3,7 @@ package sgrv.fe
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
 import sgrv.api.AboutInfo
+import sgrv.api.CountingSession
 import sgrv.api.CurrentUser
 import sgrv.fe.refreshstate.RefreshStateStore
 import sgrv.fe.refreshstate.SessionRefreshWorker
@@ -27,6 +28,7 @@ object Main:
       current.copy(
         user = state,
         screen = Screen.Selection,
+        countingSessionId = None,
         aboutState = AboutState.Closed,
         logoutState = LogoutState.Idle
       )
@@ -48,18 +50,19 @@ object Main:
 
     val initialSession = http.get("/me").flatMap(sessionState)
     initialSession.onComplete:
-      case Success(session @ SignedIn(email, _)) =>
+      case Success(MeResult(session @ SignedIn(email, _), countingSessionId)) =>
         stateStore.update: current =>
           current.copy(
             user = session,
             // A different account signing in on this device starts at the role picker rather than inheriting
             // whichever role the previous account left behind.
-            screen = if stateStore.restoredUserEmail.contains(email) then current.screen else Screen.Selection
+            screen = if stateStore.restoredUserEmail.contains(email) then current.screen else Screen.Selection,
+            countingSessionId = countingSessionId
           )
         refreshStateStore.update(_.copy(expired = false))
         worker.enable()
-      case Success(session) => updateUser(session)
-      case Failure(error)   => updateUser(AuthenticationFailed(errorMessage(error)))
+      case Success(MeResult(session, _)) => updateUser(session)
+      case Failure(error)                => updateUser(AuthenticationFailed(errorMessage(error)))
 
     def show(screen: Screen): Unit = stateStore.update(_.copy(screen = screen))
 
@@ -139,6 +142,18 @@ object Main:
         )
       )
 
+    def signedInView(displayName: String, screen: Screen): Element =
+      screen match
+        case Screen.Selection => selection(displayName)
+        case Screen.Acquirer  =>
+          placeholder("acquirer", "Signal acquirer", "Camera capture and rep detection are not implemented yet.")
+        case Screen.Dashboard =>
+          placeholder(
+            "dashboard",
+            "Dashboard",
+            "The live rep count from the acquiring device is not implemented yet."
+          )
+
     def placeholder(modifier: String, heading: String, note: String): Element =
       div(
         cls := s"screen $modifier",
@@ -158,8 +173,8 @@ object Main:
         child <-- stateStore.signal
           .map(_.user)
           .map:
-            case SignedIn(_, _) => userActions
-            case _              => emptyNode,
+            case Present(_) => userActions
+            case _          => emptyNode,
         div(
           cls := "content",
           child <-- stateStore.signal
@@ -171,19 +186,9 @@ object Main:
                 div(cls := "home", a(cls := "login-button", href := "/auth/login", "Login with Google"))
               case (AuthenticationFailed(message), _) =>
                 div(cls := "home", p(cls := "error", s"Authentication failed: $message"))
-              case (SignedIn(_, displayName), Screen.Selection) => selection(displayName)
-              case (SignedIn(_, _), Screen.Acquirer)            =>
-                placeholder(
-                  "acquirer",
-                  "Signal acquirer",
-                  "Camera capture and rep detection are not implemented yet."
-                )
-              case (SignedIn(_, _), Screen.Dashboard) =>
-                placeholder(
-                  "dashboard",
-                  "Dashboard",
-                  "The live rep count from the acquiring device is not implemented yet."
-                )
+              // Confirmed and optimistically restored render identically; only the machinery around them differs.
+              case (SignedIn(_, displayName), screen)  => signedInView(displayName, screen)
+              case (Restoring(_, displayName), screen) => signedInView(displayName, screen)
         ),
         child <-- stateStore.signal
           .map(_.logoutState)
@@ -267,26 +272,38 @@ object Main:
 
     renderOnDomContentLoaded(dom.document.body, app)
 
+  /** What `/me` told us: who is signed in, and whichever counting session the backend filed alongside them. */
+  private[fe] final case class MeResult(user: UserState, countingSessionId: Option[String])
+
   private def parseUser(
       json: String
-  ): UserState = // Extract the user's name from the Google account. Default to the email address if the name is not available.
+  ): MeResult = // Extract the user's name from the Google account. Default to the email address if the name is not available.
     json
       .fromJson[CurrentUser]
       .fold(
-        details => AuthenticationFailed(s"The backend returned invalid user JSON: $details"),
+        details => MeResult(AuthenticationFailed(s"The backend returned invalid user JSON: $details"), None),
         currentUser =>
-          Option(currentUser.email)
+          val user = Option(currentUser.email)
             .map(_.trim)
             .filter(_.nonEmpty)
             .map: address =>
               SignedIn(address, Option(currentUser.name).map(_.trim).filter(_.nonEmpty).getOrElse(address))
             .getOrElse(AuthenticationFailed("The backend returned no email address."))
+          // An unreadable or absent entry is not an authentication problem, so it never downgrades the user state.
+          val countingSessionId = currentUser.extra
+            .getOrElse(Map.empty)
+            .get(CountingSession.Key)
+            .flatMap(_.as[CountingSession].toOption)
+            .map(_.sessionId)
+            .filter(_.nonEmpty)
+          MeResult(user, countingSessionId)
       )
 
-  private def sessionState(response: dom.Response): Future[UserState] =
+  private def sessionState(response: dom.Response): Future[MeResult] =
     if response.ok then response.text().map(parseUser)
-    else if response.status == 401 then Future.successful(Unauthenticated)
-    else Future.successful(AuthenticationFailed(s"The authentication check returned ${response.status}."))
+    else if response.status == 401 then Future.successful(MeResult(Unauthenticated, None))
+    else
+      Future.successful(MeResult(AuthenticationFailed(s"The authentication check returned ${response.status}."), None))
 
   private def errorMessage(error: Throwable): String =
     Option(error.getMessage).map(_.trim).filter(_.nonEmpty).getOrElse("The request failed.")
