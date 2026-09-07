@@ -5,12 +5,14 @@ import org.scalajs.dom
 import sgrv.api.AboutInfo
 import sgrv.api.CountingSession
 import sgrv.api.CurrentUser
+import sgrv.fe.acquire.{Camera, CameraState, FrameSampler, Sample}
 import sgrv.fe.refreshstate.RefreshStateStore
 import sgrv.fe.refreshstate.SessionRefreshWorker
 import zio.json.*
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
+import scala.scalajs.js
 import scala.scalajs.js.Thenable.Implicits.*
 import scala.util.Failure
 import scala.util.Success
@@ -145,14 +147,127 @@ object Main:
     def signedInView(displayName: String, screen: Screen): Element =
       screen match
         case Screen.Selection => selection(displayName)
-        case Screen.Acquirer  =>
-          placeholder("acquirer", "Signal acquirer", "Camera capture and rep detection are not implemented yet.")
+        case Screen.Acquirer  => acquirer()
         case Screen.Dashboard =>
           placeholder(
             "dashboard",
             "Dashboard",
             "The live rep count from the acquiring device is not implemented yet."
           )
+
+    /** The camera and its sampler are browser resources, so they live outside the persisted FrontendState and are torn
+      * down when this view unmounts — otherwise the camera would stay held after leaving the screen.
+      */
+    def acquirer(): Element =
+      val cameraState = Var[CameraState](CameraState.Idle)
+      val repCount = Var(0)
+      var stream: Option[dom.MediaStream] = None
+      var sampler: Option[FrameSampler] = None
+      val video = videoTag(cls := "camera-video")
+      // Set on the element rather than as Laminar attributes: playsinline in particular is what stops iOS taking
+      // the preview fullscreen, and it has to be a real attribute on the node before play() is called.
+      def prepare(element: dom.HTMLVideoElement): Unit =
+        val media = element.asInstanceOf[js.Dynamic]
+        media.autoplay = true
+        media.muted = true
+        element.setAttribute("playsinline", "")
+        element.setAttribute("webkit-playsinline", "")
+
+      // Measured rather than assumed: if the sampling loop stalls, the reading drops instead of the view claiming
+      // a rate it is not achieving.
+      val measuredHz = Var(Option.empty[Double])
+      var firstSampleAt = Option.empty[Double]
+      var sampleCount = 0
+
+      def onSample(sample: Sample): Unit =
+        sampleCount += 1
+        firstSampleAt match
+          case None        => firstSampleAt = Some(sample.atMillis)
+          case Some(start) =>
+            val elapsed = sample.atMillis - start
+            if elapsed > 0 then measuredHz.set(Some((sampleCount - 1) * 1000.0 / elapsed))
+
+      def release(): Unit =
+        sampler.foreach(_.stop())
+        sampler = None
+        stream.foreach(Camera.stop)
+        stream = None
+        firstSampleAt = None
+        sampleCount = 0
+        measuredHz.set(None)
+
+      def startCamera(): Unit =
+        if cameraState.now() != CameraState.Starting then
+          cameraState.set(CameraState.Starting)
+          Camera
+            .start()
+            .onComplete:
+              case Success(opened) =>
+                stream = Some(opened)
+                val element = video.ref
+                prepare(element)
+                element.asInstanceOf[js.Dynamic].srcObject = opened.asInstanceOf[js.Any]
+                val _ = element.play()
+                val (width, height) = Camera.resolution(opened).getOrElse((0, 0))
+                cameraState.set(CameraState.Streaming(width, height))
+                val started = FrameSampler(element, onSample)
+                started.start()
+                sampler = Some(started)
+              case Failure(error) =>
+                release()
+                cameraState.set(CameraState.Unavailable(Camera.failureMessage(error)))
+
+      div(
+        cls := "screen acquirer",
+        onMountCallback(_ => startCamera()),
+        onUnmountCallback(_ => release()),
+        h1(cls := "screen-title", "Signal acquirer"),
+        div(
+          cls := "camera",
+          video,
+          child <-- cameraState.signal.map:
+            case CameraState.Idle                     => emptyNode
+            case CameraState.Starting                 => p(cls := "camera-status", "Waiting for camera permission…")
+            case CameraState.Streaming(width, height) =>
+              p(
+                cls := "camera-status",
+                child.text <-- measuredHz.signal.map:
+                  case Some(hz) => f"Capturing $width×$height at $hz%.1f Hz"
+                  case None     => s"Capturing $width×$height…"
+              )
+            case CameraState.Unavailable(message) =>
+              div(
+                cls := "camera-status",
+                p(cls := "error", message),
+                button(cls := "back-button", typ := "button", "Try again", onClick --> (_ => startCamera()))
+              )
+        ),
+        div(
+          cls := "rep-count",
+          span(cls := "rep-count-value", child.text <-- repCount.signal.map(_.toString)),
+          span(cls := "rep-count-label", "reps")
+        ),
+        div(
+          cls := "acquirer-actions",
+          button(
+            cls := "back-button",
+            typ := "button",
+            "Back",
+            onClick --> (_ => show(Screen.Selection))
+          ),
+          button(
+            cls := "logout-link",
+            typ := "button",
+            disabled <-- stateStore.signal.map(_.logoutState == LogoutState.InProgress),
+            child.text <-- stateStore.signal
+              .map(_.logoutState)
+              .map:
+                case LogoutState.InProgress => "Logging out…"
+                case _                      => "Logout",
+            onClick --> (_ => logout())
+          )
+        )
+      )
 
     def placeholder(modifier: String, heading: String, note: String): Element =
       div(
@@ -171,10 +286,12 @@ object Main:
       div(
         cls := "app",
         child <-- stateStore.signal
-          .map(_.user)
+          .map(state => (state.user, state.screen))
           .map:
-            case Present(_) => userActions
-            case _          => emptyNode,
+            // The acquirer keeps its own Back and Logout below the count, so the global bar would only duplicate it.
+            case (Present(_), Screen.Acquirer) => emptyNode
+            case (Present(_), _)               => userActions
+            case _                             => emptyNode,
         div(
           cls := "content",
           child <-- stateStore.signal

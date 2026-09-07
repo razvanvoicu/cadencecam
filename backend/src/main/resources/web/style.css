@@ -205,6 +205,68 @@ button,
   cursor: pointer;
 }
 
+.camera {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+/* Sized by the column, never by the stream: a 1280x720 frame must not force the page wider than the phone. */
+.camera-video {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 60vh;
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  object-fit: contain;
+}
+
+.camera-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.camera-status .error {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.rep-count {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+}
+
+.rep-count-value {
+  /* Readable at arm's length on a phone propped against something, which is how this gets used. */
+  font-size: clamp(3rem, 22vw, 5.5rem);
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.rep-count-label {
+  color: var(--muted);
+  font-size: 1rem;
+}
+
+.acquirer-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.acquirer-actions .back-button {
+  align-self: auto;
+}
+
 /* Hover styling only where a real pointer exists, so a tap on a phone does not leave a control stuck in its
    hover state until the next tap elsewhere. */
 @media (hover: hover) {
