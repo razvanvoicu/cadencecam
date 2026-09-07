@@ -211,16 +211,117 @@ button,
   gap: 0.6rem;
 }
 
-/* Sized by the column, never by the stream: a 1280x720 frame must not force the page wider than the phone. */
-.camera-video {
-  display: block;
+/* The frame carries the stream's own aspect ratio (set from the track), so the video fills it exactly with no
+   letterboxing. That is what lets the quadrant lines below sit at a true 50% of what the camera actually sees.
+   max-height shrinks the whole box, width included, rather than cropping it. */
+.camera-frame {
+  position: relative;
   width: 100%;
-  height: auto;
-  max-height: 60vh;
+  max-height: 45vh;
+  margin: 0 auto;
+  aspect-ratio: 16 / 9;
   background: #000;
   border: 1px solid var(--border);
   border-radius: 10px;
-  object-fit: contain;
+  overflow: hidden;
+}
+
+.camera-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Only the picture is flipped. The quadrant lines are drawn by a sibling, so they do not move, and the sampler
+   flips the frame to match — Q1 stays the top-right of whatever is on screen. */
+.camera-frame.mirrored .camera-video {
+  transform: scaleX(-1);
+}
+
+/* Two hairlines dividing the frame into the four quadrants that are actually sampled. */
+.quadrant-lines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.quadrant-lines::before,
+.quadrant-lines::after {
+  content: "";
+  position: absolute;
+  background: #22c55e;
+  /* Readable against both a bright and a dark scene. */
+  box-shadow: 0 0 2px rgb(0 0 0 / 70%);
+}
+
+.quadrant-lines::before {
+  top: 50%;
+  right: 0;
+  left: 0;
+  height: 2px;
+  transform: translateY(-1px);
+}
+
+.quadrant-lines::after {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-1px);
+}
+
+.acquirer-view {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.signal-graphs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+/* Each trace boxed separately so one quadrant's movement cannot be mistaken for another's. */
+.signal-pane {
+  position: relative;
+  height: 7.5rem;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.signal-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.signal-label,
+.signal-scale {
+  position: absolute;
+  top: 0.15rem;
+  /* The trace runs the full height of the pane, so the label needs its own ground to stay readable over a peak. */
+  padding: 0 0.25rem;
+  background: var(--panel-bg);
+  border-radius: 3px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+.signal-label {
+  left: 0.3rem;
+}
+
+/* The scale the trace is drawn against, kept in the corner opposite the quadrant's name. */
+.signal-scale {
+  right: 0.3rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .camera-status {
@@ -259,8 +360,15 @@ button,
 
 .acquirer-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 1rem;
+}
+
+@media (max-height: 720px) {
+  .camera-frame {
+    max-height: 32vh;
+  }
 }
 
 .acquirer-actions .back-button {

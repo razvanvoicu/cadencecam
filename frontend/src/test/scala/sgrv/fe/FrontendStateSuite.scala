@@ -2,6 +2,7 @@ package sgrv.fe
 
 import munit.FunSuite
 import sgrv.api.AboutInfo
+import sgrv.fe.acquire.SignalZoom
 import zio.json.*
 
 class FrontendStateSuite extends FunSuite:
@@ -11,6 +12,9 @@ class FrontendStateSuite extends FunSuite:
       user = UserState.SignedIn("developer@example.com", "Developer"),
       screen = Screen.Acquirer,
       countingSessionId = Some("a3f1"),
+      showSignals = false,
+      mirrored = false,
+      signalZoom = SignalZoom.Span8,
       aboutState = AboutState.Loaded(AboutInfo("1.0", "today", "Mac", "3", "1")),
       logoutState = LogoutState.Failed("try again")
     )
@@ -53,3 +57,11 @@ class FrontendStateSuite extends FunSuite:
     assertEquals(Present.unapply(UserState.Unauthenticated), None)
     assertEquals(Present.unapply(UserState.Unknown), None)
     assertEquals(Present.unapply(UserState.AuthenticationFailed("nope")), None)
+
+  test("state persisted before a field existed is discarded rather than half-read"):
+    // Browser storage outlives deployments, so an older shape must fail cleanly and fall back to Initial rather
+    // than producing a state with a silently wrong value in it.
+    val older = """{"user":{"Unauthenticated":{}},"screen":"Selection","aboutState":{"Closed":{}},
+                   |"logoutState":{"Idle":{}}}""".stripMargin.replace("\n", "")
+
+    assert(older.fromJson[FrontendState].isLeft, "an incomplete state must not decode")

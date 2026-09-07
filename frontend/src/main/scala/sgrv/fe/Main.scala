@@ -5,7 +5,17 @@ import org.scalajs.dom
 import sgrv.api.AboutInfo
 import sgrv.api.CountingSession
 import sgrv.api.CurrentUser
-import sgrv.fe.acquire.{Camera, CameraState, FrameSampler, Sample}
+import sgrv.fe.acquire.{
+  Camera,
+  CameraState,
+  CommonMode,
+  FrameSampler,
+  Quadrant,
+  QuadrantSignals,
+  Sample,
+  SignalGraph,
+  SignalZoom
+}
 import sgrv.fe.refreshstate.RefreshStateStore
 import sgrv.fe.refreshstate.SessionRefreshWorker
 import zio.json.*
@@ -161,9 +171,21 @@ object Main:
     def acquirer(): Element =
       val cameraState = Var[CameraState](CameraState.Idle)
       val repCount = Var(0)
+      val signals = QuadrantSignals()
+      val tick = Var(0)
       var stream: Option[dom.MediaStream] = None
       var sampler: Option[FrameSampler] = None
+
       val video = videoTag(cls := "camera-video")
+      // The overlay's lines sit at 50% of this box, so the box must be exactly the frame: its aspect ratio is set
+      // from the stream once known, keeping the drawn quadrants aligned with the sampled ones.
+      val frame = div(
+        cls := "camera-frame",
+        cls("mirrored") <-- stateStore.signal.map(_.mirrored),
+        video,
+        div(cls := "quadrant-lines")
+      )
+
       // Set on the element rather than as Laminar attributes: playsinline in particular is what stops iOS taking
       // the preview fullscreen, and it has to be a real attribute on the node before play() is called.
       def prepare(element: dom.HTMLVideoElement): Unit =
@@ -180,6 +202,8 @@ object Main:
       var sampleCount = 0
 
       def onSample(sample: Sample): Unit =
+        signals.record(sample)
+        tick.update(_ + 1)
         sampleCount += 1
         firstSampleAt match
           case None        => firstSampleAt = Some(sample.atMillis)
@@ -195,6 +219,7 @@ object Main:
         firstSampleAt = None
         sampleCount = 0
         measuredHz.set(None)
+        signals.clear()
 
       def startCamera(): Unit =
         if cameraState.now() != CameraState.Starting then
@@ -209,64 +234,125 @@ object Main:
                 element.asInstanceOf[js.Dynamic].srcObject = opened.asInstanceOf[js.Any]
                 val _ = element.play()
                 val (width, height) = Camera.resolution(opened).getOrElse((0, 0))
+                if width > 0 && height > 0 then frame.ref.style.setProperty("aspect-ratio", s"$width / $height")
                 cameraState.set(CameraState.Streaming(width, height))
-                val started = FrameSampler(element, onSample)
+                val started = FrameSampler(element, onSample, () => stateStore.current.mirrored)
                 started.start()
                 sampler = Some(started)
               case Failure(error) =>
                 release()
                 cameraState.set(CameraState.Unavailable(Camera.failureMessage(error)))
 
+      def graphPane(quadrant: Quadrant): Element =
+        val pane = canvasTag(cls := "signal-canvas")
+        div(
+          cls := "signal-pane",
+          span(cls := "signal-label", quadrant.toString),
+          // Repeated on every pane rather than stated once: the control that sets it lives in the panel above and
+          // scrolls out of sight exactly when the traces are being read.
+          span(
+            cls := "signal-scale",
+            child.text <-- stateStore.signal.map(state => SignalZoom.label(state.signalZoom))
+          ),
+          pane,
+          // Redraw on every sample, so the trace keeps scrolling on a still scene too: samples arrive whether or
+          // not anything in front of the camera moves.
+          stateStore.signal.map(_.signalZoom).combineWith(tick.signal) --> { _ =>
+            val element = pane.ref
+            val box = element.getBoundingClientRect()
+            val ratio = dom.window.devicePixelRatio
+            val width = math.max(1, (box.width * ratio).round.toInt)
+            val height = math.max(1, (box.height * ratio).round.toInt)
+            if element.width != width || element.height != height then
+              element.width = width
+              element.height = height
+            val raw = signals.window(SignalGraph.WindowSamples)
+            val corrected = CommonMode.remove(raw)
+            SignalGraph.draw(
+              element,
+              Seq(
+                // The raw channel is kept alongside for now, purely to confirm that the steps it shows are absent
+                // from the corrected one. Drop this trace once that has been seen.
+                SignalGraph.Trace(raw.getOrElse(quadrant, Seq.empty), stroke = "rgb(148 148 160 / 55%)", width = 1),
+                SignalGraph.Trace(corrected.getOrElse(quadrant, Seq.empty), stroke = "#22c55e", width = 2)
+              ),
+              stateStore.current.signalZoom,
+              grid = "rgb(128 128 128 / 35%)"
+            )
+          }
+        )
+
+      def toggle(label: Signal[String], onToggle: () => Unit): Element =
+        button(cls := "logout-link", typ := "button", child.text <-- label, onClick --> (_ => onToggle()))
+
       div(
-        cls := "screen acquirer",
+        cls := "acquirer-view",
         onMountCallback(_ => startCamera()),
         onUnmountCallback(_ => release()),
-        h1(cls := "screen-title", "Signal acquirer"),
         div(
-          cls := "camera",
-          video,
-          child <-- cameraState.signal.map:
-            case CameraState.Idle                     => emptyNode
-            case CameraState.Starting                 => p(cls := "camera-status", "Waiting for camera permission…")
-            case CameraState.Streaming(width, height) =>
-              p(
-                cls := "camera-status",
-                child.text <-- measuredHz.signal.map:
-                  case Some(hz) => f"Capturing $width×$height at $hz%.1f Hz"
-                  case None     => s"Capturing $width×$height…"
-              )
-            case CameraState.Unavailable(message) =>
-              div(
-                cls := "camera-status",
-                p(cls := "error", message),
-                button(cls := "back-button", typ := "button", "Try again", onClick --> (_ => startCamera()))
-              )
-        ),
-        div(
-          cls := "rep-count",
-          span(cls := "rep-count-value", child.text <-- repCount.signal.map(_.toString)),
-          span(cls := "rep-count-label", "reps")
-        ),
-        div(
-          cls := "acquirer-actions",
-          button(
-            cls := "back-button",
-            typ := "button",
-            "Back",
-            onClick --> (_ => show(Screen.Selection))
+          cls := "screen acquirer",
+          h1(cls := "screen-title", "Signal acquirer"),
+          div(
+            cls := "camera",
+            frame,
+            child <-- cameraState.signal.map:
+              case CameraState.Idle                     => emptyNode
+              case CameraState.Starting                 => p(cls := "camera-status", "Waiting for camera permission…")
+              case CameraState.Streaming(width, height) =>
+                p(
+                  cls := "camera-status",
+                  child.text <-- measuredHz.signal.map:
+                    case Some(hz) => f"Capturing $width×$height at $hz%.1f Hz"
+                    case None     => s"Capturing $width×$height…"
+                )
+              case CameraState.Unavailable(message) =>
+                div(
+                  cls := "camera-status",
+                  p(cls := "error", message),
+                  button(cls := "back-button", typ := "button", "Try again", onClick --> (_ => startCamera()))
+                )
           ),
-          button(
-            cls := "logout-link",
-            typ := "button",
-            disabled <-- stateStore.signal.map(_.logoutState == LogoutState.InProgress),
-            child.text <-- stateStore.signal
-              .map(_.logoutState)
-              .map:
-                case LogoutState.InProgress => "Logging out…"
-                case _                      => "Logout",
-            onClick --> (_ => logout())
+          div(
+            cls := "rep-count",
+            span(cls := "rep-count-value", child.text <-- repCount.signal.map(_.toString)),
+            span(cls := "rep-count-label", "reps")
+          ),
+          div(
+            cls := "acquirer-actions",
+            toggle(
+              stateStore.signal.map(state => if state.mirrored then "Unmirror" else "Mirror"),
+              () => stateStore.update(current => current.copy(mirrored = !current.mirrored))
+            ),
+            toggle(
+              stateStore.signal.map(state => if state.showSignals then "Hide signals" else "Show signals"),
+              () => stateStore.update(current => current.copy(showSignals = !current.showSignals))
+            ),
+            toggle(
+              // Names what the click will do, like the toggles beside it. What the traces are drawn at now is
+              // stated on each pane, so this control has no reason to report status as well.
+              stateStore.signal.map(state => s"Scale → ${SignalZoom.label(SignalZoom.next(state.signalZoom))}"),
+              () => stateStore.update(current => current.copy(signalZoom = SignalZoom.next(current.signalZoom)))
+            ),
+            button(cls := "back-button", typ := "button", "Back", onClick --> (_ => show(Screen.Selection))),
+            button(
+              cls := "logout-link",
+              typ := "button",
+              disabled <-- stateStore.signal.map(_.logoutState == LogoutState.InProgress),
+              child.text <-- stateStore.signal
+                .map(_.logoutState)
+                .map:
+                  case LogoutState.InProgress => "Logging out…"
+                  case _                      => "Logout",
+              onClick --> (_ => logout())
+            )
           )
-        )
+        ),
+        // Deliberately outside the panel: a debugging aid sitting under the whole acquirer, not part of it.
+        child <-- stateStore.signal
+          .map(_.showSignals)
+          .map:
+            case false => emptyNode
+            case true  => div(cls := "signal-graphs", Quadrant.All.map(graphPane))
       )
 
     def placeholder(modifier: String, heading: String, note: String): Element =

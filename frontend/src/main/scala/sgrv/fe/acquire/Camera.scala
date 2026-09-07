@@ -6,8 +6,8 @@ import scala.scalajs.js
 import scala.scalajs.js.Thenable.Implicits.*
 
 /** What the acquirer's camera is currently doing. Deliberately not part of `FrontendState`: a live `MediaStream` is a
-  * browser resource that cannot be serialised, and a permission grant must be re-established on every page load
-  * rather than remembered.
+  * browser resource that cannot be serialised, and a permission grant must be re-established on every page load rather
+  * than remembered.
   */
 private[fe] enum CameraState:
   case Idle
@@ -17,8 +17,8 @@ private[fe] enum CameraState:
 
 private[fe] object Camera:
   /** 1280x720 is 921,600 pixels — just under the one-megapixel ceiling, and a 16:9 shape that fits a phone screen.
-    * These are `ideal`, not `exact`: a camera that cannot honour them still opens, at whatever it does support,
-    * rather than failing outright with OverconstrainedError.
+    * These are `ideal`, not `exact`: a camera that cannot honour them still opens, at whatever it does support, rather
+    * than failing outright with OverconstrainedError.
     */
   val PreferredWidth = 1280
   val PreferredHeight = 720
@@ -53,12 +53,15 @@ private[fe] object Camera:
 
   /** The stream's actual size, which may differ from what was asked for. */
   def resolution(stream: dom.MediaStream): Option[(Int, Int)] =
-    stream.getVideoTracks().headOption.flatMap: track =>
-      val settings = track.asInstanceOf[js.Dynamic].getSettings()
-      for
-        width <- Option(settings.width.asInstanceOf[js.UndefOr[Int]]).flatMap(_.toOption)
-        height <- Option(settings.height.asInstanceOf[js.UndefOr[Int]]).flatMap(_.toOption)
-      yield (width, height)
+    stream
+      .getVideoTracks()
+      .headOption
+      .flatMap: track =>
+        val settings = track.asInstanceOf[js.Dynamic].getSettings()
+        for
+          width <- Option(settings.width.asInstanceOf[js.UndefOr[Int]]).flatMap(_.toOption)
+          height <- Option(settings.height.asInstanceOf[js.UndefOr[Int]]).flatMap(_.toOption)
+        yield (width, height)
 
   private[acquire] final case class CameraUnsupported()
       extends RuntimeException("This browser exposes no camera on an insecure connection")

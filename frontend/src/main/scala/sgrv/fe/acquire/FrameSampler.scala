@@ -3,10 +3,9 @@ package sgrv.fe.acquire
 import org.scalajs.dom
 import scala.scalajs.js
 
-/** One acquisition sample: the mean brightness of each quadrant of a frame, in the order top-left, top-right,
-  * bottom-left, bottom-right.
-  */
-private[fe] final case class Sample(atMillis: Double, quadrants: Seq[Double])
+/** One acquisition sample: the mean brightness of each quadrant of a frame, indexed by [[Quadrant]]. */
+private[fe] final case class Sample(atMillis: Double, quadrants: Map[Quadrant, Double]):
+  def brightness(quadrant: Quadrant): Double = quadrants.getOrElse(quadrant, 0.0)
 
 /** Turns the camera preview into the ~10 Hz signal the rep detector will run on.
   *
@@ -17,6 +16,8 @@ private[fe] final case class Sample(atMillis: Double, quadrants: Seq[Double])
 private[fe] final class FrameSampler(
     video: dom.HTMLVideoElement,
     onSample: Sample => Unit,
+    /** Read per frame, so the preview and the sampled frame stay in agreement the instant the toggle changes. */
+    mirrored: () => Boolean = () => false,
     intervalMillis: Int = FrameSampler.DefaultIntervalMillis
 ):
   private val canvas = dom.document.createElement("canvas").asInstanceOf[dom.HTMLCanvasElement]
@@ -39,10 +40,17 @@ private[fe] final class FrameSampler(
         canvas.width = width
         canvas.height = height
       val context = canvas.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D]
+      // Sampling follows the preview: when the image is mirrored for the viewer, the frame is flipped here too, so
+      // the quadrant they see in the top right is the one Q1 measures.
+      context.save()
+      if mirrored() then
+        context.translate(width.toDouble, 0)
+        context.scale(-1, 1)
       context.asInstanceOf[js.Dynamic].drawImage(video, 0, 0, width, height)
+      context.restore()
       val pixels = context.getImageData(0, 0, width, height).data
       val rgba = Array.tabulate(pixels.length)(pixels(_))
-      onSample(Sample(js.Date.now(), FrameSampler.quadrantLuma(rgba, width, height)))
+      onSample(Sample(js.Date.now(), FrameSampler.brightnesses(rgba, width, height)))
 
 private[fe] object FrameSampler:
   /** ~10 Hz, per the acquisition design: far below the frame rate, and far above the 0.5-2 Hz band of interest. */
@@ -57,27 +65,8 @@ private[fe] object FrameSampler:
     val height = math.max(2, scaled + (scaled % 2))
     (SampleWidth, height)
 
-  /** Mean Rec.709 luma of each quadrant of an RGBA buffer, as top-left, top-right, bottom-left, bottom-right.
-    *
-    * Kept free of the DOM so the arithmetic can be tested directly. Odd dimensions are handled by giving the extra
-    * row or column to the lower/right quadrants, which matters only for tiny frames.
+  /** Every quadrant's brightness for one frame. Four passes over a buffer of a couple of thousand pixels, which at 10
+    * Hz costs far less than the one pass over the full frame it replaces.
     */
-  private[acquire] def quadrantLuma(rgba: Array[Int], width: Int, height: Int): Seq[Double] =
-    require(width > 0 && height > 0, "a frame must have a positive size")
-    val midX = width / 2
-    val midY = height / 2
-    val totals = Array.fill(4)(0.0)
-    val counts = Array.fill(4)(0)
-    var y = 0
-    while y < height do
-      var x = 0
-      while x < width do
-        val offset = (y * width + x) * 4
-        if offset + 2 < rgba.length then
-          val luma = 0.2126 * rgba(offset) + 0.7152 * rgba(offset + 1) + 0.0722 * rgba(offset + 2)
-          val quadrant = (if y < midY then 0 else 2) + (if x < midX then 0 else 1)
-          totals(quadrant) += luma
-          counts(quadrant) += 1
-        x += 1
-      y += 1
-    Seq.tabulate(4)(index => if counts(index) == 0 then 0.0 else totals(index) / counts(index))
+  private[acquire] def brightnesses(rgba: Array[Int], width: Int, height: Int): Map[Quadrant, Double] =
+    Quadrant.All.map(quadrant => quadrant -> Quadrant.brightness(rgba, width, height, quadrant)).toMap
