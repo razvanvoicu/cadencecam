@@ -10,6 +10,8 @@ import sgrv.fe.acquire.{
   CameraState,
   CommonMode,
   FrameSampler,
+  LockState,
+  RepCounter,
   Quadrant,
   QuadrantSignals,
   Sample,
@@ -171,6 +173,9 @@ object Main:
     def acquirer(): Element =
       val cameraState = Var[CameraState](CameraState.Idle)
       val repCount = Var(0)
+      val lock = Var[LockState](LockState.Acquiring(0, 0))
+      val counter = RepCounter()
+      var totalSamples = 0
       val signals = QuadrantSignals()
       val tick = Var(0)
       var stream: Option[dom.MediaStream] = None
@@ -203,6 +208,12 @@ object Main:
 
       def onSample(sample: Sample): Unit =
         signals.record(sample)
+        totalSamples += 1
+        // The detector reads the corrected channels, not the raw ones: a gain step would otherwise ring through
+        // the band-pass and be counted as a rep.
+        val reading = counter.update(CommonMode.remove(signals.window(signals.capacity)), totalSamples)
+        repCount.set(reading.count)
+        lock.set(reading.lock)
         tick.update(_ + 1)
         sampleCount += 1
         firstSampleAt match
@@ -220,6 +231,10 @@ object Main:
         sampleCount = 0
         measuredHz.set(None)
         signals.clear()
+        counter.reset()
+        totalSamples = 0
+        repCount.set(0)
+        lock.set(LockState.Acquiring(0, 0))
 
       def startCamera(): Unit =
         if cameraState.now() != CameraState.Starting then
@@ -316,6 +331,17 @@ object Main:
             cls := "rep-count",
             span(cls := "rep-count-value", child.text <-- repCount.signal.map(_.toString)),
             span(cls := "rep-count-label", "reps")
+          ),
+          // Says which of the three it is doing rather than letting a stalled count look like a steady one.
+          p(
+            cls := "lock-state",
+            child.text <-- lock.signal.map:
+              case LockState.Acquiring(samples, needed) =>
+                val seconds = math.max(0, needed - samples) / 10
+                if needed == 0 then "Waiting for the camera…" else s"Finding a cadence… about ${seconds}s"
+              case LockState.Searching                               => "No steady cadence yet — counting is paused"
+              case LockState.Locked(channel, partner, periodSeconds) =>
+                f"Counting from $channel with $partner · $periodSeconds%.1fs per rep"
           ),
           div(
             cls := "acquirer-actions",

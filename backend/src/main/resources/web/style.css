@@ -358,6 +358,13 @@ button,
   font-size: 1rem;
 }
 
+.lock-state {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
 .acquirer-actions {
   display: flex;
   flex-wrap: wrap;

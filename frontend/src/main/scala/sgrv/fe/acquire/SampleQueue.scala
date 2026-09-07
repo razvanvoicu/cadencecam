@@ -3,8 +3,8 @@ package sgrv.fe.acquire
 /** A fixed-capacity ring of samples that overwrites its oldest entry once full.
   *
   * The acquisition design calls for a continuously sliding buffer of raw signal that can be re-analysed when a regime
-  * change is suspected, rather than a single irreversible judgement made live. This is that buffer: it never
-  * allocates after construction and never grows, so it can be fed at 10 Hz indefinitely.
+  * change is suspected, rather than a single irreversible judgement made live. This is that buffer: it never allocates
+  * after construction and never grows, so it can be fed at 10 Hz indefinitely.
   */
 private[fe] final class SampleQueue(val capacity: Int):
   require(capacity > 0, "a sample queue must hold at least one sample")
