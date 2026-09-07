@@ -1,6 +1,6 @@
 {
-  "name": "CamCadence",
-  "short_name": "CamCadence",
+  "name": "CadenceCam",
+  "short_name": "CadenceCam",
   "description": "Counts workout reps by detecting periodic movement with a phone camera.",
   "id": "/",
   "start_url": "/",

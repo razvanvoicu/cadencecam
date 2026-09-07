@@ -1,4 +1,4 @@
-camcadence
+cadencecam
 ==========
 
 A small full-stack web application template written in Scala. The frontend is
@@ -789,7 +789,7 @@ runtime dependency JARs, a generated ``prod.env`` with the shared runtime config
 configuration, selected public origin, and ``ARTIFACT_PORT``, the ``runApp`` launcher, and the ``Dockerfile``
 itself), and runs ``docker build`` there (assumed already installed). If Debug is enabled, its JAR and admin
 password are included too. The result is tagged both
-``camcadence:<version>`` and ``camcadence:latest``.
+``cadencecam:<version>`` and ``cadencecam:latest``.
 
 ``dockerPlatform`` near the top of ``build.sbt`` (default ``linux/amd64``) sets the image's target platform
 independently of the machine running the build — e.g. building on Apple Silicon for an amd64 deployment host.
@@ -815,8 +815,8 @@ Deploy the application with:
 
 The task performs a clean build, creates a separate Cloud Run Docker context under
 ``backend/target/docker-gcloud/``, authenticates Docker to Artifact Registry, pushes
-``<region>-docker.pkg.dev/<project-id>/<repository>/camcadence:<version>``, and deploys the public
-``camcadence`` service in the configured region on port ``8080``. It reads the project, region, repository,
+``<region>-docker.pkg.dev/<project-id>/<repository>/cadencecam:<version>``, and deploys the public
+``cadencecam`` service in the configured region on port ``8080``. It reads the project, region, repository,
 and runtime service account from the shared configuration. Docker and an authenticated ``gcloud`` CLI must be
 available locally. The deploying account needs permission to push to that repository and update Cloud Run. The
 configured runtime identity separately needs the Firestore permissions used by the backend, and the deploying
@@ -846,14 +846,14 @@ unreachable from outside a container regardless of published ports, so the ``Doc
 
 .. code-block:: console
 
-   docker run -p <host-port>:<artifact-port> camcadence:latest
+   docker run -p <host-port>:<artifact-port> cadencecam:latest
 
 or, if a reverse proxy (e.g. nginx) on the same host will terminate HTTPS and forward to it, publish only to
 loopback so nothing else on the network can reach the container directly:
 
 .. code-block:: console
 
-   docker run -p 127.0.0.1:<host-port>:<artifact-port> camcadence:latest
+   docker run -p 127.0.0.1:<host-port>:<artifact-port> cadencecam:latest
 
 Application Default Credentials work differently depending on where the image runs. On Cloud Run/GKE/GCE, an
 image built without a local ADC file falls through to the platform's workload identity (the attached service
@@ -960,8 +960,8 @@ Worth changing, but not load-bearing
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 * ``ThisBuild / organization`` / ``organizationName`` and the ``name`` settings in ``build.sbt``
-  (``camcadence``, ``camcadence-shared``, ``camcadence-frontend``, ``camcadence-backend``,
-  ``camcadence-debug-plugin``, ``camcadence-e2etest``). The root project's ``name`` is not cosmetic: it becomes
+  (``cadencecam``, ``cadencecam-shared``, ``cadencecam-frontend``, ``cadencecam-backend``,
+  ``cadencecam-debug-plugin``, ``cadencecam-e2etest``). The root project's ``name`` is not cosmetic: it becomes
   the Docker image tag *and* the Cloud Run service name, so changing it deploys a new service at a new URL.
 * The ``<title>`` and Apple app title in ``backend/src/main/resources/web/index.html``, plus ``name``,
   ``short_name``, ``description``, and colors in ``backend/src/main/resources/web/manifest.webmanifest`` — these

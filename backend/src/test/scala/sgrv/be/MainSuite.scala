@@ -197,7 +197,7 @@ class MainSuite extends munit.FunSuite:
       Some(Header.ContentType(MediaType.application.`manifest+json`))
     )
     assertEquals(response.headers.get(Header.CacheControl), Some(testStaticCacheControl))
-    assertEquals(json.get("name").getAsString, "CamCadence")
+    assertEquals(json.get("name").getAsString, "CadenceCam")
     assertEquals(json.get("start_url").getAsString, "/")
     assertEquals(json.get("scope").getAsString, "/")
     assertEquals(json.get("display").getAsString, "standalone")

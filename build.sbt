@@ -133,7 +133,7 @@ lazy val shared = crossProject(JSPlatform, JVMPlatform)
   .crossType(CrossType.Pure)
   .in(file("shared"))
   .settings(
-    name := "camcadence-shared",
+    name := "cadencecam-shared",
     libraryDependencies += "dev.zio" %%% "zio-json" % zioJsonVersion
   )
 
@@ -144,7 +144,7 @@ lazy val frontend = (project in file("frontend"))
   .enablePlugins(ScalaJSPlugin)
   .dependsOn(sharedJS)
   .settings(
-    name := "camcadence-frontend",
+    name := "cadencecam-frontend",
     coverageEnabled := false,
     scalaJSUseMainModuleInitializer := true,
     scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.NoModule)),
@@ -326,7 +326,7 @@ def waitForPortOpen(host: String, port: Int, timeoutMillis: Long): Boolean = {
 lazy val backend = (project in file("backend"))
   .dependsOn(sharedJVM)
   .settings(
-    name := "camcadence-backend",
+    name := "cadencecam-backend",
     libraryDependencies ++= Seq(
       classGraph,
       zioHttp,
@@ -368,7 +368,7 @@ lazy val backend = (project in file("backend"))
 lazy val debugPlugin = (project in file("debug-plugin"))
   .dependsOn(backend % "provided->compile")
   .settings(
-    name := "camcadence-debug-plugin",
+    name := "cadencecam-debug-plugin",
     libraryDependencies += munit % Test
   )
 
@@ -381,7 +381,7 @@ lazy val debugPlugin = (project in file("debug-plugin"))
 // clobbering the other's data.
 lazy val e2etest = (project in file("e2etest"))
   .settings(
-    name := "camcadence-e2etest",
+    name := "cadencecam-e2etest",
     coverageEnabled := false,
     libraryDependencies ++= Seq(selenium % Test, munit % Test),
     Test / fork := true,
@@ -604,7 +604,7 @@ lazy val root = {
   Project(id = "root", base = file("."))
     .aggregate(sharedJS, sharedJVM, frontend, backend)
     .settings(
-      name := "camcadence",
+      name := "cadencecam",
       coverageEnabled := false,
       publish / skip := true,
       run / aggregate := false,
