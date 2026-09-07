@@ -4,11 +4,11 @@ import zio.{Task, UIO, ZEnvironment, ZIO}
 import zio.json.ast.Json
 
 /** Nominal contract for code that adds application data to the `/me` response, discovered exactly like
-  * [[BackendPlugin]] and [[LoginListener]].
+  * [[BackendPlugin]] and [[SessionListener]].
   *
   * `/me` is the one call every page load already makes, so anything the frontend needs about the current session can
-  * ride along on it instead of costing a second round trip. Contributions are namespaced under the contributor's id
-  * so two of them can never collide, and so the template's own payload keeps its shape.
+  * ride along on it instead of costing a second round trip. Contributions are namespaced under the contributor's id so
+  * two of them can never collide, and so the template's own payload keeps its shape.
   *
   * A contributor is isolated: a failure is logged and its key is simply absent. Resolving who is signed in must not
   * depend on whatever an application wanted to say about them.
@@ -96,8 +96,8 @@ private[be] object CurrentUserContributors:
         case Left(missing)      => ContributorStatus.Skipped(contributorId, className, missing)
         case Right(environment) => ContributorStatus.Active(contributorId, className, close(contributor, environment))
 
-  /** Closes a contributor over its resolved environment and swallows its failures, so one contributor can neither
-    * break `/me` nor suppress the contributors after it.
+  /** Closes a contributor over its resolved environment and swallows its failures, so one contributor can neither break
+    * `/me` nor suppress the contributors after it.
     */
   private def close(
       contributor: CurrentUserContributor,

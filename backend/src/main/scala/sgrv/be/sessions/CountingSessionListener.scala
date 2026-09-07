@@ -8,7 +8,7 @@ import java.time.Instant
 import scala.jdk.CollectionConverters.*
 import sgrv.api.CountingSession
 import sgrv.be.BackendCapabilities
-import sgrv.be.core.{CapabilitySet, CurrentUserContributor, LoginEvent, LoginListener, RequestContext}
+import sgrv.be.core.{CapabilitySet, CurrentUserContributor, LoginEvent, LogoutEvent, RequestContext, SessionListener}
 import sgrv.be.auth.Callback
 import sgrv.be.store.GoogleFuture
 import zio.http.Request
@@ -19,6 +19,11 @@ private[sessions] object CountingSessionSchema:
   val collection = "CountingSessions"
   val userEmail = "userEmail"
   val startedAt = "startedAt"
+
+  /** Present once the session has ended. Absent means still open, which is what a query for live sessions keys on.
+    * Records are never deleted: they are the raw material for later analytics.
+    */
+  val completedAt = "completedAt"
 
 /** The listener's private adapter over the host's generic `firestore` capability.
   *
@@ -37,18 +42,31 @@ private[sessions] final class CountingSessionStore(firestore: Firestore):
         if snapshot.exists then ZIO.unit
         else GoogleFuture.fromApiFuture(document(id).create(fields(userEmail, startedAt).asJava)).unit
 
+  /** Marks the session ended. Deliberately an update rather than a delete: the record is kept for analytics. Firestore
+    * rejects an update to a missing document, which is the right outcome — there is nothing to complete.
+    */
+  def complete(id: String, completedAt: Instant): Task[Unit] =
+    GoogleFuture
+      .fromApiFuture(
+        document(id).update(Map[String, AnyRef](CountingSessionSchema.completedAt -> stamp(completedAt)).asJava)
+      )
+      .unit
+
   private def fields(userEmail: String, startedAt: Instant): Map[String, AnyRef] =
     Map[String, AnyRef](
       CountingSessionSchema.userEmail -> userEmail,
-      CountingSessionSchema.startedAt -> Timestamp.ofTimeSecondsAndNanos(startedAt.getEpochSecond, startedAt.getNano)
+      CountingSessionSchema.startedAt -> stamp(startedAt)
     )
+
+  private def stamp(instant: Instant): Timestamp =
+    Timestamp.ofTimeSecondsAndNanos(instant.getEpochSecond, instant.getNano)
 
 /** Opens a counting session whenever a login succeeds.
   *
   * Nothing in the frontend asks for this and no route exposes it: the record exists by the time the browser is
   * redirected home, because the host raises the event inside the OAuth callback.
   */
-object CountingSessionListener extends LoginListener:
+object CountingSessionListener extends SessionListener:
   type Requires = Firestore
 
   override val id = "counting-session"
@@ -59,6 +77,13 @@ object CountingSessionListener extends LoginListener:
       firestore <- ZIO.service[Firestore]
       _ <- CountingSessionStore(firestore).open(documentId(event.sessionKey), event.user.email, event.at)
       _ <- ZIO.logInfo(s"Opened counting session for ${event.user.email}")
+    yield ()
+
+  override def onLogout(event: LogoutEvent): ZIO[Requires, Throwable, Unit] =
+    for
+      firestore <- ZIO.service[Firestore]
+      _ <- CountingSessionStore(firestore).complete(documentId(event.sessionKey), event.at)
+      _ <- ZIO.logInfo(s"Completed counting session for ${event.user.email}")
     yield ()
 
   /** Derives the record's id from the browser session key by hashing, so one login maps to exactly one counting session

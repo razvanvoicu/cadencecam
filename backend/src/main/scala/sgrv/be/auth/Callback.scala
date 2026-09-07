@@ -3,20 +3,20 @@ package sgrv.be.auth
 import java.nio.charset.StandardCharsets.UTF_8
 import java.security.MessageDigest
 import sgrv.be.BackendCapabilities
-import sgrv.be.core.{AccessPolicy, BackendPlugin, CapabilitySet, LoginEvent, LoginNotifier, RequestContext}
+import sgrv.be.core.{AccessPolicy, BackendPlugin, CapabilitySet, LoginEvent, RequestContext, SessionNotifier}
 import zio.{durationInt, Clock, Duration, IO, ZIO}
 import zio.http.{Cookie, Method, Path, Request, Response, Routes, Status, URL, handler}
 
 /** Completes the Google login and creates an opaque browser session in Firestore. */
 object Callback extends BackendPlugin:
-  type Requires = GoogleOAuth & SessionStore & TokenGenerator & LoginNotifier
+  type Requires = GoogleOAuth & SessionStore & TokenGenerator & SessionNotifier
 
   override val id = "auth-callback"
   override val requirements: CapabilitySet[Requires] =
     CapabilitySet.one(BackendCapabilities.googleOAuth) ++
       CapabilitySet.one(BackendCapabilities.sessionStore) ++
       CapabilitySet.one(BackendCapabilities.tokenGenerator) ++
-      CapabilitySet.one(BackendCapabilities.loginNotifier)
+      CapabilitySet.one(BackendCapabilities.sessionNotifier)
   override val accessPolicy: AccessPolicy[Requires] = AccessPolicy.Public
   override val routes: Routes[Requires & RequestContext, Nothing] =
     Routes(Method.GET / "auth" / "callback" -> handler((request: Request) => apply(request)))
@@ -45,7 +45,7 @@ object Callback extends BackendPlugin:
         _ <- ZIO.logInfo(s"Created browser session for ${authentication.user.email}")
         // Everything that must happen because a login succeeded hangs off this one call, so the flow stays
         // ignorant of who is listening. Listener failures are logged inside the notifier and never fail a login.
-        _ <- LoginNotifier.loginSucceeded(LoginEvent(sessionKey, authentication.user, now))
+        _ <- SessionNotifier.loginSucceeded(LoginEvent(sessionKey, authentication.user, now))
         secure <- GoogleOAuth.callbackIsSecure
         cookie = sessionCookie(sessionKey, secure)
       yield Response.redirect(URL.root).addCookie(cookie).addCookie(clearedStateCookie(secure))

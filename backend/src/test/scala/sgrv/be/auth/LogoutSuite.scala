@@ -3,7 +3,7 @@ package sgrv.be.auth
 import com.google.api.client.http.{HttpHeaders, HttpResponseException}
 import java.time.Instant
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
-import sgrv.be.core.{CapabilityRegistry, PluginStatus, RouteDiscovery}
+import sgrv.be.core.{CapabilityRegistry, LoginEvent, LogoutEvent, PluginStatus, RouteDiscovery, SessionNotifier}
 import zio.{Duration, Runtime, Task, UIO, Unsafe, ZEnvironment, ZIO}
 import zio.http.{Cookie, Header, Request, Status, URL}
 
@@ -14,8 +14,18 @@ class LogoutSuite extends munit.FunSuite:
       Runtime.default.unsafe.run(effect).getOrThrowFiberFailure()
     }
 
-  private def routes(sessionStore: SessionStore, googleOAuth: GoogleOAuth) =
-    val registry = CapabilityRegistry.fromEnvironment(ZEnvironment(sessionStore, googleOAuth))
+  /** Records the logout events the route raises, so a test can assert both that it fires and that it does not. */
+  private def recordingNotifier(sink: AtomicReference[List[LogoutEvent]]): SessionNotifier =
+    new SessionNotifier:
+      override def loginSucceeded(event: LoginEvent): UIO[Unit] = ZIO.unit
+      override def loggedOut(event: LogoutEvent): UIO[Unit] = ZIO.succeed { val _ = sink.updateAndGet(event :: _) }
+
+  private def routes(
+      sessionStore: SessionStore,
+      googleOAuth: GoogleOAuth,
+      notifier: SessionNotifier = SessionNotifier.none
+  ) =
+    val registry = CapabilityRegistry.fromEnvironment(ZEnvironment(sessionStore, googleOAuth, notifier))
     RouteDiscovery.activate(Logout, Logout.getClass.getName, registry) match
       case PluginStatus.Active(_, _, activeRoutes) => activeRoutes
       case other                                   => fail(s"Expected Logout to activate, got $other")
@@ -132,3 +142,27 @@ class LogoutSuite extends munit.FunSuite:
       override def callbackIsSecure: UIO[Boolean] = ZIO.succeed(true)
       override def accessToken(refreshToken: String): Task[String] = ZIO.fail(new UnsupportedOperationException)
       override def revoke(refreshToken: String): Task[Unit] = revokeEffect(refreshToken)
+
+  test("raises the logout event once the session is really gone"):
+    val events = new AtomicReference(List.empty[LogoutEvent])
+    val user = SessionUser("jane@example.com", "Jane", Some("refresh-token"))
+    val store = sessionStore(user, _ => ZIO.unit)
+    val activeRoutes = routes(store, googleOAuth(_ => ZIO.unit), recordingNotifier(events))
+
+    val response = run(ZIO.scoped(activeRoutes.runZIO(request)))
+
+    assertEquals(response.status, Status.NoContent)
+    assertEquals(events.get().map(_.user.email), List("jane@example.com"))
+    assertEquals(events.get().map(_.sessionKey), List("session-key"))
+
+  test("raises no logout event when the session could not be invalidated"):
+    val events = new AtomicReference(List.empty[LogoutEvent])
+    val user = SessionUser("jane@example.com", "Jane", Some("refresh-token"))
+    val failingStore = sessionStore(user, _ => ZIO.fail(new RuntimeException("firestore is down")))
+    val activeRoutes = routes(failingStore, googleOAuth(_ => ZIO.unit), recordingNotifier(events))
+
+    val response = run(ZIO.scoped(activeRoutes.runZIO(request)))
+
+    // A listener must never record an ending that did not actually happen.
+    assertEquals(response.status, Status.ServiceUnavailable)
+    assertEquals(events.get(), List.empty[LogoutEvent])

@@ -1,8 +1,8 @@
 package sgrv.be
 
 import sgrv.be.auth.{AppConfig, GoogleOAuth, SessionStore, TokenGenerator}
-import sgrv.be.core.{CurrentUserDetails, LoginNotifier}
-import sgrv.be.core.{CapabilityRegistry, CurrentUserContributors, LoginListeners, RouteDiscovery}
+import sgrv.be.core.{CurrentUserDetails, SessionNotifier}
+import sgrv.be.core.{CapabilityRegistry, CurrentUserContributors, RouteDiscovery, SessionListeners}
 import sgrv.be.store.FirestoreClient
 import zio.*
 import zio.http.*
@@ -135,10 +135,10 @@ object Main extends ZIOAppDefault:
       // Discovered modules resolve against the host's own services, and the services derived from them then join
       // the registry, so route plugins can require them like any other capability.
       hostServices = CapabilityRegistry.fromEnvironment(environment)
-      notifier <- LoginListeners.notifier(hostServices)
+      notifier <- SessionListeners.notifier(hostServices)
       details <- CurrentUserContributors.details(hostServices)
       registry = CapabilityRegistry.fromEnvironment(
-        environment.add[LoginNotifier](notifier).add[CurrentUserDetails](details)
+        environment.add[SessionNotifier](notifier).add[CurrentUserDetails](details)
       )
       static = staticRoutes(staticCacheCtrl)
       reservedPatterns = static.routes.map(_.routePattern: Any).toSet

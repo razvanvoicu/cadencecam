@@ -1,18 +1,19 @@
 package sgrv.be.auth
 
 import sgrv.be.BackendCapabilities
-import sgrv.be.core.{AccessPolicy, BackendPlugin, CapabilitySet, RequestContext}
-import zio.{Cause, ZIO}
+import sgrv.be.core.{AccessPolicy, BackendPlugin, CapabilitySet, LogoutEvent, RequestContext, SessionNotifier}
+import zio.{Cause, Clock, ZIO}
 import zio.http.{Header, Method, Response, Routes, Status, handler}
 
 /** Revokes the signed-in user's Google grant and invalidates the opaque browser session. */
 object Logout extends BackendPlugin:
-  type Requires = GoogleOAuth & SessionStore
+  type Requires = GoogleOAuth & SessionStore & SessionNotifier
 
   override val id = "auth-logout"
   override val requirements: CapabilitySet[Requires] =
     CapabilitySet.one(BackendCapabilities.googleOAuth) ++
-      CapabilitySet.one(BackendCapabilities.sessionStore)
+      CapabilitySet.one(BackendCapabilities.sessionStore) ++
+      CapabilitySet.one(BackendCapabilities.sessionNotifier)
   override val accessPolicy: AccessPolicy[Requires] = AccessPolicy.Authenticated
   override val routes: Routes[Requires & RequestContext, Nothing] =
     Routes(Method.POST / "logout" -> handler(apply))
@@ -24,25 +25,30 @@ object Logout extends BackendPlugin:
   private final case class SessionInvalidationFailed(cause: Throwable) extends LogoutFailure
 
   private def apply: ZIO[Requires & RequestContext, Nothing, Response] =
-    ZIO.service[RequestContext].flatMap:
-      case RequestContext.Authenticated(request, user) =>
-        request.cookie(Callback.sessionCookieName).map(_.content).filter(_.nonEmpty) match
-          case None             => ZIO.succeed(Response.status(Status.Unauthorized))
-          case Some(sessionKey) =>
-            for
-              secure <- GoogleOAuth.callbackIsSecure
-              response <- invalidate(sessionKey, user).foldZIO(
-                failure => failureResponse(failure),
-                _ =>
-                  ZIO.succeed(
-                    Response
+    ZIO
+      .service[RequestContext]
+      .flatMap:
+        case RequestContext.Authenticated(request, user) =>
+          request.cookie(Callback.sessionCookieName).map(_.content).filter(_.nonEmpty) match
+            case None             => ZIO.succeed(Response.status(Status.Unauthorized))
+            case Some(sessionKey) =>
+              for
+                secure <- GoogleOAuth.callbackIsSecure
+                response <- invalidate(sessionKey, user).foldZIO(
+                  failure => failureResponse(failure),
+                  _ =>
+                    // Raised only once the grant is revoked and the session is really gone, so a listener never
+                    // records an ending that did not happen. Listener failures are isolated inside the notifier.
+                    for
+                      now <- Clock.instant
+                      _ <- SessionNotifier.loggedOut(LogoutEvent(sessionKey, user, now))
+                    yield Response
                       .status(Status.NoContent)
                       .addCookie(Callback.clearedSessionCookie(secure))
                       .addCookie(Callback.clearedStateCookie(secure))
-                  )
-              )
-            yield noStore(response)
-      case RequestContext.Public(_) => ZIO.succeed(noStore(Response.status(Status.InternalServerError)))
+                )
+              yield noStore(response)
+        case RequestContext.Public(_) => ZIO.succeed(noStore(Response.status(Status.InternalServerError)))
 
   private def invalidate(sessionKey: String, user: SessionUser): ZIO[Requires, LogoutFailure, Unit] =
     user.refreshToken
@@ -58,6 +64,8 @@ object Logout extends BackendPlugin:
           ZIO.succeed(Response.text("Could not revoke Google authorization. Try again.").status(Status.BadGateway))
       case SessionInvalidationFailed(error) =>
         ZIO.logErrorCause("Could not invalidate the browser session during logout", Cause.fail(error)) *>
-          ZIO.succeed(Response.text("Could not invalidate the browser session. Try again.").status(Status.ServiceUnavailable))
+          ZIO.succeed(
+            Response.text("Could not invalidate the browser session. Try again.").status(Status.ServiceUnavailable)
+          )
 
   private def noStore(response: Response): Response = response.addHeader(Header.CacheControl.NoStore)

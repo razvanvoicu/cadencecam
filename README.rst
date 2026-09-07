@@ -556,53 +556,90 @@ The available policies are ``Public``, ``Authenticated``, ``AdminPassword``, and
 no reflective cast to a generic Scala function. Plugin IDs and API versions are validated, and duplicate route
 patterns (including collisions with static routes) reject the involved plugin deterministically.
 
-Reacting to a login
--------------------
+Reacting to a session starting or ending
+----------------------------------------
 
-Some work belongs to the fact that a login happened rather than to any endpoint the browser calls. The host raises
-one lifecycle event for that, and ``LoginListener`` is the extension point that consumes it — the same shape as
-`Adding a backend plugin`_, but triggered by an event instead of a route:
+Some work belongs to the fact that a session began or ended rather than to any endpoint the browser calls. The
+host raises lifecycle events for that, and ``SessionListener`` is the extension point that consumes them — the
+same shape as `Adding a backend plugin`_, but triggered by an event instead of a route:
 
 .. code-block:: scala
 
    package sgrv.be.example
 
    import sgrv.be.BackendCapabilities
-   import sgrv.be.core.{CapabilitySet, LoginEvent, LoginListener}
+   import sgrv.be.core.{CapabilitySet, LoginEvent, LogoutEvent, SessionListener}
    import com.google.cloud.firestore.Firestore
    import zio.ZIO
 
-   object Example extends LoginListener:
+   object Example extends SessionListener:
      type Requires = Firestore
 
      override val id = "example"
      override val requirements: CapabilitySet[Requires] = CapabilitySet.one(BackendCapabilities.firestore)
+
      override def onLogin(event: LoginEvent): ZIO[Requires, Throwable, Unit] = ZIO.unit
+     override def onLogout(event: LogoutEvent): ZIO[Requires, Throwable, Unit] = ZIO.unit
+
+Both hooks default to doing nothing, so a listener implements only the half it cares about.
 
 Listeners are discovered by the same ClassGraph scan as route plugins (``ModuleDiscovery``), resolve their
 capabilities the same way, and are validated the same way: an invalid id, an incompatible ``apiVersion``, or a
-missing capability is reported and the listener is left out. ``Main`` builds them into a ``LoginNotifier`` before
-route discovery runs, then adds that notifier to the capability registry, so ``Callback`` requires it as the
-``login-notifier`` capability like any other service. The login flow therefore never names its listeners.
+missing capability is reported and the listener is left out. ``Main`` builds them into a ``SessionNotifier``
+before route discovery runs, then adds that notifier to the capability registry, so ``Callback`` and ``Logout``
+require it as the ``session-notifier`` capability like any other service. Neither flow names its listeners.
 
-``LoginEvent`` carries the ``SessionUser``, the time, and the opaque ``sessionKey``. The session key is included
-because it is the only stable identifier of a single login, which lets a listener key its own records per login —
-a reissued cookie means a new login and a new record. It is a secret: derive from it (hash it) rather than copying
-it into another collection.
+Both events carry the ``SessionUser``, the time, and the opaque ``sessionKey``. The session key is included
+because it is the only stable identifier of one session, which lets a listener key its own records to it — a
+reissued cookie means a new session and a new record. It is a secret: derive from it (hash it) rather than
+copying it into another collection.
 
-Three properties are deliberate:
+Four properties are deliberate:
 
-* **A listener cannot fail a login.** Its error is logged and the login still completes. Authentication does not
-  depend on what a listener wanted to do about it. Flip this only with a clear answer for what the user should
-  see when the side effect fails but their credentials were fine.
-* **Listeners run before the redirect**, in ``id`` order, so a record a listener creates already exists by the time
-  the browser loads the home page. A slow listener therefore delays the redirect.
-* **They run once per login**, not per page load, because the event is raised in ``/auth/callback``.
+* **A listener cannot fail a login or a logout.** Its error is logged and the flow still completes.
+  Authentication does not depend on what a listener wanted to do about it. Flip this only with a clear answer for
+  what the user should see when the side effect fails but their credentials were fine.
+* **Listeners run before the response**, in ``id`` order, so a record a listener creates already exists by the
+  time the browser loads the home page. A slow listener therefore delays the response.
+* **They run once per session change**, not per page load, because the events are raised in ``/auth/callback``
+  and ``POST /logout``.
+* **The logout event is raised only after the logout really happened** — after Google revocation and after the
+  browser session is deleted — so a listener never records an ending that did not occur.
 
-``sgrv.be.sessions.CountingSessionListener`` is the worked example: on each login it opens a document in the
-``CountingSessions`` collection recording the user and the start time. Its document id is a SHA-256 of the session
-key, which makes the write idempotent — a replayed callback resumes the existing record rather than opening a
-second one. That record is intended to grow into the state the acquirer writes and the dashboard reads.
+``sgrv.be.sessions.CountingSessionListener`` is the worked example. On login it opens a document in the
+``CountingSessions`` collection recording the user and the start time; on logout it sets ``completedAt`` on that
+same document rather than deleting it, so the history survives for later analysis. Its document id is a SHA-256
+of the session key, which makes the write idempotent — a replayed callback resumes the existing record rather
+than opening a second one. Note that nothing expires this collection, unlike ``Access``: these records
+accumulate deliberately.
+
+Adding to the /me response
+--------------------------
+
+``/me`` is the one call the frontend makes on every page load, so anything it needs about the current session can
+ride along on it instead of costing a second round trip. ``CurrentUserContributor`` is the extension point for
+that, discovered and validated exactly like ``SessionListener``:
+
+.. code-block:: scala
+
+   object Example extends CurrentUserContributor:
+     type Requires = Any
+
+     override val id = "example"
+     override val requirements: CapabilitySet[Requires] = CapabilitySet.empty
+     override def contribute(context: RequestContext.Authenticated): ZIO[Requires, Throwable, Option[Json]] =
+       ZIO.some(Json.Obj("hello" -> Json.Str(context.user.email)))
+
+Each contribution is filed under its contributor's id, so two can never collide:
+
+.. code-block:: json
+
+   {"email": "...", "name": "...", "extra": {"example": {"hello": "..."}}}
+
+``CurrentUser.extra`` is absent rather than empty when nothing contributes, so an application with no
+contributors sees exactly the payload this route has always returned. A contributor may return ``None`` to add
+nothing for a given request, and a failing contributor omits only its own key — resolving who is signed in never
+depends on what an application wanted to say about them.
 
 Logging
 -------

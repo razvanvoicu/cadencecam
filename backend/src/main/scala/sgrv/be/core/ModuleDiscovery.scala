@@ -7,8 +7,8 @@ import zio.{Task, ZIO}
 /** Finds and loads the Scala `object`s under `sgrv.be` that implement a nominal host interface.
   *
   * Shared by every kind of extension point so they are all discovered identically: [[BackendPlugin]] contributes
-  * routes, [[LoginListener]] reacts to a completed login. Adding a further kind means defining its interface and
-  * calling this, not writing another classpath scan.
+  * routes, [[SessionListener]] reacts to a session starting or ending, [[CurrentUserContributor]] adds to `/me`. Adding
+  * a further kind means defining its interface and calling this, not writing another classpath scan.
   */
 private[core] object ModuleDiscovery:
   def implementations(interface: Class[?], classLoader: ClassLoader): Task[Seq[String]] =
