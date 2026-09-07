@@ -65,7 +65,7 @@ object AppConfigBuild {
   }
 
   def gcpRuntimeEnv(config: Config): Map[String, String] =
-    Seq("GCP_PROJECT_ID", "FIRESTORE_DATABASE_ID", "FIRESTORE_LOCATION")
+    Seq("GCP_PROJECT_ID", "FIRESTORE_DATABASE_ID")
       .map(name => name -> config.required(name))
       .toMap
 }

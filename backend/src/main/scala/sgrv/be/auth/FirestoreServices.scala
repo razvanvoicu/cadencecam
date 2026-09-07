@@ -1,126 +1,15 @@
 package sgrv.be.auth
 
-import com.google.api.gax.core.NoCredentialsProvider
-import com.google.api.gax.rpc.NotFoundException
 import com.google.cloud.Timestamp
-import com.google.cloud.firestore.v1.{FirestoreAdminClient, FirestoreAdminSettings}
-import com.google.cloud.firestore.{Firestore, FirestoreOptions}
-import com.google.firestore.admin.v1.{
-  CreateDatabaseRequest,
-  Database,
-  Field,
-  GetDatabaseRequest,
-  GetFieldRequest,
-  UpdateFieldRequest
-}
-import com.google.protobuf.FieldMask
+import com.google.cloud.firestore.Firestore
 import java.time.Instant
-import zio.{System, Task, ZIO, ZLayer}
+import scala.jdk.CollectionConverters.*
+import sgrv.be.store.GoogleFuture
+import zio.{Task, ZIO, ZLayer}
 
 private[auth] object SessionSchema:
   val collection = "Access"
   val expiresAt = "expiresAt"
-
-private[be] trait DatabaseAdmin:
-  def ensureDatabase: Task[Unit]
-  def ensureSessionTtl: Task[Unit]
-
-private[be] object DatabaseAdmin:
-  def ensureDatabase: ZIO[DatabaseAdmin, Throwable, Unit] =
-    ZIO.serviceWithZIO[DatabaseAdmin](_.ensureDatabase)
-
-  def ensureSessionTtl: ZIO[DatabaseAdmin, Throwable, Unit] =
-    ZIO.serviceWithZIO[DatabaseAdmin](_.ensureSessionTtl)
-
-  val live: ZLayer[AppConfig, Throwable, DatabaseAdmin] =
-    ZLayer.scoped:
-      for
-        config <- ZIO.service[AppConfig]
-        emulatorHost <- System.env("FIRESTORE_EMULATOR_HOST").map(_.map(_.trim).filter(_.nonEmpty))
-        client <- ZIO.acquireRelease(ZIO.attemptBlocking(adminClient(emulatorHost)))(value =>
-          ZIO.attemptBlocking(value.close()).ignore
-        )
-      yield Live(config.firestore, client, emulatorHost.nonEmpty)
-
-  // FirestoreOptions (used by SessionStore below) auto-detects FIRESTORE_EMULATOR_HOST, but the raw
-  // FirestoreAdminClient GAPIC client does not; without this, ensureDatabase silently checks/creates the
-  // database against real GCP instead of the emulator, leaving the emulator's copy uninitialized.
-  private def adminClient(emulatorHost: Option[String]): FirestoreAdminClient =
-    emulatorHost match
-      case None       => FirestoreAdminClient.create()
-      case Some(host) =>
-        val channelProvider = FirestoreAdminSettings
-          .defaultGrpcTransportProviderBuilder()
-          .setChannelConfigurator(_.usePlaintext())
-          .build()
-        val settings = FirestoreAdminSettings
-          .newBuilder()
-          .setCredentialsProvider(NoCredentialsProvider.create())
-          .setTransportChannelProvider(channelProvider)
-          .setEndpoint(host)
-          .build()
-        FirestoreAdminClient.create(settings)
-
-  private final case class Live(config: FirestoreConfig, client: FirestoreAdminClient, usingEmulator: Boolean)
-      extends DatabaseAdmin:
-    override def ensureDatabase: Task[Unit] =
-      val name = s"projects/${config.projectId}/databases/${config.databaseId}"
-      ZIO
-        .attemptBlocking(client.getDatabase(GetDatabaseRequest.newBuilder().setName(name).build()))
-        .unit
-        .catchSome:
-          case _: NotFoundException =>
-            GoogleFuture
-              .fromApiFuture:
-                client.createDatabaseAsync(
-                  CreateDatabaseRequest
-                    .newBuilder()
-                    .setParent(s"projects/${config.projectId}")
-                    .setDatabaseId(config.databaseId)
-                    .setDatabase(
-                      Database
-                        .newBuilder()
-                        .setType(Database.DatabaseType.FIRESTORE_NATIVE)
-                        .setLocationId(config.location)
-                    )
-                    .build()
-                )
-              .unit
-
-    override def ensureSessionTtl: Task[Unit] =
-      if usingEmulator then ZIO.unit
-      else
-        val field = ZIO
-          .attemptBlocking(
-            client.getField(GetFieldRequest.newBuilder().setName(sessionTtlFieldName(config)).build())
-          )
-          .map(Some(_))
-          .catchSome:
-            case _: NotFoundException => ZIO.none
-        field.flatMap:
-          case Some(existing) if !sessionTtlNeedsUpdate(existing) => ZIO.unit
-          case _                                                  =>
-            ZIO.attemptBlocking(client.updateFieldCallable().call(sessionTtlUpdateRequest(config))).unit *>
-              ZIO.logInfo(s"Enabled Firestore TTL on ${SessionSchema.collection}.${SessionSchema.expiresAt}")
-
-  private[auth] def sessionTtlFieldName(config: FirestoreConfig): String =
-    s"projects/${config.projectId}/databases/${config.databaseId}/collectionGroups/${SessionSchema.collection}" +
-      s"/fields/${SessionSchema.expiresAt}"
-
-  private[auth] def sessionTtlUpdateRequest(config: FirestoreConfig): UpdateFieldRequest =
-    UpdateFieldRequest
-      .newBuilder()
-      .setField(
-        Field
-          .newBuilder()
-          .setName(sessionTtlFieldName(config))
-          .setTtlConfig(Field.TtlConfig.getDefaultInstance)
-      )
-      .setUpdateMask(FieldMask.newBuilder().addPaths("ttl_config"))
-      .build()
-
-  private[auth] def sessionTtlNeedsUpdate(field: Field): Boolean =
-    !field.hasTtlConfig || field.getTtlConfig.getState == Field.TtlConfig.State.NEEDS_REPAIR
 
 trait SessionStore:
   def create(
@@ -161,20 +50,7 @@ private[be] object SessionStore:
   def invalidate(sessionKey: String): ZIO[SessionStore, Throwable, Unit] =
     ZIO.serviceWithZIO[SessionStore](_.invalidate(sessionKey))
 
-  val live: ZLayer[AppConfig, Throwable, SessionStore] =
-    ZLayer.scoped:
-      for
-        config <- ZIO.service[AppConfig]
-        firestore <- ZIO.acquireRelease(
-          ZIO.attemptBlocking:
-            FirestoreOptions
-              .newBuilder()
-              .setProjectId(config.firestore.projectId)
-              .setDatabaseId(config.firestore.databaseId)
-              .build()
-              .getService
-        )(value => ZIO.attemptBlocking(value.close()).ignore)
-      yield Live(firestore)
+  val live: ZLayer[Firestore, Nothing, SessionStore] = ZLayer.fromFunction(Live(_))
 
   private final case class Live(firestore: Firestore) extends SessionStore:
     override def create(
@@ -186,7 +62,7 @@ private[be] object SessionStore:
       for
         fields <- ZIO.attempt(documentFields(sessionKey, user, createdAt, expiresAt))
         _ <- GoogleFuture.fromApiFuture(
-          firestore.collection(SessionSchema.collection).document(sessionKey).create(fields)
+          firestore.collection(SessionSchema.collection).document(sessionKey).create(fields.asJava)
         )
       yield ()
 
@@ -248,16 +124,19 @@ private[be] object SessionStore:
       user: SessionUser,
       createdAt: Instant,
       expiresAt: Instant
-  ): java.util.Map[String, AnyRef] =
-    val values = new java.util.HashMap[String, AnyRef]
-    values.put("email", user.email)
-    values.put("name", user.name)
-    values.put("createdAt", timestamp(createdAt))
-    values.put("sessionKey", sessionKey)
-    values.put(SessionSchema.expiresAt, timestamp(expiresAt))
-    user.refreshToken.foreach(value => values.put("refreshToken", value))
-    user.accessTokenForRevocation.foreach(value => values.put("accessTokenForRevocation", value))
-    values
+  ): Map[String, AnyRef] =
+    val session = Map[String, AnyRef](
+      "email" -> user.email,
+      "name" -> user.name,
+      "createdAt" -> timestamp(createdAt),
+      "sessionKey" -> sessionKey,
+      SessionSchema.expiresAt -> timestamp(expiresAt)
+    )
+    // At most one revocation credential exists; the absent one is omitted rather than stored as an empty field.
+    val revocation =
+      user.refreshToken.map(token => "refreshToken" -> token) ++
+        user.accessTokenForRevocation.map(token => "accessTokenForRevocation" -> token)
+    session ++ revocation
 
   private def normalized(value: String): Option[String] =
     Option(value).map(_.trim).filter(_.nonEmpty)

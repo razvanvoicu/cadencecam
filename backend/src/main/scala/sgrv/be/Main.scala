@@ -1,7 +1,9 @@
 package sgrv.be
 
-import sgrv.be.auth.{AppConfig, DatabaseAdmin, GoogleOAuth, SessionStore, TokenGenerator}
-import sgrv.be.core.{CapabilityRegistry, RouteDiscovery}
+import sgrv.be.auth.{AppConfig, GoogleOAuth, SessionStore, TokenGenerator}
+import sgrv.be.core.LoginNotifier
+import sgrv.be.core.{CapabilityRegistry, LoginListeners, RouteDiscovery}
+import sgrv.be.store.FirestoreClient
 import zio.*
 import zio.http.*
 import zio.logging.*
@@ -110,14 +112,16 @@ object Main extends ZIOAppDefault:
   private[be] def serverConfig(host: String, port: Int): Server.Config =
     Server.Config.default.binding(host, port).gracefulShutdownTimeout(serverShutdownTimeout)
 
-  private type Layer = BackendEnvironment & DatabaseAdmin
-  private val backendLayer: ZLayer[Any, Throwable, Layer] =
-    ZLayer.make[Layer](
+  // Nothing here reaches Firestore's admin API: the app assumes its database already exists and that the
+  // Access.expiresAt TTL policy was configured once, out of band. Startup therefore costs no admin gRPC
+  // channel and no admin round trips, which matters for an app expected to cold-start often and cheaply.
+  private val backendLayer: ZLayer[Any, Throwable, BackendEnvironment] =
+    ZLayer.make[BackendEnvironment](
       AppConfig.live,
+      FirestoreClient.live,
       GoogleOAuth.live,
       SessionStore.live,
       TokenGenerator.live,
-      DatabaseAdmin.live,
       Client.default
     )
 
@@ -128,14 +132,13 @@ object Main extends ZIOAppDefault:
       host <- bindAddress
       staticCacheCtrl <- staticCacheControl
       environment <- ZIO.environment[BackendEnvironment]
-      registry = CapabilityRegistry.fromEnvironment(environment)
+      // Listeners resolve against the host's own services; the resulting notifier then joins the registry so
+      // route plugins (Callback in particular) can require it like any other capability.
+      notifier <- LoginListeners.notifier(CapabilityRegistry.fromEnvironment(environment))
+      registry = CapabilityRegistry.fromEnvironment(environment.add[LoginNotifier](notifier))
       static = staticRoutes(staticCacheCtrl)
       reservedPatterns = static.routes.map(_.routePattern: Any).toSet
       applicationRoutes <- RouteDiscovery.routes(registry, reservedPatterns).map(static ++ _)
-      _ <- DatabaseAdmin.ensureDatabase.catchAll: error =>
-        ZIO.logWarning(s"Could not ensure the Firestore database: ${error.getMessage}")
-      _ <- DatabaseAdmin.ensureSessionTtl.catchAll: error =>
-        ZIO.logWarning(s"Could not ensure the Firestore session TTL policy: ${error.getMessage}")
       _ <- ZIO.logInfo(s"Serving on http://$host:$p/")
       _ <- Server
         .serve(applicationRoutes @@ HandlerAspect.requestLogging())

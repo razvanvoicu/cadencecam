@@ -57,7 +57,6 @@ class MainSuite extends munit.FunSuite:
       "ARTIFACT_PORT=",
       "GCP_PROJECT_ID=",
       "FIRESTORE_DATABASE_ID=",
-      "FIRESTORE_LOCATION=",
       "GCLOUD_REGION=",
       "ARTIFACT_REGISTRY_REPOSITORY=",
       "GCLOUD_SERVICE_ACCOUNT=",
@@ -198,7 +197,7 @@ class MainSuite extends munit.FunSuite:
       Some(Header.ContentType(MediaType.application.`manifest+json`))
     )
     assertEquals(response.headers.get(Header.CacheControl), Some(testStaticCacheControl))
-    assertEquals(json.get("name").getAsString, "Web App Template")
+    assertEquals(json.get("name").getAsString, "CamCadence")
     assertEquals(json.get("start_url").getAsString, "/")
     assertEquals(json.get("scope").getAsString, "/")
     assertEquals(json.get("display").getAsString, "standalone")

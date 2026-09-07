@@ -6,7 +6,7 @@ import zio.{System, Task, ZIO, ZLayer}
 private[be] final case class OAuthConfig(clientId: String, clientSecret: String, publicBaseUrl: String):
   val callbackUri: String = s"$publicBaseUrl/auth/callback"
   val callbackIsSecure: Boolean = publicBaseUrl.startsWith("https://")
-private[auth] final case class FirestoreConfig(projectId: String, databaseId: String, location: String)
+private[be] final case class FirestoreConfig(projectId: String, databaseId: String)
 private[be] final case class AppConfig(
     oauth: OAuthConfig,
     firestore: FirestoreConfig,
@@ -33,10 +33,9 @@ private[be] object AppConfig:
       publicBaseUrl <- validatePublicBaseUrl(configuredBaseUrl)
       projectId <- required("GCP_PROJECT_ID")
       databaseId <- required("FIRESTORE_DATABASE_ID")
-      location <- required("FIRESTORE_LOCATION")
     yield AppConfig(
       OAuthConfig(clientId, clientSecret, publicBaseUrl),
-      FirestoreConfig(projectId, databaseId, location),
+      FirestoreConfig(projectId, databaseId),
       googleServices(environment)
     )
 

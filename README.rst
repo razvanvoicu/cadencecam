@@ -1,5 +1,5 @@
-webapptemplate
-==============
+camcadence
+==========
 
 A small full-stack web application template written in Scala. The frontend is
 compiled with Scala.js and served by a ZIO HTTP backend from the same deployment
@@ -13,8 +13,6 @@ Technology
 * ZIO HTTP for the backend server
 * ZIO Logging for console logging
 * Google OAuth 2.0 (google-api-client) for "Login with Google", optionally with additional Google API scopes
-* Google Sheets v4 / Drive v3 REST APIs (via zio-http's ``Client`` and Gson) as a worked example of using those
-  entitlements
 * Google Cloud Firestore for browser-session records
 * ClassGraph for discovering independently loadable, capability-checked backend plugins
 * MUnit and sbt-scoverage for backend tests and coverage
@@ -27,10 +25,11 @@ The home page offers a "Login with Google" link. After a successful Google
 login the page instead greets the user with ``Hello, <Name>!``. If Google
 returns no non-empty name, the verified email address is displayed instead.
 
-Once signed in, a small form appears under the greeting exercising the Google Sheets integration described in
-`Google service entitlements (Sheets)`_ below: enter a spreadsheet name and click "Create or update spreadsheet"
-to find-or-create that spreadsheet in the signed-in user's Google Drive, append a row recording the request's
-server timestamp and the browser's User-Agent, and display the spreadsheet's current content in a table.
+Once signed in, the greeting is followed by a role selection. This device can act as the **signal acquirer** —
+the phone whose camera watches the periodic movement — or as the **dashboard** showing the live rep count.
+Choosing one opens that role's screen, which currently holds a placeholder and a control returning to the
+selection. The choice is persisted per device, so reloading the capture phone returns it to capturing, while a
+different account signing in on the same device starts back at the selection.
 
 "About" and "Logout" controls also appear in the upper-right corner after sign-in. About opens a centered modal
 and fetches the app version, UTC build timestamp, build operating system, Scala version, and Scala.js version from
@@ -46,8 +45,8 @@ plugin. A plugin with missing capabilities, an incompatible API version, an init
 conflict is reported and isolated without preventing other plugins from loading.
 
 Capabilities are host facilities, not plugin implementations. The host exposes generic services such as the
-HTTP client and session store; a plugin owns API-specific adapters such as ``SheetsClient`` and constructs them
-from those generic facilities. Consequently, adding a plugin does not require adding its private services to
+HTTP client and session store; a plugin owns whatever API-specific adapter it needs and constructs it from
+those generic facilities. Consequently, adding a plugin does not require adding its private services to
 ``Main`` or ``BackendEnvironment``.
 
 The Scala.js linker runs as a backend resource generator. Its ``main.js`` and
@@ -60,7 +59,18 @@ for ``/about``.
 Running locally
 ---------------
 
-The development build currently uses JDK 21, Scala 3.8.4, and sbt 1.12.14.
+The build requires **JDK 21 or newer**, Scala 3.8.4, and sbt 1.12.14. JDK 21 is a floor, not a pin: a newer JDK
+is a perfectly good machine to develop on, and different clones need not agree on one. Two settings keep that
+from mattering to the output, both driven by ``minimumJdkVersion`` in ``build.sbt``:
+
+* ``ThisBuild / initialize`` refuses to load the build on anything older than that version, naming the JDK it
+  found and where it lives, rather than failing later in a way that has to be diagnosed.
+* ``-release`` (and the matching ``--release`` for javac) compiles against exactly that JDK's API and emits its
+  bytecode, whichever JDK is actually running. A call to a newer JDK's API is then a compile error on every
+  machine, instead of compiling cleanly on the one machine that has it and failing at runtime everywhere else —
+  including inside the ``eclipse-temurin:21-jre-jammy`` runtime image. Keep ``minimumJdkVersion`` and that base
+  image in step if you raise either.
+
 Before running the application, create the shared build configuration described
 below. From the repository root, run:
 
@@ -91,8 +101,8 @@ On Windows, the development server can be stopped by port with:
 and the Docker image's ``runApp`` launcher passes the same flag directly. Some networks hand out an
 IPv6 (AAAA) address for ``googleapis.com`` without actually routing IPv6, which otherwise surfaces as
 ``io.netty.channel.AbstractChannel$AnnotatedNoRouteToHostException`` /
-``java.net.NoRouteToHostException`` from outbound Google API calls (the OAuth token exchange, or the Sheets/Drive
-calls in `Google service entitlements (Sheets)`_); forcing IPv4 avoids that entirely.
+``java.net.NoRouteToHostException`` from outbound Google API calls (the OAuth token exchange, and the token
+refresh behind session renewal); forcing IPv4 avoids that entirely.
 
 Routes and caching
 ------------------
@@ -149,23 +159,16 @@ Routes and caching
    * - ``GET /about``
      - Authenticated build metadata as JSON
      - ``no-store``
-   * - ``POST /sheets/upsert``
-     - Finds/creates a named spreadsheet, appends a timestamp + User-Agent row; JSON ``{"spreadsheetId": ...}``
-     - Default
-   * - ``GET /sheets/content``
-     - Columns A:B of a named spreadsheet as JSON ``{"rows": [...]}``, or an empty list if it doesn't exist
-     - Default
 
 Each plugin declares an ``AccessPolicy``; see `Adding a backend plugin`_. ``/auth/login``, ``/auth/callback``, and
 ``/me`` use ``AccessPolicy.Public`` because they must serve visitors without an existing session. When linked,
 the Debug plugin uses ``AuthenticatedAndAdminPassword``, so reaching ``/debug`` needs both a session and the
 admin password (`Admin-protected routes`_). Session refresh is public so it can recover an expired session; it
 requires the opaque cookie and a still-valid stored Google refresh token before extending Firestore and reissuing
-the ``HttpOnly`` cookie. Logout, About, and Sheets use ``Authenticated``. Logout revokes the
-already-resolved user's Google credentials and invalidates the current session without a second Firestore lookup;
-About reports packaged build metadata, while Sheets consumes the resulting authenticated request context to reach
-the signed-in user's stored Google refresh token
-(`Google service entitlements (Sheets)`_). Static routes
+the ``HttpOnly`` cookie. Logout and About use ``Authenticated``. Logout consumes the resulting authenticated
+request context to reach the signed-in user's stored Google refresh token, revoking their Google credentials and
+invalidating the current session without a second Firestore lookup; About reports packaged build metadata.
+Static routes
 (``/``, ``/index.html``, ``/favicon.ico``, both PWA icons, ``/manifest.webmanifest``,
 ``/style.css``, ``/main.js``, and ``/main.js.map``) are wired directly in ``Main`` and are
 reserved against dynamically loaded route conflicts.
@@ -177,15 +180,15 @@ while transient non-``401`` failures retry after one minute. Logout disables the
 backend.
 
 Application UI state is an immutable, typed ``FrontendState`` snapshot encoded with ``zio-json`` under the browser
-``localStorage`` key ``sgrv.frontend-state.v2``. A locally scoped ``FrontendStateStore`` given owns both persistence
+``localStorage`` key ``sgrv.frontend-state.v3``. A locally scoped ``FrontendStateStore`` given owns both persistence
 and Laminar's reactive projection, so DOM updates remain declarative and the two representations cannot be updated
 separately. On page load, transient operations are normalized and authentication returns to ``Unknown`` until
 ``/me`` confirms the HttpOnly cookie against the backend; persisted state is never treated as proof of
 authentication.
 
 Session-renewal infrastructure lives separately in ``sgrv.fe.refreshstate`` and persists only ``RefreshState``
-under ``sgrv.refresh-state.v1``. That package has no dependency on Sheets or any other application-specific state,
-so a fork can replace the example application without modifying session refresh. Browser-only resources such as
+under ``sgrv.refresh-state.v1``. That package has no dependency on any application-specific state, so the
+application above it can be replaced without modifying session refresh. Browser-only resources such as
 timeout handles are not serialized. Instead, scheduled refresh callbacks validate a persisted generation before
 acting, so disabling or replacing a worker makes older callbacks harmless.
 
@@ -246,8 +249,7 @@ A complete configuration has this shape:
    PUBLIC_BASE_URL=https://<cloud-run-host>
    ARTIFACT_PORT=<standalone-container-port>
    GCP_PROJECT_ID=<project-id>
-   FIRESTORE_DATABASE_ID=<database-id>
-   FIRESTORE_LOCATION=<database-location>
+   FIRESTORE_DATABASE_ID=(default)
    GCLOUD_REGION=<cloud-run-region>
    ARTIFACT_REGISTRY_REPOSITORY=<repository-name>
    GCLOUD_SERVICE_ACCOUNT=<runtime-service-account-email>
@@ -312,7 +314,7 @@ user out of their Google account itself.
 
 The Google and Firestore SDKs are isolated behind ZIO service interfaces.
 ``AppConfig`` loads and validates deployment settings as an effect;
-``GoogleOAuth``, ``SessionStore``, ``DatabaseAdmin``, and ``TokenGenerator``
+``GoogleOAuth``, ``SessionStore``, and ``TokenGenerator``
 are supplied through layers. External clients are scoped resources and are
 closed automatically when the application stops. Google ``ApiFuture`` values
 are bridged asynchronously into interruptible ZIO effects instead of blocking
@@ -341,10 +343,17 @@ in the external shared configuration rather than Scala source or tracked environ
   supplies the shared GCP/Firestore settings, ``PUBLIC_BASE_URL``, and runtime credentials to the Cloud Run
   revision at deployment time, and relies on workload identity for Google Application Default Credentials.
 
-In every mode nothing needs to be set by hand at run time. On startup the backend checks for the Firestore database
-named ``FIRESTORE_DATABASE_ID`` and creates it in Native mode at ``FIRESTORE_LOCATION`` if it does not exist. A
-failed initialization is logged as a warning so the HTTP server can still start, but database-backed login and
-session checks cannot succeed until Firestore is available.
+In every mode nothing needs to be set by hand at run time.
+
+Startup deliberately touches Firestore's *admin* API not at all. The backend assumes its database already
+exists and that the TTL policy below is already in place, so a cold start builds only the data client and
+begins serving — no admin gRPC channel, no ``GetDatabase``, no ``GetField``. This app is expected to scale to
+zero and restart often, and admin round trips are pure latency on every one of those starts. The cost is that
+creating the database and setting its TTL policy are genuinely manual, one-time steps: nothing repairs them at
+runtime.
+
+All apps under this GCP project share the single ``(default)`` Firestore database. ``FIRESTORE_DATABASE_ID``
+still exists so the backend never guesses, but ``(default)`` is the expected value.
 
 One-time setup:
 
@@ -369,10 +378,17 @@ after revoking the associated Google grant. There is no process-global encryptio
 invalidate sessions; Firestore is the durable session store. Treat document
 IDs, ``sessionKey``, and ``refreshToken`` values as secrets.
 
-On production startup, ``DatabaseAdmin.live`` ensures that ``Access.expiresAt`` has a Firestore TTL policy. Firestore
-therefore removes expired session documents asynchronously instead of retaining every rejected session indefinitely.
-The update is idempotent and its server-side backfill does not block HTTP startup. Emulator runs skip this production
-admin operation; their in-memory data is cleared when the emulator restarts.
+``Access.expiresAt`` needs a Firestore TTL policy so that Firestore removes expired session documents
+asynchronously, rather than retaining every rejected session forever. Set it once per project, by hand:
+
+.. code-block:: console
+
+   gcloud firestore fields ttls update expiresAt --collection-group=Access --database='(default)' --enable-ttl
+
+Nothing checks or repairs this at runtime (see the startup note under `Login with Google`_), so a project where
+it was never run accumulates dead session documents indefinitely. It is idempotent, and its server-side backfill
+runs in the background. The emulator has no TTL support and needs nothing: its data is in-memory and is cleared
+whenever it restarts.
 
 A missing or expired session produces ``401 Unauthorized``. A Firestore error
 produces ``503 Service Unavailable`` and is logged, rather than being presented
@@ -409,14 +425,9 @@ With it running, browse ``http://localhost:4000/firestore`` to inspect the ``Acc
 exercising the login flow. Restarting the emulator wipes its data (it's in-memory only), so a fresh restart
 means signing in again before there's anything to see.
 
-Getting the Emulator UI to actually display data here took three separate fixes, each worth knowing about since
+Getting the Emulator UI to actually display data here took two separate fixes, each worth knowing about since
 the failure mode of each is "looks fine, shows nothing," with no error surfaced anywhere obvious:
 
-* ``DatabaseAdmin.live`` detects ``FIRESTORE_EMULATOR_HOST`` and points its ``FirestoreAdminClient`` at the
-  emulator too (plaintext channel, no credentials) instead of real GCP. Without this, ``ensureDatabase`` would
-  silently check/create the database against the real project instead — using whatever Application Default
-  Credentials happen to be configured — while the emulator's own copy of the database is never created, and the
-  real-GCP call "succeeds" from the app's point of view, so nothing gets logged.
 * ``singleProjectMode: false`` in ``firebase.json``: the Emulator UI defaults to "demo mode," which only
   recognizes a single project.
 * The generated ``.firebaserc``: without it, the UI's own browser-side code resolves its *own* project id
@@ -426,52 +437,32 @@ the failure mode of each is "looks fine, shows nothing," with no error surfaced 
   ``localhost:8880`` actually use.
 
 Data can be genuinely present and readable — verifiable directly against the emulator's REST API, e.g. ``curl
-http://localhost:8880/v1/projects/<project-id>/databases/<database-id>/documents/Access`` — while the UI
-shows nothing, for any of the three reasons above.
+http://localhost:8880/v1/projects/<project-id>/databases/(default)/documents/Access`` — while the UI
+shows nothing, for either of the two reasons above.
 
-One further caveat worth checking if session storage doesn't work against the emulator: this app can use a
-*named* Firestore database (a newer real-Firestore feature), and older Firestore emulator versions only emulated
-the single default database. If session reads/writes fail against the emulator, temporarily set the shared
-``FIRESTORE_DATABASE_ID`` to ``(default)`` as a first troubleshooting step.
+The emulator implements Firestore's data API but not its admin API, so a request like ``GetDatabase`` answers
+``UNIMPLEMENTED``. Nothing in this app calls that API any more, which is why no such warning appears at
+startup.
 
-Google service entitlements (Sheets)
--------------------------------------
+Google service entitlements
+----------------------------
 
-Beyond ``openid email profile``, the login flow can request additional Google API scopes, letting the backend act
-on Google services on the signed-in user's behalf. ``GOOGLE_SERVICES`` in ``prod.env`` is a comma-separated list
-of OAuth scope URLs; it is optional, and missing or empty requests no additional entitlements. The template
-default requests Sheets creation/editing and Drive access limited to files this app created:
+This application deliberately requests no Google API scopes beyond ``openid email profile``. Asking for anything
+more subjects the OAuth consent screen to Google's sensitive-scope verification review, which this app has no
+reason to take on. ``GOOGLE_SERVICES`` is consequently absent from both ``test.env`` and ``prod.env``, left as a
+commented-out line documenting the mechanism.
 
-.. code-block:: text
+The mechanism itself still works. ``GOOGLE_SERVICES`` is an optional comma-separated list of OAuth scope URLs;
+missing or empty requests no additional entitlements, while a value is appended to the ``scope`` parameter by
+``GoogleOAuth.authorizationUrl``. Google shows a consent screen the first time a user grants a given scope set.
 
-   GOOGLE_SERVICES=https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive.file
-
-``GoogleOAuth.authorizationUrl`` appends these scopes to the ``scope`` parameter sent to Google. Google shows a
-consent screen the first time a user grants a given scope set; ``access_type=offline`` (already requested for
-every login) asks for a refresh token at that point. That refresh token is stored on the browser-session document
-alongside ``email``/``name`` (see `Login with Google`_) and resolved onto ``SessionUser.refreshToken`` by
-``SessionStore.find``, so a route handler can call ``GoogleOAuth.accessToken(refreshToken)`` to mint a fresh,
-short-lived access token for a Google API call without the user re-authenticating. If a session predates
-``GOOGLE_SERVICES`` being requested, or Google didn't reissue a refresh token on a later login, that field is
-``None``; routes that need it reject the request with ``403`` and ask the user to sign out and back in.
-
-As a working example, ``sgrv.be.sheets.SheetsClient`` wraps the Google Sheets v4 and Drive v3 REST APIs (called
-directly over ``zio.http.Client`` with Gson for JSON, rather than the generated ``google-api-services-*``
-client libraries) and two routes use it:
-
-* ``POST /sheets/upsert`` — body ``{"name": "<spreadsheet name>"}``. Finds a non-trashed spreadsheet with that
-  name in the user's Drive (searching only files this app can see, per ``drive.file``), creates one via the
-  Sheets API if none exists, then appends a row to columns A and B: the server's current timestamp and the
-  request's ``User-Agent`` header.
-* ``GET /sheets/content?name=<spreadsheet name>`` — returns ``{"rows": [[...], ...]}``, the current content of
-  columns A and B, or an empty list if no spreadsheet with that name exists yet.
-
-Both plugins use ``AccessPolicy.Authenticated``, so an unauthenticated request never reaches the Sheets API. The
-policy resolves the session once and supplies its ``SessionUser`` in ``RequestContext.Authenticated``; the
-handlers use that context to reach ``SessionUser.refreshToken`` without a second Firestore read. On the frontend,
-once signed in, a small form under the welcome message
-(``sgrv.fe.Main``) lets you exercise this end to end: enter a spreadsheet name, click "Create or update
-spreadsheet" to call ``/sheets/upsert`` then ``/sheets/content``, and the fetched rows render in a table.
+``access_type=offline`` is requested on every login regardless of scopes, so Google still issues a refresh token
+for the base scopes alone. It is stored on the browser-session document alongside ``email``/``name`` (see
+`Login with Google`_) and resolved onto ``SessionUser.refreshToken`` by ``SessionStore.find``. Two things depend
+on it today: ``Logout``'s revocation of the Google grant, and session renewal, which exchanges it for a
+short-lived access token purely to confirm Google still honours the grant before extending the session. A route
+needing to call a Google API on the user's behalf would authorize that call with the same
+``GoogleOAuth.accessToken(refreshToken)`` — after adding its scope here, and accepting the review that implies.
 
 Admin-protected routes
 -----------------------
@@ -556,14 +547,62 @@ a compile-time error. ``AccessPolicy`` is contravariant, allowing ``Public`` or 
 of the plugin environment. Authenticated handlers can obtain the already-resolved user by reading
 ``RequestContext`` and matching ``RequestContext.Authenticated``.
 
-Keep plugin-specific services inside the plugin JAR. For example, the Sheets plugins require the generic
-``BackendCapabilities.httpClient`` capability and construct their private ``SheetsClient`` adapter from it; the
-host neither registers nor depends on a Sheets capability.
+Keep plugin-specific services inside the plugin JAR. A plugin calling an external HTTP API would require the
+generic ``BackendCapabilities.httpClient`` capability and construct its own private adapter from it; the host
+would neither register nor depend on an API-specific capability.
 
 The available policies are ``Public``, ``Authenticated``, ``AdminPassword``, and
 ``AuthenticatedAndAdminPassword``. ClassGraph discovers implementations of the nominal JVM interface; there is
 no reflective cast to a generic Scala function. Plugin IDs and API versions are validated, and duplicate route
 patterns (including collisions with static routes) reject the involved plugin deterministically.
+
+Reacting to a login
+-------------------
+
+Some work belongs to the fact that a login happened rather than to any endpoint the browser calls. The host raises
+one lifecycle event for that, and ``LoginListener`` is the extension point that consumes it — the same shape as
+`Adding a backend plugin`_, but triggered by an event instead of a route:
+
+.. code-block:: scala
+
+   package sgrv.be.example
+
+   import sgrv.be.BackendCapabilities
+   import sgrv.be.core.{CapabilitySet, LoginEvent, LoginListener}
+   import com.google.cloud.firestore.Firestore
+   import zio.ZIO
+
+   object Example extends LoginListener:
+     type Requires = Firestore
+
+     override val id = "example"
+     override val requirements: CapabilitySet[Requires] = CapabilitySet.one(BackendCapabilities.firestore)
+     override def onLogin(event: LoginEvent): ZIO[Requires, Throwable, Unit] = ZIO.unit
+
+Listeners are discovered by the same ClassGraph scan as route plugins (``ModuleDiscovery``), resolve their
+capabilities the same way, and are validated the same way: an invalid id, an incompatible ``apiVersion``, or a
+missing capability is reported and the listener is left out. ``Main`` builds them into a ``LoginNotifier`` before
+route discovery runs, then adds that notifier to the capability registry, so ``Callback`` requires it as the
+``login-notifier`` capability like any other service. The login flow therefore never names its listeners.
+
+``LoginEvent`` carries the ``SessionUser``, the time, and the opaque ``sessionKey``. The session key is included
+because it is the only stable identifier of a single login, which lets a listener key its own records per login —
+a reissued cookie means a new login and a new record. It is a secret: derive from it (hash it) rather than copying
+it into another collection.
+
+Three properties are deliberate:
+
+* **A listener cannot fail a login.** Its error is logged and the login still completes. Authentication does not
+  depend on what a listener wanted to do about it. Flip this only with a clear answer for what the user should
+  see when the side effect fails but their credentials were fine.
+* **Listeners run before the redirect**, in ``id`` order, so a record a listener creates already exists by the time
+  the browser loads the home page. A slow listener therefore delays the redirect.
+* **They run once per login**, not per page load, because the event is raised in ``/auth/callback``.
+
+``sgrv.be.sessions.CountingSessionListener`` is the worked example: on each login it opens a document in the
+``CountingSessions`` collection recording the user and the start time. Its document id is a SHA-256 of the session
+key, which makes the write idempotent — a replayed callback resumes the existing record rather than opening a
+second one. That record is intended to grow into the state the acquirer writes and the dashboard reads.
 
 Logging
 -------
@@ -616,9 +655,9 @@ The backend and Debug-plugin tests cover server configuration and static assets;
 capability resolution; missing-capability skips; access-policy gating; API incompatibility, activation-failure,
 and route-conflict isolation; request-log formatting; debug signature generation; OAuth configuration and URL generation (including
 ``GOOGLE_SERVICES`` parsing and the resulting scope list), user-name fallback, authentication JSON, logout
-revocation/invalidation ordering and cookie expiry, discovery of the authentication and Sheets routes, and the
-Sheets routes' JSON request/response helpers. They use deterministic test data; they do not call Google or a live
-Firestore/Sheets/Drive API. Generate an scoverage report for the
+revocation/invalidation ordering and cookie expiry, session-renewal outcomes, and discovery of the
+authentication routes. They use deterministic test data; they do not call Google or a live
+Firestore API. Generate an scoverage report for the
 backend with:
 
 .. code-block:: console
@@ -661,7 +700,9 @@ That single command does more than run tests — it's a full orchestration, defi
 
 Since Google blocks WebDriver-controlled browsers from driving its login form (see `Authenticated E2E tests`_
 below), ``e2etest/test`` itself only covers what's reachable while signed out — ``sgrv.e2e.HomePageE2ESuite``
-loads the home page and asserts the Google login link is present. ``coverageReport`` is deliberately *not*
+loads the home page and asserts the Google login link is present. It runs every suite it discovers, so
+``sgrv.e2e.SignedInE2ESuite`` is discovered here too; finding no signed-in browser on its debugger port, that
+suite skips its tests rather than failing them. ``coverageReport`` is deliberately *not*
 triggered automatically by either ``e2etest/test`` or ``testAuthenticated`` — run it yourself, as a separate
 step, once you've run whichever combination of ``coverage test`` (unit), ``e2etest/test`` (signed-out E2E),
 and/or ``testAuthenticated`` (signed-in E2E) you want reflected; scoverage's measurement data accumulates
@@ -716,10 +757,10 @@ This fails immediately, with a clear message, if the backend or test browser are
 ``e2etest/test``, it never launches or tears down either itself. It attaches Selenium to the running Chrome via
 the Chrome DevTools Protocol's ``debuggerAddress`` option instead of launching a fresh browser (calling
 ``ChromeDriver.quit()`` on such an attached session only ends that WebDriver session; it does not close the
-real browser window), and runs ``sgrv.e2e.SampleSpreadsheetE2ESuite``: enters a spreadsheet name, clicks
-*Create or update spreadsheet*, and asserts the resulting table's last row has a timestamp less than 30 seconds
-old — a real round trip through ``/sheets/upsert`` and ``/sheets/content`` against the signed-in session's
-actual Google Sheets/Drive access. Since it attaches to the same coverage-instrumented backend
+real browser window), and runs ``sgrv.e2e.SignedInE2ESuite``: it opens the About modal and asserts the
+authenticated ``/about`` route filled in every build-information field, then walks the role selection — into the
+acquirer screen and back, then into the dashboard screen and back. Since it attaches to the same
+coverage-instrumented backend
 ``launchTestBrowser`` started, this traffic accumulates into the same measurement data as everything else.
 
 Rendering README.rst to HTML
@@ -748,7 +789,7 @@ runtime dependency JARs, a generated ``prod.env`` with the shared runtime config
 configuration, selected public origin, and ``ARTIFACT_PORT``, the ``runApp`` launcher, and the ``Dockerfile``
 itself), and runs ``docker build`` there (assumed already installed). If Debug is enabled, its JAR and admin
 password are included too. The result is tagged both
-``webapptemplate:<version>`` and ``webapptemplate:latest``.
+``camcadence:<version>`` and ``camcadence:latest``.
 
 ``dockerPlatform`` near the top of ``build.sbt`` (default ``linux/amd64``) sets the image's target platform
 independently of the machine running the build — e.g. building on Apple Silicon for an amd64 deployment host.
@@ -774,8 +815,8 @@ Deploy the application with:
 
 The task performs a clean build, creates a separate Cloud Run Docker context under
 ``backend/target/docker-gcloud/``, authenticates Docker to Artifact Registry, pushes
-``<region>-docker.pkg.dev/<project-id>/<repository>/webapptemplate:<version>``, and deploys the public
-``webapptemplate`` service in the configured region on port ``8080``. It reads the project, region, repository,
+``<region>-docker.pkg.dev/<project-id>/<repository>/camcadence:<version>``, and deploys the public
+``camcadence`` service in the configured region on port ``8080``. It reads the project, region, repository,
 and runtime service account from the shared configuration. Docker and an authenticated ``gcloud`` CLI must be
 available locally. The deploying account needs permission to push to that repository and update Cloud Run. The
 configured runtime identity separately needs the Firestore permissions used by the backend, and the deploying
@@ -805,14 +846,14 @@ unreachable from outside a container regardless of published ports, so the ``Doc
 
 .. code-block:: console
 
-   docker run -p <host-port>:<artifact-port> webapptemplate:latest
+   docker run -p <host-port>:<artifact-port> camcadence:latest
 
 or, if a reverse proxy (e.g. nginx) on the same host will terminate HTTPS and forward to it, publish only to
 loopback so nothing else on the network can reach the container directly:
 
 .. code-block:: console
 
-   docker run -p 127.0.0.1:<host-port>:<artifact-port> webapptemplate:latest
+   docker run -p 127.0.0.1:<host-port>:<artifact-port> camcadence:latest
 
 Application Default Credentials work differently depending on where the image runs. On Cloud Run/GKE/GCE, an
 image built without a local ADC file falls through to the platform's workload identity (the attached service
@@ -850,11 +891,13 @@ Repository layout
    project/Dependencies.scala
    project/plugins.sbt
    frontend/src/main/scala/sgrv/fe/Main.scala
-   frontend/src/main/scala/sgrv/fe/lib/JsDynamicOption.scala
+   frontend/src/main/scala/sgrv/fe/FrontendState.scala
+   frontend/src/main/scala/sgrv/fe/HttpService.scala
+   frontend/src/main/scala/sgrv/fe/refreshstate/
    backend/src/main/scala/sgrv/be/BackendEnvironment.scala
    backend/src/main/scala/sgrv/be/Main.scala
    backend/src/main/scala/sgrv/be/auth/
-   backend/src/main/scala/sgrv/be/sheets/
+   backend/src/main/scala/sgrv/be/about/
    backend/src/main/scala/sgrv/be/core/
    debug-plugin/src/main/scala/sgrv/be/debug/
    debug-plugin/src/test/scala/sgrv/be/debug/
@@ -871,17 +914,18 @@ Forking this template
 
 Forking this repository to start a new project means replacing every piece of data specific to *this*
 deployment — a GCP project, an OAuth client, a couple of secret files, a handful of settings — while everything
-else described above (plugin discovery, capability resolution and access policies, the session store, the Sheets
-integration's plumbing) is generic infrastructure that keeps working unchanged underneath your own routes.
+else described above (plugin discovery, capability resolution and access policies, the session store, session
+renewal) is generic infrastructure that keeps working unchanged underneath your own routes.
 
 What absolutely needs changing
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-1. **A Google Cloud project of your own**, with the Firestore API enabled (the backend creates the *database*
-   itself on startup, per `Login with Google`_, but the project and API enablement are manual one-time steps in
-   the console). If you keep the Sheets example, also enable the Google Sheets API and Google Drive API there —
-   Firestore, Sheets, and Drive are each billed/enabled independently, and API calls fail with ``403`` if the
-   corresponding API isn't turned on for the project even though the OAuth scope was granted.
+1. **A Google Cloud project of your own**, with the Firestore API enabled, its ``(default)`` database created,
+   and the ``Access.expiresAt`` TTL policy set — all one-time console/CLI steps, since the backend deliberately
+   does none of them at startup (see `Login with Google`_). Every Google API is enabled and billed
+   independently, so any scope you later add to
+   ``GOOGLE_SERVICES`` also needs its API turned on for the project — calls fail with ``403`` if it isn't, even
+   though the OAuth scope was granted.
 
 2. **A new OAuth 2.0 web client**, created in that project, with your own callback URIs registered (step 1 under
    `Login with Google`_'s one-time setup). Download its JSON as your fork's ``oauth.config.json`` and keep it
@@ -896,13 +940,13 @@ What absolutely needs changing
      configuration rather than either committed env file. They select the origin for ``run``,
      ``artifact``, and ``deployGCloud`` respectively. Register each selected origin's exact ``/auth/callback`` URI
      on the Google OAuth client.
-   * ``GCP_PROJECT_ID``, ``FIRESTORE_DATABASE_ID``, ``FIRESTORE_LOCATION`` — your new project and the Firestore
-     database/location you want created there.
+   * ``GCP_PROJECT_ID``, ``FIRESTORE_DATABASE_ID`` — your new project and its database, normally ``(default)``,
+     which every app under that project shares. The backend never creates it.
    * ``GCLOUD_REGION``, ``ARTIFACT_REGISTRY_REPOSITORY``, and ``GCLOUD_SERVICE_ACCOUNT`` — the Cloud Run target.
    * ``ARTIFACT_PORT`` — the port baked into a standalone artifact. ``LOCAL_BASE_URL`` supplies the local run
      port; Cloud Run supplies its own ``PORT``. The backend never silently chooses a port.
-   * ``GOOGLE_SERVICES`` — the scopes your fork's own routes need (see `Google service entitlements (Sheets)`_).
-     Clear it if you don't call any Google API beyond login; keep or extend it if you do.
+   * ``GOOGLE_SERVICES`` — the scopes your fork's own routes need (see `Google service entitlements`_). This
+     app leaves it unset; set it only once a route calls a Google API beyond login.
 
 4. **Optional Debug configuration** — if you keep the Debug plugin, create a fresh random password file outside
    source control and point to it with ``ADMIN_PASSWORD_PATH`` in the shared configuration (see
@@ -915,9 +959,10 @@ What absolutely needs changing
 Worth changing, but not load-bearing
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-* ``ThisBuild / organization`` / ``organizationName`` and the three ``name`` settings in ``build.sbt``
-  (``webapptemplate``, ``webapptemplate-frontend``, ``webapptemplate-backend``) — cosmetic, but they name your
-  build artifacts and Docker image tags (the root project's ``name`` specifically).
+* ``ThisBuild / organization`` / ``organizationName`` and the ``name`` settings in ``build.sbt``
+  (``camcadence``, ``camcadence-shared``, ``camcadence-frontend``, ``camcadence-backend``,
+  ``camcadence-debug-plugin``, ``camcadence-e2etest``). The root project's ``name`` is not cosmetic: it becomes
+  the Docker image tag *and* the Cloud Run service name, so changing it deploys a new service at a new URL.
 * The ``<title>`` and Apple app title in ``backend/src/main/resources/web/index.html``, plus ``name``,
   ``short_name``, ``description``, and colors in ``backend/src/main/resources/web/manifest.webmanifest`` — these
   control the installed app's identity and launch appearance. Replace the favicon and both PNG icons as a set.
@@ -931,9 +976,8 @@ What to keep, drop, or extend
 
 Treat ``backend/src/main/scala/sgrv/be/auth/`` and ``.../core/`` as infrastructure: the OAuth flow, session
 store, and route discovery/gating work as-is and shouldn't need edits unless you're changing how authentication
-itself works. The standalone ``debugPlugin`` project and the entire ``sgrv.be.sheets`` package, by contrast, are
-worked *examples* — delete either (and its frontend UI and ``GOOGLE_SERVICES`` scopes if dropping Sheets) if your
-project has no use for them, or use them as templates for your own plugins.
+itself works. The standalone ``debugPlugin`` project and the ``about`` plugin, by contrast, are worked
+*examples* — delete either if your project has no use for it, or use them as templates for your own plugins.
 
 `Adding a backend plugin`_ above is the generic recipe for a new route; the routes already in the repository are
 worked examples of the shapes a new route is likely to take:
@@ -948,14 +992,13 @@ worked examples of the shapes a new route is likely to take:
 * **A route that must serve signed-in and signed-out requests differently** — ``sgrv.be.auth.Me``
   (``AccessPolicy.Public``, then the handler calls ``SessionAuth.resolve`` itself to tell the two cases apart, since the
   gate's generic ``401`` wouldn't distinguish "signed out" from "session lookup failed").
-* **An authenticated route whose handler needs data *from* the session** — ``sgrv.be.sheets.UpsertSpreadsheet`` /
-  ``SpreadsheetContent``: ``AccessPolicy.Authenticated`` resolves the session once, then the handler reads the
-  resulting ``RequestContext.Authenticated`` to reach ``SessionUser.refreshToken``.
+* **An authenticated route whose handler needs data *from* the session** — ``sgrv.be.auth.Logout``:
+  ``AccessPolicy.Authenticated`` resolves the session once, then the handler reads the resulting
+  ``RequestContext.Authenticated`` to reach ``SessionUser.refreshToken`` without a second Firestore lookup.
 * **A route reachable by password instead of, or in addition to, a session** — the separately packaged
   ``sgrv.be.debug.Debug`` plugin uses ``AuthenticatedAndAdminPassword``; use ``AdminPassword`` for password-only access.
-* **Calling a *different* Google API on the user's behalf** — ``sgrv.be.sheets.SheetsClient`` is the model: a
-  plugin-private adapter constructed from the host's generic ``zio.http.Client`` capability, authenticating calls
-  with a Bearer access token from ``GoogleOAuth.accessToken``. To wrap a new Google API (Calendar, Gmail, Docs,
-  ...), add its scope(s) to ``GOOGLE_SERVICES``, bundle an adapter like ``SheetsClient`` in the plugin, require
-  ``BackendCapabilities.httpClient``, and construct the adapter inside the plugin. No API-specific service is
-  added to ``BackendEnvironment`` or ``Main``.
+* **Calling a Google API on the user's behalf** — no route does this today, but the shape is fixed: add the
+  scope(s) to ``GOOGLE_SERVICES``, require ``BackendCapabilities.httpClient``, and construct a plugin-private
+  adapter over that generic ``zio.http.Client`` inside the plugin, authenticating calls with a Bearer access
+  token from ``GoogleOAuth.accessToken``. No API-specific service is added to ``BackendEnvironment`` or
+  ``Main``. Weigh the verification cost noted under `Google service entitlements`_ before adding a scope.

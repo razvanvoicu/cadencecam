@@ -2,11 +2,10 @@ package sgrv.be
 
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicInteger
-import sgrv.be.auth.{GoogleAuthentication, GoogleOAuth, SessionStore, SessionUser}
+import sgrv.be.auth.{SessionStore, SessionUser}
 import sgrv.be.core.*
-import sgrv.be.sheets.SpreadsheetContent
 import zio.*
-import zio.http.{Client, Cookie, Method, Path, Request, Response, Routes, Status, URL, handler}
+import zio.http.{Cookie, Method, Path, Request, Response, Routes, Status, URL, handler}
 
 object EchoPlugin extends BackendPlugin:
   type Requires = Any
@@ -143,58 +142,6 @@ class RouteDiscoverySuite extends munit.FunSuite:
 
     assertEquals(response.status, Status.Ok)
     assertEquals(run(response.body.asString), user.email)
-    assertEquals(lookups.get(), 1)
-
-  test("an authenticated Sheets request reads its Firestore session only once"):
-    val lookups = new AtomicInteger(0)
-    val user = SessionUser("jane@example.com", "Jane")
-    val countingStore: SessionStore = new SessionStore:
-      override def create(
-          sessionKey: String,
-          user: SessionUser,
-          createdAt: Instant,
-          expiresAt: Instant
-      ): Task[Unit] = ZIO.unit
-
-      override def find(sessionKey: String, now: Instant): Task[Option[SessionUser]] =
-        ZIO.succeed:
-          lookups.incrementAndGet()
-          Option.when(sessionKey == "session-key")(user)
-
-      override def findForRefresh(sessionKey: String): Task[Option[SessionUser]] = ZIO.none
-      override def renew(sessionKey: String, expiresAt: Instant): Task[Unit] = ZIO.unit
-      override def invalidate(sessionKey: String): Task[Unit] = ZIO.unit
-
-    val googleOAuth: GoogleOAuth = new GoogleOAuth:
-      override def authorizationUrl(state: String): UIO[String] = ZIO.succeed("")
-      override def authenticate(code: String): Task[GoogleAuthentication] =
-        ZIO.fail(new UnsupportedOperationException)
-      override def callbackIsSecure: UIO[Boolean] = ZIO.succeed(true)
-      override def accessToken(refreshToken: String): Task[String] =
-        ZIO.fail(new AssertionError("Sheets must reject the missing refresh token before requesting an access token"))
-      override def revoke(refreshToken: String): Task[Unit] = ZIO.unit
-
-    RouteDiscovery.activate(
-      SpreadsheetContent,
-      SpreadsheetContent.getClass.getName,
-      CapabilityRegistry.fromEnvironment(ZEnvironment(countingStore, googleOAuth))
-    ) match
-      case PluginStatus.Skipped(_, _, missing) => assertEquals(missing.map(_.id), Chunk("http-client"))
-      case other => fail(s"Expected the generic HTTP capability to be missing, got $other")
-
-    val response = run:
-      (for
-        httpClient <- ZIO.service[Client]
-        registry = CapabilityRegistry.fromEnvironment(ZEnvironment(countingStore, googleOAuth, httpClient))
-        status = RouteDiscovery.activate(SpreadsheetContent, SpreadsheetContent.getClass.getName, registry)
-        routes = RouteDiscovery.fromStatuses(Seq(status))
-        request = Request
-          .get(URL.decode("/sheets/content?name=Budget").toOption.get)
-          .addCookie(Cookie.Request("session", "session-key"))
-        response <- ZIO.scoped(routes.runZIO(request))
-      yield response).provide(Client.default)
-
-    assertEquals(response.status, Status.Forbidden)
     assertEquals(lookups.get(), 1)
 
   test("resolves a composed capability set with its intersection type intact"):

@@ -1,7 +1,5 @@
 package sgrv.be.core
 
-import io.github.classgraph.ClassGraph
-import scala.jdk.CollectionConverters.*
 import zio.{Chunk, Scope, Task, ZEnvironment, ZIO}
 import zio.http.{Request, Response, Routes, handler}
 
@@ -26,35 +24,10 @@ private[be] object RouteDiscovery:
           rejectConflicts(rejectDuplicateIds(loaded), reservedPatterns)
 
   private def scan(classLoader: ClassLoader): Task[Seq[String]] =
-    ZIO.scoped:
-      for
-        result <- ZIO.acquireRelease(
-          ZIO.attemptBlocking:
-            new ClassGraph()
-              .enableClassInfo()
-              .acceptPackages("sgrv.be")
-              .overrideClassLoaders(classLoader)
-              .scan()
-        )(scan => ZIO.attemptBlocking(scan.close()).ignore)
-        classNames <- ZIO.attemptBlocking:
-          result
-            .getClassesImplementing(classOf[BackendPlugin].getName)
-            .asScala
-            .map(_.getName)
-            .toSeq
-            .sorted
-      yield classNames
+    ModuleDiscovery.implementations(classOf[BackendPlugin], classLoader)
 
   private[be] def load(className: String, classLoader: ClassLoader): Task[BackendPlugin] =
-    ZIO.attemptBlocking:
-      val moduleClass = Class.forName(className.stripSuffix("$") + "$", true, classLoader)
-      // noinspection IllegalNull
-      moduleClass.getField("MODULE$").get(null) match
-        case plugin: BackendPlugin => plugin
-        case module                =>
-          throw new IllegalArgumentException(
-            s"Discovered module ${module.getClass.getName} does not implement ${classOf[BackendPlugin].getName}"
-          )
+    ModuleDiscovery.load(className, classOf[BackendPlugin], classLoader)
 
   private def loadStatus(
       className: String,
@@ -107,9 +80,8 @@ private[be] object RouteDiscovery:
                   routeHandler(request).provideSomeEnvironment[plugin.Requires & Scope](_.add(context))
       .transform[Any](_.provideEnvironment(environment))
 
-  /**
-   * Reject duplicate routes, and routes matching paths of static files.
-   */
+  /** Reject duplicate routes, and routes matching paths of static files.
+    */
   private[be] def rejectConflicts(
       statuses: Seq[PluginStatus],
       reservedPatterns: Set[Any] = Set.empty
@@ -146,11 +118,9 @@ private[be] object RouteDiscovery:
         )
       case status => status
 
-  /**
-   * The route discovery process returns a list of statuses. The actual routes are buried inside
-   * the `Active` status objects, and they need to be dug out. Non-active statuses are silently
-   * ignored.
-   */
+  /** The route discovery process returns a list of statuses. The actual routes are buried inside the `Active` status
+    * objects, and they need to be dug out. Non-active statuses are silently ignored.
+    */
   private[be] def fromStatuses(statuses: Seq[PluginStatus]): Routes[Any, Nothing] =
     statuses
       .collect { case PluginStatus.Active(_, _, routes) => routes }

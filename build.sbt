@@ -18,7 +18,6 @@ val supportedAppConfigKeys = Set(
   "ARTIFACT_PORT",
   "GCP_PROJECT_ID",
   "FIRESTORE_DATABASE_ID",
-  "FIRESTORE_LOCATION",
   "GCLOUD_REGION",
   "ARTIFACT_REGISTRY_REPOSITORY",
   "GCLOUD_SERVICE_ACCOUNT"
@@ -37,6 +36,14 @@ val adcFile = file(
   else
     s"${sys.props("user.home")}/.config/gcloud/application_default_credentials.json"
 )
+
+// TEMPLATE SETTING: the oldest JDK this project supports. Development happens across several machines, and
+// potentially several developers' machines, so a newer JDK is fine to build with but must not leak into the
+// output: `-release` below compiles against exactly this JDK's API and emits its bytecode, whichever JDK is
+// actually running. Without it, code calling a newer JDK's API compiles cleanly on the machine that has it and
+// then fails at runtime on a machine that doesn't — or in the eclipse-temurin:<this version>-jre runtime image.
+// Keep this in step with the Dockerfile's base image.
+val minimumJdkVersion = 21
 
 // TEMPLATE SETTING: the target platform for the Docker image, independent of the machine running `sbt artifact`
 // (e.g. building on Apple Silicon for an amd64 deployment host). BuildKit cross-builds via emulation as needed.
@@ -101,15 +108,32 @@ ThisBuild / scalacOptions ++= Seq(
   "-feature",
   "-unchecked",
   "-Wunused:all",
-  "-Wvalue-discard"
+  "-Wvalue-discard",
+  "-release",
+  minimumJdkVersion.toString
 )
+// No Java sources today, but keeping javac in step means adding one later can't silently reintroduce the
+// newer-JDK-API hazard that `-release` closes for Scala.
+ThisBuild / javacOptions ++= Seq("--release", minimumJdkVersion.toString)
 ThisBuild / semanticdbEnabled := true
+
+// Fails the moment the build loads on too old a JDK, rather than at some later, more confusing point.
+ThisBuild / initialize := {
+  val _ = (ThisBuild / initialize).value
+  // Fully qualified: bare `Runtime` in an .sbt file is sbt's Configuration, not java.lang.Runtime.
+  val running = java.lang.Runtime.version().feature()
+  if (running < minimumJdkVersion)
+    sys.error(
+      s"This build requires JDK $minimumJdkVersion or newer, but sbt is running on JDK $running " +
+        s"(${sys.props.getOrElse("java.home", "unknown location")}). Newer JDKs are supported; older ones are not."
+    )
+}
 
 lazy val shared = crossProject(JSPlatform, JVMPlatform)
   .crossType(CrossType.Pure)
   .in(file("shared"))
   .settings(
-    name := "webapptemplate-shared",
+    name := "camcadence-shared",
     libraryDependencies += "dev.zio" %%% "zio-json" % zioJsonVersion
   )
 
@@ -120,7 +144,7 @@ lazy val frontend = (project in file("frontend"))
   .enablePlugins(ScalaJSPlugin)
   .dependsOn(sharedJS)
   .settings(
-    name := "webapptemplate-frontend",
+    name := "camcadence-frontend",
     coverageEnabled := false,
     scalaJSUseMainModuleInitializer := true,
     scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.NoModule)),
@@ -302,13 +326,12 @@ def waitForPortOpen(host: String, port: Int, timeoutMillis: Long): Boolean = {
 lazy val backend = (project in file("backend"))
   .dependsOn(sharedJVM)
   .settings(
-    name := "webapptemplate-backend",
+    name := "camcadence-backend",
     libraryDependencies ++= Seq(
       classGraph,
       zioHttp,
       zioLogging,
       firestore,
-      firestoreAdmin,
       googleApiClient,
       gson,
       munit % Test
@@ -345,7 +368,7 @@ lazy val backend = (project in file("backend"))
 lazy val debugPlugin = (project in file("debug-plugin"))
   .dependsOn(backend % "provided->compile")
   .settings(
-    name := "webapptemplate-debug-plugin",
+    name := "camcadence-debug-plugin",
     libraryDependencies += munit % Test
   )
 
@@ -358,7 +381,7 @@ lazy val debugPlugin = (project in file("debug-plugin"))
 // clobbering the other's data.
 lazy val e2etest = (project in file("e2etest"))
   .settings(
-    name := "webapptemplate-e2etest",
+    name := "camcadence-e2etest",
     coverageEnabled := false,
     libraryDependencies ++= Seq(selenium % Test, munit % Test),
     Test / fork := true,
@@ -496,7 +519,7 @@ lazy val e2etest = (project in file("e2etest"))
             "first."
         )
       log.info("Running the authenticated E2E suite against the already-running backend and test browser...")
-      (Test / testOnly).toTask(" sgrv.e2e.SampleSpreadsheetE2ESuite")
+      (Test / testOnly).toTask(" sgrv.e2e.SignedInE2ESuite")
     }.value,
     Test / test := Def.taskDyn {
       val log = streams.value.log
@@ -581,7 +604,7 @@ lazy val root = {
   Project(id = "root", base = file("."))
     .aggregate(sharedJS, sharedJVM, frontend, backend)
     .settings(
-      name := "webapptemplate",
+      name := "camcadence",
       coverageEnabled := false,
       publish / skip := true,
       run / aggregate := false,

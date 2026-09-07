@@ -252,7 +252,7 @@ object Debug extends BackendPlugin:
   private def dumpNginxConfiguration(executable: String, configArguments: Seq[String]): IO[String, (String, String)] =
     ZIO.scoped:
       for
-        outputFile <- ZIO.acquireRelease(blocking(Files.createTempFile("webapptemplate-nginx-", ".txt")))(deleteFile)
+        outputFile <- ZIO.acquireRelease(blocking(Files.createTempFile("camcadence-nginx-", ".txt")))(deleteFile)
         process <- ZIO.acquireRelease(
           blocking:
             val command = Seq(executable, "-T") ++ configArguments

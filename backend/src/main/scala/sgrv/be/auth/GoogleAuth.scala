@@ -11,7 +11,7 @@ import com.google.api.client.json.gson.GsonFactory
 import com.google.gson.JsonParser
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets.UTF_8
-import java.util.Collections
+import scala.jdk.CollectionConverters.*
 import scala.util.Try
 import zio.{Task, UIO, ZIO, ZLayer}
 
@@ -44,8 +44,9 @@ private[be] object GoogleOAuth:
   def callbackIsSecure: ZIO[GoogleOAuth, Nothing, Boolean] =
     ZIO.serviceWithZIO[GoogleOAuth](_.callbackIsSecure)
 
-  /** Exchanges a stored OAuth refresh token for a fresh, short-lived access token, used by backend routes acting on
-    * Google APIs (e.g. Sheets/Drive) on behalf of a signed-in session.
+  /** Exchanges a stored OAuth refresh token for a fresh, short-lived access token. [[RefreshSession]] uses this to
+    * confirm that Google still honours a session's grant before renewing it; a route that called a Google API on the
+    * signed-in user's behalf would use it to authorize that call.
     */
   def accessToken(refreshToken: String): ZIO[GoogleOAuth, Throwable, String] =
     ZIO.serviceWithZIO[GoogleOAuth](_.accessToken(refreshToken))
@@ -81,7 +82,7 @@ private[be] object GoogleOAuth:
           config.callbackUri
         ).execute()
         val verifier = new GoogleIdTokenVerifier.Builder(transport, jsonFactory)
-          .setAudience(java.util.List.of(config.clientId))
+          .setAudience(Seq(config.clientId).asJava)
           .build()
         val idToken = Option(verifier.verify(tokenResponse.getIdToken))
           .getOrElse(throw new IllegalStateException("The Google ID token failed verification"))
@@ -121,7 +122,7 @@ private[be] object GoogleOAuth:
     override def revoke(refreshToken: String): Task[Unit] =
       ZIO
         .attemptBlocking:
-          val content = new UrlEncodedContent(Collections.singletonMap("token", refreshToken))
+          val content = new UrlEncodedContent(Map("token" -> refreshToken).asJava)
           val response = transport
             .createRequestFactory()
             .buildPostRequest(new GenericUrl(GoogleOAuth.revocationEndpoint), content)

@@ -16,14 +16,16 @@ private[fe] enum UserState:
 private[fe] object UserState:
   given JsonCodec[UserState] = DeriveJsonCodec.gen[UserState]
 
-private[fe] enum SheetState:
-  case Idle
-  case Loading
-  case Loaded(rows: Seq[Seq[String]])
-  case Failed(message: String)
+/** The role this device plays in a session. A signed-in device starts at [[Screen.Selection]] and stays on whichever
+  * role it was given until the user goes back, so reopening the app on the capture phone returns it to capturing.
+  */
+private[fe] enum Screen:
+  case Selection
+  case Acquirer
+  case Dashboard
 
-private[fe] object SheetState:
-  given JsonCodec[SheetState] = DeriveJsonCodec.gen[SheetState]
+private[fe] object Screen:
+  given JsonCodec[Screen] = DeriveJsonCodec.gen[Screen]
 
 private[fe] enum AboutState:
   case Closed
@@ -45,29 +47,22 @@ private[fe] object LogoutState:
 @jsonNoExtraFields
 private[fe] final case class FrontendState(
     user: UserState,
-    sheetName: String,
-    sheetState: SheetState,
+    screen: Screen,
     aboutState: AboutState,
     logoutState: LogoutState
 ):
-  /** Authentication is always re-established from `/me` after a page load and transient UI operations are reset. */
+  /** Authentication is always re-established from `/me` after a page load and transient UI operations are reset. The
+    * selected screen survives, since it is a deliberate choice about this device rather than an in-flight operation.
+    */
   def prepareForStartup: FrontendState =
-    copy(
-      user = UserState.Unknown,
-      sheetState = sheetState match
-        case SheetState.Loading => SheetState.Idle
-        case state              => state,
-      aboutState = AboutState.Closed,
-      logoutState = LogoutState.Idle
-    )
+    copy(user = UserState.Unknown, aboutState = AboutState.Closed, logoutState = LogoutState.Idle)
 
 private[fe] object FrontendState:
   given JsonCodec[FrontendState] = DeriveJsonCodec.gen[FrontendState]
 
   val Initial: FrontendState = FrontendState(
     user = UserState.Unknown,
-    sheetName = "",
-    sheetState = SheetState.Idle,
+    screen = Screen.Selection,
     aboutState = AboutState.Closed,
     logoutState = LogoutState.Idle
   )
@@ -90,7 +85,7 @@ private[fe] final class FrontendStateStore private (
     state.set(next)
 
 private[fe] object FrontendStateStore:
-  private val StorageKey = "sgrv.frontend-state.v2"
+  private val StorageKey = "sgrv.frontend-state.v3"
 
   def apply(storage: dom.Storage): FrontendStateStore =
     val restoredState = load(storage)
@@ -106,7 +101,7 @@ private[fe] object FrontendStateStore:
       Option(storage.getItem(StorageKey))
         .flatMap: encoded =>
           encoded.fromJson[FrontendState] match
-            case Right(state) => Some(state)
+            case Right(state)  => Some(state)
             case Left(details) =>
               dom.console.warn(s"Ignoring invalid persisted frontend state: $details")
               None
