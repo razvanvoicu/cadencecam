@@ -17,8 +17,7 @@ class RepCounterSuite extends FunSuite:
   private def run(channels: Map[Quadrant, Seq[Double]], counter: RepCounter = RepCounter()): RepReading =
     val length = channels.values.map(_.size).min
     var reading = counter.reading
-    for taken <- 1 to length do
-      reading = counter.update(channels.view.mapValues(_.take(taken)).toMap, taken)
+    for taken <- 1 to length do reading = counter.update(channels.view.mapValues(_.take(taken)).toMap, taken)
     reading
 
   private def rotating(hz: Double, seconds: Double, amplitude: Double) =
@@ -29,9 +28,9 @@ class RepCounterSuite extends FunSuite:
       Quadrant.Q4 -> channel(hz, seconds, amplitude, 3 * math.Pi / 2)
     )
 
-  /** What the filter's settling window costs: the opening samples cannot be analysed, so the reps performed during
-    * them are never seen. The acquisition design assumes the first seconds are the user still getting into
-    * position, so this is a known, bounded loss rather than drift.
+  /** What the filter's settling window costs: the opening samples cannot be analysed, so the reps performed during them
+    * are never seen. The acquisition design assumes the first seconds are the user still getting into position, so this
+    * is a known, bounded loss rather than drift.
     */
   private def settlingLoss(hz: Double) =
     DetectorSettings().settlingSamples / rate * hz

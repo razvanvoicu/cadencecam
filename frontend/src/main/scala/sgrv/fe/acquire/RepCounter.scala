@@ -1,7 +1,7 @@
 package sgrv.fe.acquire
 
-/** Tuning for the detector. Every threshold here was reasoned about rather than measured, and the acquisition
-  * design expects them to be settled empirically; they are gathered in one place so that can happen.
+/** Tuning for the detector. Every threshold here was reasoned about rather than measured, and the acquisition design
+  * expects them to be settled empirically; they are gathered in one place so that can happen.
   */
 private[fe] final case class DetectorSettings(
     sampleRateHz: Double = 10.0,
@@ -11,19 +11,19 @@ private[fe] final case class DetectorSettings(
     minimumDistanceSamples: Int = 5,
     /** A peak must stand this far above the surrounding valleys, relative to how active the window is. */
     prominenceFactor: Double = 1.5,
-    /** and at least this far in absolute terms, so a still scene's noise cannot clear a threshold that scales
-      * with it and be counted as movement.
+    /** and at least this far in absolute terms, so a still scene's noise cannot clear a threshold that scales with it
+      * and be counted as movement.
       */
     prominenceFloor: Double = 1.0,
-    /** Fifteen seconds of samples before a lock is attempted: enough to hold several cycles of the slowest
-      * cadence in the band.
+    /** Fifteen seconds of samples before a lock is attempted: enough to hold several cycles of the slowest cadence in
+      * the band.
       */
     minimumSamplesForLock: Int = 150,
     /** How closely two channels' periods must match to be believed. */
     periodTolerance: Double = 0.25,
-    /** Samples ignored at the start of a window while the filter settles. A band-pass starting from rest rings
-      * when the signal first arrives, and that ringing would otherwise dominate the very statistics used to
-      * decide what counts as a peak.
+    /** Samples ignored at the start of a window while the filter settles. A band-pass starting from rest rings when the
+      * signal first arrives, and that ringing would otherwise dominate the very statistics used to decide what counts
+      * as a peak.
       */
     settlingSamples: Int = 20
 ):
@@ -84,10 +84,10 @@ private[fe] object RepAnalysis:
 
   /** The strongest pair of channels whose periods agree, with the stronger of the two leading.
     *
-    * The acquisition design settled on this rather than a vote across all four, because a movement may only cross
-    * two quadrants: the condition is that two agree, not that most do. Peak timing is then taken from one channel
-    * alone — the quadrants carry the same period but different phase, so fusing their peaks would smear the timing
-    * the count depends on.
+    * The acquisition design settled on this rather than a vote across all four, because a movement may only cross two
+    * quadrants: the condition is that two agree, not that most do. Peak timing is then taken from one channel alone —
+    * the quadrants carry the same period but different phase, so fusing their peaks would smear the timing the count
+    * depends on.
     */
   /** Keeps a channel that is already leading, paired with whichever other channel best agrees with it. */
   def hold(
@@ -111,9 +111,9 @@ private[fe] object RepAnalysis:
 
 /** Counts reps from the confirmed peaks of whichever channel is currently trusted.
   *
-  * The count only ever rises. Each update re-detects peaks over the buffered window, but a peak already counted
-  * stays counted even if a later, longer view of the signal would no longer pick it — a rep that happened cannot
-  * un-happen, and a count that went backwards would be worse than one that is slightly generous.
+  * The count only ever rises. Each update re-detects peaks over the buffered window, but a peak already counted stays
+  * counted even if a later, longer view of the signal would no longer pick it — a rep that happened cannot un-happen,
+  * and a count that went backwards would be worse than one that is slightly generous.
   *
   * Nothing is ever inferred from elapsed time. When a lock is first established the whole buffer is counted, so the
   * reps performed while the detector was still deciding are not lost: that is a delayed reveal of peaks genuinely
@@ -135,8 +135,8 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
 
   /** Folds one window of per-quadrant samples into the running count.
     *
-    * `totalSamples` is how many have ever been recorded, which turns a position inside the window into an identity
-    * that survives the buffer wrapping — without it, a peak would be recounted every time the window slid.
+    * `totalSamples` is how many have ever been recorded, which turns a position inside the window into an identity that
+    * survives the buffer wrapping — without it, a peak would be recounted every time the window slid.
     */
   def update(window: Map[Quadrant, Seq[Double]], totalSamples: Int): RepReading =
     val lengths = window.values.map(_.size)

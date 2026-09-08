@@ -3,16 +3,16 @@ package sgrv.fe.acquire
 /** A second-order IIR section, applied as a difference equation one sample at a time.
   *
   * Coefficients follow Robert Bristow-Johnson's Audio EQ Cookbook — the same formulae the Web Audio API's own
-  * BiquadFilterNode is built on. One section is enough here: the 0.5-2 Hz band is wide relative to its centre
-  * (Q about 0.67), so nothing steeper is called for, and at 10 Hz the Nyquist limit of 5 Hz leaves ample margin.
+  * BiquadFilterNode is built on. One section is enough here: the 0.5-2 Hz band is wide relative to its centre (Q about
+  * 0.67), so nothing steeper is called for, and at 10 Hz the Nyquist limit of 5 Hz leaves ample margin.
   */
 private[fe] final case class Biquad(b0: Double, b1: Double, b2: Double, a1: Double, a2: Double):
 
   /** Runs the filter over a series from rest.
     *
-    * Filtering the whole buffer each time rather than carrying state between calls keeps the result a pure function
-    * of the samples, so what is drawn and what is counted cannot drift apart from each other. It costs a few
-    * thousand multiply-adds per second, which is nothing next to the frame capture that produced the samples.
+    * Filtering the whole buffer each time rather than carrying state between calls keeps the result a pure function of
+    * the samples, so what is drawn and what is counted cannot drift apart from each other. It costs a few thousand
+    * multiply-adds per second, which is nothing next to the frame capture that produced the samples.
     */
   def filter(samples: Seq[Double]): Seq[Double] =
     var x1, x2, y1, y2 = 0.0

@@ -37,9 +37,11 @@ class PeakDetectorSuite extends FunSuite:
     val fast = Seq.tabulate(100)(index => math.sin(2 * math.Pi * index / 3.0))
     val found = PeakDetector.peaks(fast, minimumDistance = 5, minimumProminence = 0.5)
 
-    found.sliding(2).foreach:
-      case Seq(first, second) => assert(second - first >= 5, s"peaks at $first and $second are too close")
-      case _                  => ()
+    found
+      .sliding(2)
+      .foreach:
+        case Seq(first, second) => assert(second - first >= 5, s"peaks at $first and $second are too close")
+        case _                  => ()
 
   test("a flat signal has no peaks at all"):
     assertEquals(PeakDetector.peaks(Seq.fill(50)(3.0), 5, 0.1), Seq.empty)

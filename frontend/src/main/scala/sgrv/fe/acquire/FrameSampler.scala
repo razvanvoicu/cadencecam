@@ -56,14 +56,19 @@ private[fe] object FrameSampler:
   /** ~10 Hz, per the acquisition design: far below the frame rate, and far above the 0.5-2 Hz band of interest. */
   val DefaultIntervalMillis = 100
 
-  /** The long edge of the offscreen canvas. Small on purpose; kept even so the quadrant split is exact. */
-  private[acquire] val SampleWidth = 64
+  /** Roughly how many pixels a sample reads. A budget rather than a fixed edge: the camera's shape now follows the
+    * device, and fixing the width alone would let a portrait frame cost three times as much per sample.
+    */
+  private[acquire] val SamplePixels = 2500
 
-  /** Preserves the frame's aspect ratio so a quadrant stays a geometric quarter of what the camera sees. */
+  /** Preserves the frame's aspect ratio so a quadrant stays a geometric quarter of what the camera sees, while holding
+    * the cost of a sample roughly constant whatever shape that frame is.
+    */
   private[acquire] def sampleSize(videoWidth: Int, videoHeight: Int): (Int, Int) =
-    val scaled = math.round(SampleWidth.toDouble * videoHeight / videoWidth).toInt
-    val height = math.max(2, scaled + (scaled % 2))
-    (SampleWidth, height)
+    require(videoWidth > 0 && videoHeight > 0, "a frame must have a positive size")
+    val scale = math.sqrt(SamplePixels.toDouble / (videoWidth.toDouble * videoHeight))
+    def even(value: Double): Int = math.max(2, (math.round(value / 2) * 2).toInt)
+    (even(videoWidth * scale), even(videoHeight * scale))
 
   /** Every quadrant's brightness for one frame. Four passes over a buffer of a couple of thousand pixels, which at 10
     * Hz costs far less than the one pass over the full frame it replaces.

@@ -15,8 +15,8 @@ class BiquadSuite extends FunSuite:
     val settled = samples.drop(samples.length / 2)
     settled.max - settled.min
 
-  /** Output amplitude against the input's own, since at ten samples a cycle the discrete samples never land on the
-    * true crest of a sinusoid and both are understated by the same factor.
+  /** Output amplitude against the input's own, since at ten samples a cycle the discrete samples never land on the true
+    * crest of a sinusoid and both are understated by the same factor.
     */
   private def gainAt(hz: Double): Double =
     val input = tone(hz)
