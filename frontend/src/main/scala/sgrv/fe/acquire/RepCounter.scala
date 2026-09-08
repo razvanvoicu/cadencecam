@@ -167,6 +167,16 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
 
   def reading: RepReading = RepReading(counted, state)
 
+  /** Sets the tally back to nothing without disturbing the detection behind it.
+    *
+    * Deliberately not a reset: the lock, the channel being counted from and the position of the last counted peak all
+    * stand, so a set already in progress keeps being counted and simply starts from zero. Wiping the position would
+    * make the next update rediscover every peak still in the buffer and count them all over again, and wiping the
+    * buffers would throw away the cadence and cost several reps re-acquiring it.
+    */
+  def zeroCount(): Unit =
+    counted = 0
+
   def reset(): Unit =
     counted = 0
     lastCountedIndex = None

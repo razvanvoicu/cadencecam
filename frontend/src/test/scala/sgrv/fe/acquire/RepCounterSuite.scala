@@ -221,3 +221,31 @@ class RepCounterSuite extends FunSuite:
     val justResumed = Seq(0, 10, 20, 400, 410)
 
     assertEquals(RepAnalysis.periodOf(justResumed, 4, 0.35, 5), None)
+
+  test("zeroing the count leaves the detection running underneath it"):
+    val counter = RepCounter()
+    val channels = rotating(1.0, 60.0, amplitude = 6.0)
+    val length = channels.values.map(_.size).min
+    def feed(upTo: Int): RepReading =
+      var reading = counter.reading
+      for taken <- 1 to upTo do reading = counter.update(channels.view.mapValues(_.take(taken)).toMap, taken)
+      reading
+
+    val before = feed(400)
+    assert(before.count > 20, s"expected a running count before zeroing, got ${before.count}")
+    val lockBefore = before.lock
+
+    counter.zeroCount()
+
+    assertEquals(counter.reading.count, 0)
+    // The lock is untouched, so a set in progress keeps being counted rather than re-acquiring.
+    assertEquals(counter.reading.lock, lockBefore)
+
+    val after = feed(length)
+    // Only the reps since zeroing: the position of the last counted peak stood, so the buffer was not recounted.
+    assert(after.count > 0, "counting must continue after zeroing")
+    assert(
+      after.count < before.count,
+      s"zeroing must not rediscover the buffer: counted ${after.count} against ${before.count} before"
+    )
+    assert(after.lock.isInstanceOf[LockState.Locked], s"the lock must survive zeroing, got ${after.lock}")

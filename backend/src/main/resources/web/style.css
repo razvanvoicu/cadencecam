@@ -273,6 +273,52 @@ button,
   transform: translateX(-1px);
 }
 
+/* Sits over the preview in the corner the quadrant lines leave empty, so it covers no control and no reading. */
+.reset-button {
+  position: absolute;
+  z-index: 2;
+  bottom: 0.5rem;
+  left: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  background: rgb(0 0 0 / 45%);
+  border: 1px solid rgb(255 255 255 / 35%);
+  border-radius: 50%;
+  color: #fff;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.reset-button:active {
+  background: rgb(0 0 0 / 70%);
+}
+
+@media (hover: hover) {
+  .reset-button:hover {
+    border-color: #fff;
+  }
+}
+
+.camera-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.camera-status .error {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
 .acquirer-view {
   display: flex;
   flex: 1;

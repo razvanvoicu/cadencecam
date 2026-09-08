@@ -193,7 +193,20 @@ object Main:
         cls := "camera-frame",
         cls("mirrored") <-- mirrored.signal,
         video,
-        div(cls := "quadrant-lines")
+        div(cls := "quadrant-lines"),
+        button(
+          cls := "reset-button",
+          typ := "button",
+          // U+21BA, the anticlockwise open circle arrow: monochrome, present in the system fonts of every
+          // platform this runs on, and unambiguous without a caption.
+          "\u21ba",
+          aria.label := "Reset the count",
+          title := "Reset the count",
+          onClick --> { _ =>
+            counter.zeroCount()
+            repCount.set(counter.reading.count)
+          }
+        )
       )
 
       // Set on the element rather than as Laminar attributes: playsinline in particular is what stops iOS taking
