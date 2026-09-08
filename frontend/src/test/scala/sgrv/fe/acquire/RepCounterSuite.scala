@@ -111,13 +111,30 @@ class RepCounterSuite extends FunSuite:
 
     assertEquals(leaders.size, 1, s"the authoritative channel changed during the session: $leaders")
 
-  test("a gain step common to every quadrant is not counted as reps"):
-    // Uncorrected, this rings through the band-pass; the detector is fed corrected channels for exactly this reason.
-    val steps = Seq.tabulate(400)(index => if (index / 40) % 2 == 0 then 100.0 else 118.0)
-    val raw = Quadrant.All.map(_ -> steps).toMap
-    val reading = run(CommonMode.remove(raw))
+  test("sporadic gain steps are not counted"):
+    // What a camera actually does: re-converges its exposure occasionally, at no particular interval. Every
+    // quadrant steps together, and each step rings through the band-pass — but ringing is one event, not a
+    // cadence, so the evenness requirement rejects it.
+    val stepAt = Set(63, 187, 205, 331, 470)
+    var level = 100.0
+    val steps = Seq.tabulate(600): index =>
+      if stepAt.contains(index) then level = if level > 105 then 100.0 else 118.0
+      level
 
-    assertEquals(reading.count, 0)
+    val reading = run(Quadrant.All.map(_ -> steps).toMap)
+
+    assertEquals(clue(reading.count), 0)
+
+  test("a rhythmic change in overall lighting is counted, which is the cost of not subtracting the common mode"):
+    // The failure mode accepted when continuous common-mode removal was dropped: a light, screen or shadow
+    // varying at a rep-like rate looks exactly like a rep to every quadrant at once. Sporadic exposure steps are
+    // handled by the evenness requirement; a genuinely periodic one is not, and nothing here can tell it from
+    // movement without the quadrants disagreeing about it.
+    val flicker = Seq.tabulate(400)(index => 120.0 + 10.0 * math.sin(2 * math.Pi * index / 10.0))
+
+    val reading = run(Quadrant.All.map(_ -> flicker).toMap)
+
+    assert(reading.count > 0, "documented limitation: this is counted, and would not have been before")
 
   test("resetting clears the count and the lock"):
     val counter = RepCounter()
@@ -143,3 +160,64 @@ class RepCounterSuite extends FunSuite:
       case LockState.Locked(leader, partner, _) =>
         assert(Set(leader, partner) == Set(Quadrant.Q1, Quadrant.Q2), s"locked onto $leader with $partner")
       case other => fail(s"expected a lock on the two moving quadrants, got $other")
+
+  /** Someone working at a desk: real, sizeable movements at irregular intervals, in no particular rhythm. */
+  private def fidgeting(seconds: Double, seed: Int = 7): Seq[Double] =
+    val random = java.util.Random(seed.toLong)
+    val samples = (seconds * rate).toInt
+    var value = 120.0
+    var remaining = 0
+    var direction = 0.0
+    Seq.fill(samples):
+      if remaining <= 0 then
+        remaining = 3 + random.nextInt(25)
+        direction = (random.nextDouble() - 0.5) * 6.0
+      remaining -= 1
+      value = math.max(60.0, math.min(200.0, value + direction))
+      value
+
+  test("incidental movement is not counted, however large it is"):
+    // The case observed in use: a body shifting in front of the camera while working, not exercising. Its peaks
+    // are as tall as a rep's, so only their irregularity distinguishes them.
+    val channels = Map(
+      Quadrant.Q1 -> fidgeting(60.0, seed = 1),
+      Quadrant.Q2 -> fidgeting(60.0, seed = 2),
+      Quadrant.Q3 -> fidgeting(60.0, seed = 3),
+      Quadrant.Q4 -> fidgeting(60.0, seed = 4)
+    )
+
+    val reading = run(channels)
+
+    assertEquals(clue(reading.count), 0)
+    assertEquals(reading.lock, LockState.Searching)
+
+  test("a couple of peaks is not a cadence"):
+    // Two peaks have a median interval like any other, which is exactly why a median alone was not enough.
+    assertEquals(RepAnalysis.periodOf(Seq(10, 20), 4, 0.35, 5), None)
+    assertEquals(RepAnalysis.periodOf(Seq(10, 20, 30), 4, 0.35, 5), None)
+    assertEquals(RepAnalysis.periodOf(Seq(10, 20, 30, 40), 4, 0.35, 5), Some(10.0))
+
+  test("unevenly spaced peaks are not a cadence, even when there are many"):
+    val ragged = Seq(0, 8, 31, 42, 70, 78)
+    val even = Seq(0, 10, 20, 30, 40, 50)
+
+    assertEquals(RepAnalysis.periodOf(ragged, 4, 0.35, 5), None)
+    assertEquals(RepAnalysis.periodOf(even, 4, 0.35, 5), Some(10.0))
+
+  test("a cadence that drifts slightly is still a cadence"):
+    // Real exercise is not metronomic; the tolerance has to accommodate a rep or two of variation.
+    val human = Seq(0, 18, 34, 53, 70, 88)
+
+    assert(RepAnalysis.periodOf(human, 4, 0.35, 5).isDefined, "a human cadence must survive the evenness check")
+
+  test("an old pause stops arguing against the cadence once recent reps outnumber it"):
+    // The buffer still remembers the gap, but the peaks since then are even, so the cadence is believed again.
+    val acrossAPause = Seq(0, 10, 20, 400, 410, 420, 430, 440)
+
+    assertEquals(RepAnalysis.periodOf(acrossAPause, 4, 0.35, 5), Some(10.0))
+
+  test("a pause still in the recent peaks is not yet a cadence"):
+    // Immediately after resuming, the gap is one of the last few intervals and the detector waits.
+    val justResumed = Seq(0, 10, 20, 400, 410)
+
+    assertEquals(RepAnalysis.periodOf(justResumed, 4, 0.35, 5), None)

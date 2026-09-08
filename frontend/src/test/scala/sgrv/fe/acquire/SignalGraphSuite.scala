@@ -17,65 +17,38 @@ class SignalGraphSuite extends FunSuite:
 
     assert(newest > 0.0 && newest < 0.25, s"expected the trace to occupy the left of the pane, got $newest")
 
-  test("the widest step spans the whole brightness range"):
-    assertEqualsDouble(SignalZoom.span(SignalZoom.Span128) * 2, 255.0, 1.0)
+  test("a movement larger than the floor fills the height available to it"):
+    val (low, high) = SignalGraph.range(Seq(110.0, 140.0, 125.0))
 
-  test("every step is centred on the series, so a deviation series is not pushed off the pane"):
-    // A common-mode-corrected channel hovers about zero and goes negative; an absolute 0-255 window would draw it
-    // at or below the bottom edge. Centring is what keeps raw and corrected comparable in one pane.
-    val corrected = Seq(-4.0, 2.0, -1.0, 3.0)
+    assertEqualsDouble(low, 110.0, 1e-9)
+    assertEqualsDouble(high, 140.0, 1e-9)
 
-    SignalZoom.values.foreach: zoom =>
-      val (low, high) = SignalGraph.range(corrected, zoom)
-      val centre = (low + high) / 2
-      assertEqualsDouble(centre, corrected.sum / corrected.size, 1e-9)
-      assert(low < corrected.min || high > corrected.max || zoom == SignalZoom.Span2, s"$zoom must contain the data")
+  test("a scene at rest draws very nearly flat rather than magnified noise"):
+    // Sensor noise of a unit or two must not be stretched to full height just because nothing else is happening.
+    val atRest = Seq(120.0, 120.6, 119.7, 120.2, 119.9)
+    val (low, high) = SignalGraph.range(atRest)
 
-  test("a zoomed span is fixed in width and centred on the window mean"):
-    val samples = Seq(100.0, 108.0, 104.0)
-    val (low, high) = SignalGraph.range(samples, SignalZoom.Span32)
+    assertEqualsDouble(high - low, SignalGraph.MinimumRange, 1e-9)
+    // The noise occupies well under a tenth of the pane.
+    assert((atRest.max - atRest.min) / (high - low) < 0.1, "resting noise should barely register")
+    assert(low < atRest.min && high > atRest.max, "the floor must still contain the samples")
 
-    assertEqualsDouble(high - low, 64.0, 1e-9)
-    assertEqualsDouble((low + high) / 2, 104.0, 1e-9)
+  test("the floor is a sixteenth of the brightness scale"):
+    assertEqualsDouble(SignalGraph.MinimumRange, 16.0, 1e-9)
+    assert(SignalGraph.MinimumRange < 256.0 / 8, "a floor this wide would flatten real movement too")
 
-  test("the span never widens to fit the data, which is what keeps heights meaningful"):
-    // A signal far larger than the span is clipped by the pane rather than rescaling it.
-    val wild = Seq(0.0, 255.0, 128.0)
-    val (low, high) = SignalGraph.range(wild, SignalZoom.Span8)
+  test("heights are not comparable between panes above the floor, which is the cost of filling the space"):
+    val modest = SignalGraph.range(Seq(100.0, 130.0))
+    val large = SignalGraph.range(Seq(60.0, 200.0))
 
-    assertEqualsDouble(high - low, 16.0, 1e-9)
-    assert(low > 0.0 && high < 255.0, "the span must stay put rather than growing to contain the samples")
+    assert(modest._2 - modest._1 < large._2 - large._1, "a quieter window should scale to a narrower range")
 
-  test("the same change draws the same height wherever it sits on the scale"):
-    def heightOf(samples: Seq[Double], delta: Double, zoom: SignalZoom): Double =
-      val (low, high) = SignalGraph.range(samples, zoom)
-      delta / (high - low)
+  test("a window with no variation at all still yields a drawable range"):
+    val (low, high) = SignalGraph.range(Seq.fill(10)(120.0))
 
-    // A ten-unit step is the same fraction of the pane in a dark scene and a bright one.
-    val dark = heightOf(Seq(40.0, 44.0), 10.0, SignalZoom.Span32)
-    val bright = heightOf(Seq(200.0, 204.0), 10.0, SignalZoom.Span32)
+    assertEqualsDouble(high - low, SignalGraph.MinimumRange, 1e-9)
 
-    assertEqualsDouble(dark, bright, 1e-12)
-    assertEqualsDouble(dark, 10.0 / 64.0, 1e-12)
+  test("an empty window still yields a drawable range"):
+    val (low, high) = SignalGraph.range(Seq.empty)
 
-  test("recentring follows drift without changing how big a step looks"):
-    val before = SignalGraph.range(Seq(100.0), SignalZoom.Span32)
-    val afterDrift = SignalGraph.range(Seq(140.0), SignalZoom.Span32)
-
-    assertEqualsDouble(afterDrift._1 - before._1, 40.0, 1e-9)
-    assertEqualsDouble(afterDrift._2 - afterDrift._1, before._2 - before._1, 1e-9)
-
-  test("every zoom is reachable from every other, and the widest stays within the requested bound"):
-    val cycle = Iterator.iterate(SignalZoom.Span128)(SignalZoom.next).take(5).toList
-
-    assertEquals(cycle.take(4).toSet, SignalZoom.values.toSet)
-    assertEquals(cycle.head, cycle.last, "cycling must return to where it started")
-    // The step the investigation settled on keeps the trace within the agreed distance of its own mean.
-    assertEqualsDouble(SignalZoom.span(SignalZoom.Span32), 32.0, 1e-9)
-    assertEquals(SignalZoom.label(SignalZoom.Span32), "±32")
-    assertEquals(SignalZoom.label(SignalZoom.Span128), "±128")
-
-  test("an empty window still yields a drawable range at every zoom"):
-    SignalZoom.values.foreach: zoom =>
-      val (low, high) = SignalGraph.range(Seq.empty, zoom)
-      assert(high > low, s"$zoom would divide by zero when scaling")
+    assert(high > low)

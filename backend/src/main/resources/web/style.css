@@ -43,8 +43,8 @@ body {
   box-sizing: border-box;
   width: 100%;
   max-width: 32rem;
-  min-height: 100vh;
-  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
   margin: 0 auto;
   padding:
     calc(1rem + env(safe-area-inset-top))
@@ -58,6 +58,8 @@ body {
   flex: 1;
   flex-direction: column;
   justify-content: center;
+  /* Without this a flex child refuses to shrink below its content, and the traces would be pushed off-screen. */
+  min-height: 0;
 }
 
 button,
@@ -217,7 +219,7 @@ button,
 .camera-frame {
   position: relative;
   width: 100%;
-  max-height: 45vh;
+  max-height: 30vh;
   margin: 0 auto;
   aspect-ratio: 16 / 9;
   background: #000;
@@ -273,20 +275,63 @@ button,
 
 .acquirer-view {
   display: flex;
+  flex: 1;
   flex-direction: column;
+  gap: 0.75rem;
+  /* Nothing here scrolls: the panel takes what it needs and the traces take whatever is left. */
+  min-height: 0;
+}
+
+.acquirer-view .screen {
+  position: relative;
+  flex: none;
+}
+
+.acquirer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 1rem;
 }
 
-.signal-graphs {
+.menu-button {
   display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* Catches a tap anywhere outside the menu. Behind the menu, in front of everything else. */
+.menu-backdrop {
+  position: fixed;
+  z-index: 900;
+  inset: 0;
+}
+
+/* Two by two, in the same arrangement as the quadrants they show. */
+.signal-graphs {
+  display: grid;
+  flex: 1;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 0.5rem;
+  min-height: 0;
 }
 
 /* Each trace boxed separately so one quadrant's movement cannot be mistaken for another's. */
 .signal-pane {
   position: relative;
-  height: 7.5rem;
+  /* Sized by the grid cell, so the traces shrink to whatever room the panel leaves them. */
+  min-height: 0;
   background: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -299,8 +344,7 @@ button,
   height: 100%;
 }
 
-.signal-label,
-.signal-scale {
+.signal-label {
   position: absolute;
   top: 0.15rem;
   /* The trace runs the full height of the pane, so the label needs its own ground to stay readable over a peak. */
@@ -310,31 +354,9 @@ button,
   color: var(--muted);
   font-size: 0.7rem;
   font-weight: 600;
+  left: 0.3rem;
   letter-spacing: 0.04em;
   pointer-events: none;
-}
-
-.signal-label {
-  left: 0.3rem;
-}
-
-/* The scale the trace is drawn against, kept in the corner opposite the quadrant's name. */
-.signal-scale {
-  right: 0.3rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.camera-status {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.85rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.camera-status .error {
-  margin: 0 0 0.75rem;
-  font-size: 0.95rem;
-  line-height: 1.4;
 }
 
 .rep-count {
@@ -342,12 +364,13 @@ button,
   align-items: baseline;
   justify-content: center;
   gap: 0.5rem;
-  padding: 0.5rem 0;
+  padding: 0.25rem 0;
 }
 
+/* Readable at arm's length on a phone propped against something, which is how this gets used — but no longer so
+   large that it crowds the traces below it. */
 .rep-count-value {
-  /* Readable at arm's length on a phone propped against something, which is how this gets used. */
-  font-size: clamp(3rem, 22vw, 5.5rem);
+  font-size: clamp(2.75rem, 18vw, 4.5rem);
   font-weight: 700;
   line-height: 1;
   font-variant-numeric: tabular-nums;
@@ -366,15 +389,54 @@ button,
 }
 
 .acquirer-actions {
+  position: absolute;
+  z-index: 1000;
+  top: 3.5rem;
+  right: 1.25rem;
+  display: none;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 12rem;
+  padding: 0.35rem;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 0.5rem 1.5rem var(--shadow);
+}
+
+.acquirer-actions.open {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 1rem;
+}
+
+.menu-item {
+  padding: 0.7rem 0.9rem;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.95rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item:active {
+  background: var(--bg);
+}
+
+@media (hover: hover) {
+  .menu-item:hover {
+    background: var(--bg);
+  }
 }
 
 @media (max-height: 720px) {
   .camera-frame {
-    max-height: 32vh;
+    max-height: 26vh;
+  }
+
+  .rep-count-value {
+    font-size: clamp(2.5rem, 14vw, 3.5rem);
   }
 }
 

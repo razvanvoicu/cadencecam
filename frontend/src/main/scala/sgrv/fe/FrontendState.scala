@@ -3,7 +3,6 @@ package sgrv.fe
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
 import sgrv.api.AboutInfo
-import sgrv.fe.acquire.SignalZoom
 import zio.json.*
 
 import scala.util.control.NonFatal
@@ -65,14 +64,6 @@ private[fe] final case class FrontendState(
       * it is working against before `/me` has answered again.
       */
     countingSessionId: Option[String],
-    /** Whether the acquirer shows its per-quadrant signal traces. A debugging aid, on by default while the acquisition
-      * approach is being validated, and expected to be switched off once it has done its job.
-      */
-    showSignals: Boolean,
-    /** How much of the brightness scale the signal traces show. A fixed span at every step, so a step of a given size
-      * always draws the same height; only which band of the scale is on screen changes.
-      */
-    signalZoom: SignalZoom,
     aboutState: AboutState,
     logoutState: LogoutState
 ):
@@ -101,8 +92,6 @@ private[fe] object FrontendState:
     user = UserState.Unknown,
     screen = Screen.Selection,
     countingSessionId = None,
-    showSignals = true,
-    signalZoom = SignalZoom.Span32,
     aboutState = AboutState.Closed,
     logoutState = LogoutState.Idle
   )

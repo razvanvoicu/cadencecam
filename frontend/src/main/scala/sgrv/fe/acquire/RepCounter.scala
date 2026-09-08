@@ -21,6 +21,27 @@ private[fe] final case class DetectorSettings(
     minimumSamplesForLock: Int = 150,
     /** How closely two channels' periods must match to be believed. */
     periodTolerance: Double = 0.25,
+    /** How many peaks a channel must show before it may claim a period at all.
+      *
+      * Incidental movement — someone shifting in a chair, walking past — produces peaks as large as a rep's, so
+      * amplitude cannot tell the two apart. What distinguishes exercise is that it repeats. Requiring several peaks
+      * means a channel has to show a cadence, not merely a couple of events.
+      */
+    minimumPeaksForPeriod: Int = 4,
+    /** How far an individual gap between peaks may stray from the typical one, as a fraction of it.
+      *
+      * A cadence is even. Peaks spaced 8, 23 and 11 samples apart have a median like a real signal's but are plainly
+      * not rhythmic, and this is what rejects them.
+      */
+    maximumIntervalSpread: Double = 0.35,
+    /** How many of the most recent peaks describe the cadence being kept now.
+      *
+      * Judging evenness across the whole buffer means a single pause poisons it until that pause scrolls out of the
+      * minute entirely — a minute of not counting after movement resumes. Looking only at the recent peaks makes the
+      * period what the user is doing now, so a pause is forgotten after a handful of reps rather than after the buffer
+      * turns over. It also lets the cadence change without the earlier pace arguing against it.
+      */
+    cadencePeaks: Int = 5,
     /** Samples ignored at the start of a window while the filter settles. A band-pass starting from rest rings when the
       * signal first arrives, and that ringing would otherwise dominate the very statistics used to decide what counts
       * as a peak.
@@ -52,15 +73,28 @@ private[fe] object RepAnalysis:
   private[acquire] def rootMeanSquare(samples: Seq[Double]): Double =
     if samples.isEmpty then 0.0 else math.sqrt(samples.map(value => value * value).sum / samples.size)
 
-  /** Median interval between successive peaks, in samples. The median rather than the mean so one missed or spurious
-    * peak does not drag the estimate.
+  /** The cadence a channel is keeping, in samples per rep, or `None` if it is not keeping one.
+    *
+    * The median rather than the mean, so one missed or spurious peak does not drag the estimate — but a median alone
+    * would describe any set of peaks whatsoever. A period is only claimed when there are enough peaks to call it a
+    * rhythm and every gap between them resembles the others.
     */
-  private[acquire] def periodOf(peaks: Seq[Int]): Option[Double] =
+  private[acquire] def periodOf(
+      allPeaks: Seq[Int],
+      minimumPeaks: Int,
+      maximumSpread: Double,
+      cadencePeaks: Int
+  ): Option[Double] =
+    // Only the recent peaks: the period is the cadence being kept now, not an average of everything remembered.
+    val peaks = allPeaks.takeRight(math.max(cadencePeaks, minimumPeaks))
     val intervals = peaks.sliding(2).collect { case Seq(first, second) => (second - first).toDouble }.toSeq
-    Option.when(intervals.nonEmpty):
+    if peaks.sizeIs < minimumPeaks || intervals.isEmpty then None
+    else
       val sorted = intervals.sorted
       val middle = sorted.length / 2
-      if sorted.length % 2 == 1 then sorted(middle) else (sorted(middle - 1) + sorted(middle)) / 2
+      val median = if sorted.length % 2 == 1 then sorted(middle) else (sorted(middle - 1) + sorted(middle)) / 2
+      val even = median > 0 && intervals.forall(interval => math.abs(interval - median) / median <= maximumSpread)
+      Option.when(even)(median)
 
   def analyse(samples: Seq[Double], quadrant: Quadrant, settings: DetectorSettings): ChannelAnalysis =
     // Centring first: the band-pass rejects a constant in steady state, but a filter starting from rest still sees
@@ -75,7 +109,13 @@ private[fe] object RepAnalysis:
     val peaks = PeakDetector
       .peaks(settled, settings.minimumDistanceSamples, threshold)
       .map(_ + settings.settlingSamples)
-    ChannelAnalysis(quadrant, filtered, power, peaks, periodOf(peaks))
+    ChannelAnalysis(
+      quadrant,
+      filtered,
+      power,
+      peaks,
+      periodOf(peaks, settings.minimumPeaksForPeriod, settings.maximumIntervalSpread, settings.cadencePeaks)
+    )
 
   private[acquire] def agree(first: ChannelAnalysis, second: ChannelAnalysis, tolerance: Double): Boolean =
     (first.periodSamples, second.periodSamples) match

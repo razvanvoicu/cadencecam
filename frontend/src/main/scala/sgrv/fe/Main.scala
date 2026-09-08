@@ -9,15 +9,13 @@ import sgrv.fe.acquire.{
   Camera,
   CameraDevice,
   CameraState,
-  CommonMode,
   FrameSampler,
   LockState,
   RepCounter,
   Quadrant,
   QuadrantSignals,
   Sample,
-  SignalGraph,
-  SignalZoom
+  SignalGraph
 }
 import sgrv.fe.refreshstate.RefreshStateStore
 import sgrv.fe.refreshstate.SessionRefreshWorker
@@ -180,6 +178,7 @@ object Main:
       val mirrored = Var(false)
       val devices = Var(Seq.empty[CameraDevice])
       val currentDevice = Var(Option.empty[String])
+      val menuOpen = Var(false)
       val counter = RepCounter()
       var totalSamples = 0
       val signals = QuadrantSignals()
@@ -215,9 +214,7 @@ object Main:
       def onSample(sample: Sample): Unit =
         signals.record(sample)
         totalSamples += 1
-        // The detector reads the corrected channels, not the raw ones: a gain step would otherwise ring through
-        // the band-pass and be counted as a rep.
-        val reading = counter.update(CommonMode.remove(signals.window(signals.capacity)), totalSamples)
+        val reading = counter.update(signals.window(signals.capacity), totalSamples)
         repCount.set(reading.count)
         lock.set(reading.lock)
         tick.update(_ + 1)
@@ -273,16 +270,10 @@ object Main:
         div(
           cls := "signal-pane",
           span(cls := "signal-label", quadrant.toString),
-          // Repeated on every pane rather than stated once: the control that sets it lives in the panel above and
-          // scrolls out of sight exactly when the traces are being read.
-          span(
-            cls := "signal-scale",
-            child.text <-- stateStore.signal.map(state => SignalZoom.label(state.signalZoom))
-          ),
           pane,
           // Redraw on every sample, so the trace keeps scrolling on a still scene too: samples arrive whether or
           // not anything in front of the camera moves.
-          stateStore.signal.map(_.signalZoom).combineWith(tick.signal) --> { _ =>
+          tick.signal --> { _ =>
             val element = pane.ref
             val box = element.getBoundingClientRect()
             val ratio = dom.window.devicePixelRatio
@@ -291,24 +282,18 @@ object Main:
             if element.width != width || element.height != height then
               element.width = width
               element.height = height
-            val raw = signals.window(SignalGraph.WindowSamples)
-            val corrected = CommonMode.remove(raw)
+            val recent = signals.window(SignalGraph.WindowSamples)
             SignalGraph.draw(
               element,
-              Seq(
-                // The raw channel is kept alongside for now, purely to confirm that the steps it shows are absent
-                // from the corrected one. Drop this trace once that has been seen.
-                SignalGraph.Trace(raw.getOrElse(quadrant, Seq.empty), stroke = "rgb(148 148 160 / 55%)", width = 1),
-                SignalGraph.Trace(corrected.getOrElse(quadrant, Seq.empty), stroke = "#22c55e", width = 2)
-              ),
-              stateStore.current.signalZoom,
+              Seq(SignalGraph.Trace(recent.getOrElse(quadrant, Seq.empty), stroke = "#22c55e", width = 2)),
               grid = "rgb(128 128 128 / 35%)"
             )
           }
         )
 
-      def toggle(label: Signal[String], onToggle: () => Unit): Element =
-        button(cls := "logout-link", typ := "button", child.text <-- label, onClick --> (_ => onToggle()))
+      /** One entry in the menu. Choosing closes it, so the picture is not left obscured. */
+      def menuItem(label: String, act: () => Unit): Element =
+        button(cls := "menu-item", typ := "button", label, onClick --> (_ => { menuOpen.set(false); act() }))
 
       div(
         cls := "acquirer-view",
@@ -316,7 +301,22 @@ object Main:
         onUnmountCallback(_ => release()),
         div(
           cls := "screen acquirer",
-          h1(cls := "screen-title", "Signal acquirer"),
+          div(
+            cls := "acquirer-header",
+            h1(cls := "screen-title", "Signal acquirer"),
+            button(
+              cls := "menu-button",
+              typ := "button",
+              aria.label := "Menu",
+              aria.expanded <-- menuOpen.signal,
+              "\u2630",
+              onClick --> (_ => menuOpen.update(open => !open))
+            )
+          ),
+          // A backdrop so a tap anywhere else dismisses the menu, which is what a phone expects.
+          child <-- menuOpen.signal.map:
+            case false => emptyNode
+            case true  => div(cls := "menu-backdrop", onClick --> (_ => menuOpen.set(false))),
           div(
             cls := "camera",
             frame,
@@ -355,6 +355,7 @@ object Main:
           ),
           div(
             cls := "acquirer-actions",
+            cls("open") <-- menuOpen.signal,
             // Shown only when there is somewhere to switch to.
             child <-- devices.signal
               .combineWith(currentDevice.signal)
@@ -363,44 +364,23 @@ object Main:
                   case None       => emptyNode
                   case Some(next) =>
                     val name = CameraDevice.nameOf(next, available.indexWhere(_.deviceId == next.deviceId))
-                    button(
-                      cls := "logout-link",
-                      typ := "button",
+                    menuItem(
                       s"Switch to $name",
                       // The scene changes entirely, so the buffered signal and the count start again: what came
                       // before belongs to a different view of the world.
-                      onClick --> (_ => { release(); startCamera(Some(next.deviceId)) })
+                      () => { release(); startCamera(Some(next.deviceId)) }
                     ),
-            toggle(
-              stateStore.signal.map(state => if state.showSignals then "Hide signals" else "Show signals"),
-              () => stateStore.update(current => current.copy(showSignals = !current.showSignals))
-            ),
-            toggle(
-              // Names what the click will do, like the toggles beside it. What the traces are drawn at now is
-              // stated on each pane, so this control has no reason to report status as well.
-              stateStore.signal.map(state => s"Scale → ${SignalZoom.label(SignalZoom.next(state.signalZoom))}"),
-              () => stateStore.update(current => current.copy(signalZoom = SignalZoom.next(current.signalZoom)))
-            ),
-            button(cls := "back-button", typ := "button", "Back", onClick --> (_ => show(Screen.Selection))),
-            button(
-              cls := "logout-link",
-              typ := "button",
-              disabled <-- stateStore.signal.map(_.logoutState == LogoutState.InProgress),
-              child.text <-- stateStore.signal
-                .map(_.logoutState)
-                .map:
-                  case LogoutState.InProgress => "Logging out…"
-                  case _                      => "Logout",
-              onClick --> (_ => logout())
-            )
+            menuItem("About", () => openAbout()),
+            menuItem("Back", () => show(Screen.Selection)),
+            menuItem("Logout", () => logout())
           )
         ),
-        // Deliberately outside the panel: a debugging aid sitting under the whole acquirer, not part of it.
-        child <-- stateStore.signal
-          .map(_.showSignals)
-          .map:
-            case false => emptyNode
-            case true  => div(cls := "signal-graphs", Quadrant.All.map(graphPane))
+        // Below the panel and laid out as the quadrants themselves are, so a trace sits where the movement that
+        // produced it appeared on screen.
+        div(
+          cls := "signal-graphs",
+          Seq(Quadrant.Q2, Quadrant.Q1, Quadrant.Q3, Quadrant.Q4).map(graphPane)
+        )
       )
 
     def placeholder(modifier: String, heading: String, note: String): Element =
