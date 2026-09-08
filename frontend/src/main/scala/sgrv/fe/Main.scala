@@ -7,6 +7,7 @@ import sgrv.api.CountingSession
 import sgrv.api.CurrentUser
 import sgrv.fe.acquire.{
   Camera,
+  CameraDevice,
   CameraState,
   CommonMode,
   FrameSampler,
@@ -174,6 +175,11 @@ object Main:
       val cameraState = Var[CameraState](CameraState.Idle)
       val repCount = Var(0)
       val lock = Var[LockState](LockState.Acquiring(0, 0))
+      // Derived from the camera itself rather than chosen: one on the same side as the screen is shown mirrored,
+      // one facing away is not. Not persisted, since it belongs to the hardware rather than to the user.
+      val mirrored = Var(false)
+      val devices = Var(Seq.empty[CameraDevice])
+      val currentDevice = Var(Option.empty[String])
       val counter = RepCounter()
       var totalSamples = 0
       val signals = QuadrantSignals()
@@ -186,7 +192,7 @@ object Main:
       // from the stream once known, keeping the drawn quadrants aligned with the sampled ones.
       val frame = div(
         cls := "camera-frame",
-        cls("mirrored") <-- stateStore.signal.map(_.mirrored),
+        cls("mirrored") <-- mirrored.signal,
         video,
         div(cls := "quadrant-lines")
       )
@@ -236,11 +242,11 @@ object Main:
         repCount.set(0)
         lock.set(LockState.Acquiring(0, 0))
 
-      def startCamera(): Unit =
+      def startCamera(deviceId: Option[String] = None): Unit =
         if cameraState.now() != CameraState.Starting then
           cameraState.set(CameraState.Starting)
           Camera
-            .start()
+            .start(deviceId)
             .onComplete:
               case Success(opened) =>
                 stream = Some(opened)
@@ -250,8 +256,12 @@ object Main:
                 val _ = element.play()
                 val (width, height) = Camera.resolution(opened).getOrElse((0, 0))
                 if width > 0 && height > 0 then frame.ref.style.setProperty("aspect-ratio", s"$width / $height")
+                mirrored.set(Camera.mirrors(Camera.facing(opened)))
+                currentDevice.set(Camera.deviceIdOf(opened))
+                // Labels stay blank until permission is granted, so the list is only worth reading now.
+                Camera.videoInputs().foreach(devices.set)
                 cameraState.set(CameraState.Streaming(width, height))
-                val started = FrameSampler(element, onSample, () => stateStore.current.mirrored)
+                val started = FrameSampler(element, onSample, () => mirrored.now())
                 started.start()
                 sampler = Some(started)
               case Failure(error) =>
@@ -345,10 +355,22 @@ object Main:
           ),
           div(
             cls := "acquirer-actions",
-            toggle(
-              stateStore.signal.map(state => if state.mirrored then "Unmirror" else "Mirror"),
-              () => stateStore.update(current => current.copy(mirrored = !current.mirrored))
-            ),
+            // Shown only when there is somewhere to switch to.
+            child <-- devices.signal
+              .combineWith(currentDevice.signal)
+              .map: (available, current) =>
+                Camera.nextDevice(available, current) match
+                  case None       => emptyNode
+                  case Some(next) =>
+                    val name = CameraDevice.nameOf(next, available.indexWhere(_.deviceId == next.deviceId))
+                    button(
+                      cls := "logout-link",
+                      typ := "button",
+                      s"Switch to $name",
+                      // The scene changes entirely, so the buffered signal and the count start again: what came
+                      // before belongs to a different view of the world.
+                      onClick --> (_ => { release(); startCamera(Some(next.deviceId)) })
+                    ),
             toggle(
               stateStore.signal.map(state => if state.showSignals then "Hide signals" else "Show signals"),
               () => stateStore.update(current => current.copy(showSignals = !current.showSignals))

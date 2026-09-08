@@ -24,15 +24,16 @@ private[fe] object Camera:
     */
   val PixelBudget = 1_000_000
 
-  /** Opens the camera without dictating a size, so the device offers its own preferred mode and its own aspect. */
-  private[acquire] def openingConstraints: dom.MediaStreamConstraints =
-    js.Dynamic
-      .literal(
-        audio = false,
-        // The acquirer points away from the user, at the equipment, so prefer the rear camera where there is one.
-        video = js.Dynamic.literal(facingMode = "environment")
-      )
-      .asInstanceOf[dom.MediaStreamConstraints]
+  /** Opens the camera without dictating a size, so the device offers its own preferred mode and its own aspect.
+    *
+    * With no camera chosen, the rear one is preferred: the acquirer points away from the user, at the equipment. A
+    * chosen camera is requested exactly, since the point of choosing is to override that preference.
+    */
+  private[acquire] def openingConstraints(deviceId: Option[String]): dom.MediaStreamConstraints =
+    val video = deviceId match
+      case Some(id) => js.Dynamic.literal(deviceId = js.Dynamic.literal(exact = id))
+      case None     => js.Dynamic.literal(facingMode = "environment")
+    js.Dynamic.literal(audio = false, video = video).asInstanceOf[dom.MediaStreamConstraints]
 
   /** The largest frame within the budget that keeps the device's own proportions.
     *
@@ -51,11 +52,11 @@ private[fe] object Camera:
   private[acquire] def supported: Boolean =
     !js.isUndefined(dom.window.navigator.asInstanceOf[js.Dynamic].mediaDevices)
 
-  def start(): Future[dom.MediaStream] =
+  def start(deviceId: Option[String] = None): Future[dom.MediaStream] =
     if !supported then Future.failed(CameraUnsupported())
     else
       dom.window.navigator.mediaDevices
-        .getUserMedia(openingConstraints)
+        .getUserMedia(openingConstraints(deviceId))
         .toFuture
         .flatMap(stream => fitToDevice(stream).map(_ => stream))
 
@@ -114,6 +115,54 @@ private[fe] object Camera:
           height <- Option(settings.height.asInstanceOf[js.UndefOr[Int]]).flatMap(_.toOption)
         yield (width, height)
 
+  /** Whether the picture should be flipped for the viewer.
+    *
+    * A camera on the same side as the screen shows the viewer to themselves, and people expect that reversed, the way a
+    * mirror is. A camera facing away shows the world, which must not be reversed.
+    *
+    * An unknown facing is treated as user-facing: cameras that decline to say are overwhelmingly the built-in one on a
+    * laptop, which points at the person using it. A rear phone camera always identifies itself.
+    */
+  private[fe] def mirrors(facing: Option[String]): Boolean = !facing.contains("environment")
+
+  /** Which way the open camera points, as the track itself reports it. */
+  def facing(stream: dom.MediaStream): Option[String] =
+    setting(stream, "facingMode").map(_.toString)
+
+  def deviceIdOf(stream: dom.MediaStream): Option[String] =
+    setting(stream, "deviceId").map(_.toString).filter(_.nonEmpty)
+
+  private def setting(stream: dom.MediaStream, name: String): Option[js.Any] =
+    stream
+      .getVideoTracks()
+      .headOption
+      .flatMap: track =>
+        val settings = track.asInstanceOf[js.Dynamic].getSettings()
+        Option(settings.selectDynamic(name)).filterNot(js.isUndefined).map(_.asInstanceOf[js.Any])
+
+  /** Every camera this device exposes. Empty when the browser offers no enumeration at all. */
+  def videoInputs(): Future[Seq[CameraDevice]] =
+    val devices = dom.window.navigator.asInstanceOf[js.Dynamic].mediaDevices
+    if js.isUndefined(devices) || js.isUndefined(devices.enumerateDevices) then Future.successful(Seq.empty)
+    else
+      devices
+        .enumerateDevices()
+        .asInstanceOf[js.Promise[js.Array[js.Dynamic]]]
+        .toFuture
+        .map: found =>
+          found.toSeq
+            .filter(device => device.kind.asInstanceOf[String] == "videoinput")
+            .map(device => CameraDevice(device.deviceId.asInstanceOf[String], device.label.asInstanceOf[String]))
+            .filter(_.deviceId.nonEmpty)
+        .recover { case _ => Seq.empty }
+
+  /** The camera after this one, wrapping around; `None` when there is nothing to switch to. */
+  def nextDevice(devices: Seq[CameraDevice], current: Option[String]): Option[CameraDevice] =
+    if devices.sizeIs < 2 then None
+    else
+      val index = current.flatMap(id => Option(devices.indexWhere(_.deviceId == id)).filter(_ >= 0)).getOrElse(-1)
+      Some(devices((index + 1) % devices.size))
+
   private[acquire] final case class CameraUnsupported()
       extends RuntimeException("This browser exposes no camera on an insecure connection")
 
@@ -143,3 +192,13 @@ private[fe] object Camera:
       case js.JavaScriptException(value) =>
         Option(value.asInstanceOf[js.Dynamic].name).map(_.toString).getOrElse("")
       case _ => ""
+
+/** A camera this device offers. The label is only populated once permission has been granted, which is why the list is
+  * read after the first stream opens rather than before.
+  */
+private[fe] final case class CameraDevice(deviceId: String, label: String)
+
+private[fe] object CameraDevice:
+  /** A readable name for a camera, falling back to its position in the list when the browser gives none. */
+  def nameOf(device: CameraDevice, index: Int): String =
+    Option(device.label).map(_.trim).filter(_.nonEmpty).getOrElse(s"Camera ${index + 1}")

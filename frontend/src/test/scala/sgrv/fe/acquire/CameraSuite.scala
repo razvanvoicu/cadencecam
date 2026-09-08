@@ -53,3 +53,36 @@ class CameraSuite extends FunSuite:
 
   test("refuses a camera reporting no size at all"):
     intercept[IllegalArgumentException](Camera.budgetedSize(0, 480, Camera.PixelBudget))
+
+  test("a camera on the same side as the screen is mirrored, one facing away is not"):
+    assert(Camera.mirrors(Some("user")), "a front camera shows the viewer to themselves")
+    assert(!Camera.mirrors(Some("environment")), "a rear camera shows the world, which must not be reversed")
+
+  test("a camera that does not say which way it faces is treated as facing the user"):
+    // Overwhelmingly a laptop's built-in webcam, which points at whoever is using it. A rear phone camera always
+    // identifies itself, so this default cannot mirror the acquisition case by mistake.
+    assert(Camera.mirrors(None))
+
+  test("there is nowhere to switch when the device has one camera or none"):
+    val single = Seq(CameraDevice("a", "Front"))
+
+    assertEquals(Camera.nextDevice(Seq.empty, None), None)
+    assertEquals(Camera.nextDevice(single, Some("a")), None)
+    assertEquals(Camera.nextDevice(single, None), None)
+
+  test("switching cycles through the cameras and wraps around"):
+    val all = Seq(CameraDevice("a", "Front"), CameraDevice("b", "Back"), CameraDevice("c", "Wide"))
+
+    assertEquals(Camera.nextDevice(all, Some("a")).map(_.deviceId), Some("b"))
+    assertEquals(Camera.nextDevice(all, Some("c")).map(_.deviceId), Some("a"))
+
+  test("an unrecognised current camera starts the cycle from the beginning"):
+    val all = Seq(CameraDevice("a", "Front"), CameraDevice("b", "Back"))
+
+    assertEquals(Camera.nextDevice(all, None).map(_.deviceId), Some("a"))
+    assertEquals(Camera.nextDevice(all, Some("gone")).map(_.deviceId), Some("a"))
+
+  test("a camera with no label is named by its position"):
+    assertEquals(CameraDevice.nameOf(CameraDevice("a", "Back camera"), 0), "Back camera")
+    assertEquals(CameraDevice.nameOf(CameraDevice("a", ""), 1), "Camera 2")
+    assertEquals(CameraDevice.nameOf(CameraDevice("a", "   "), 0), "Camera 1")

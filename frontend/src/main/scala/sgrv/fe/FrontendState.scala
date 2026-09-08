@@ -69,10 +69,6 @@ private[fe] final case class FrontendState(
       * approach is being validated, and expected to be switched off once it has done its job.
       */
     showSignals: Boolean,
-    /** Whether the preview is flipped left-to-right. Presentation only: the frame is sampled the same way it is shown,
-      * so the quadrants keep their names and their places on screen either way.
-      */
-    mirrored: Boolean,
     /** How much of the brightness scale the signal traces show. A fixed span at every step, so a step of a given size
       * always draws the same height; only which band of the scale is on screen changes.
       */
@@ -106,7 +102,6 @@ private[fe] object FrontendState:
     screen = Screen.Selection,
     countingSessionId = None,
     showSignals = true,
-    mirrored = true,
     signalZoom = SignalZoom.Span32,
     aboutState = AboutState.Closed,
     logoutState = LogoutState.Idle

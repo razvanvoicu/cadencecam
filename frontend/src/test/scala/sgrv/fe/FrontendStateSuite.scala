@@ -13,7 +13,6 @@ class FrontendStateSuite extends FunSuite:
       screen = Screen.Acquirer,
       countingSessionId = Some("a3f1"),
       showSignals = false,
-      mirrored = false,
       signalZoom = SignalZoom.Span8,
       aboutState = AboutState.Loaded(AboutInfo("1.0", "today", "Mac", "3", "1")),
       logoutState = LogoutState.Failed("try again")
