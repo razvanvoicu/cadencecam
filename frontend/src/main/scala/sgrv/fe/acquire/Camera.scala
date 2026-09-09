@@ -58,7 +58,81 @@ private[fe] object Camera:
       dom.window.navigator.mediaDevices
         .getUserMedia(openingConstraints(deviceId))
         .toFuture
-        .flatMap(stream => fitToDevice(stream).map(_ => stream))
+        .flatMap: stream =>
+          fitToDevice(stream).map: _ =>
+            // Deliberately not awaited: the preview should appear at once, and the controls settle behind it.
+            holdControlsStill(stream)
+            stream
+
+  /** The camera controls that must not move while a session runs.
+    *
+    * A camera left on automatic re-meters continuously, and the movement being counted is what it meters on. Every gain
+    * change it makes shifts the whole frame together, so a rep in one quadrant appears as a wave in all four — a copy
+    * of the signal arriving where the movement is not. That defeats the very check meant to validate a cadence, since
+    * two quadrants can then agree on a period without either having seen the movement.
+    *
+    * Fixing it at the sensor is what the removed common-mode subtraction was reaching for and could not reach: a gain
+    * change that never happens needs no undoing, whereas subtracting it afterwards mixed every channel into every
+    * other.
+    */
+  private[acquire] val manualControls = Seq("exposureMode", "whiteBalanceMode", "focusMode")
+
+  /** How long the camera stays automatic before being held still.
+    *
+    * Locking the instant the stream opens freezes whatever the sensor started with, before metering has converged —
+    * often far too dark or too bright to see anything in. A moment of automatic first gives it something worth holding.
+    */
+  private[acquire] val settleBeforeLockMillis = 1500
+
+  /** Which of the wanted controls this camera says it can hold manually.
+    *
+    * The shape is checked rather than assumed. Browsers differ over what they report here, and casting an unexpected
+    * value to an array of modes fails in a way no `Try` catches — it raises an `Error`, not an exception — so a camera
+    * reporting something odd would take the whole capture down instead of simply going unlocked.
+    */
+  private[acquire] def manualCapable(capabilities: js.Dynamic): Seq[String] =
+    manualControls.filter: control =>
+      val modes = capabilities.selectDynamic(control)
+      !js.isUndefined(modes) &&
+      js.Dynamic.global.Array.isArray(modes).asInstanceOf[Boolean] &&
+      modes.asInstanceOf[js.Array[Any]].exists(_ == "manual")
+
+  /** Holds each supported control still, once the camera has had a moment to meter.
+    *
+    * Best effort throughout, and one control at a time: a camera willing to hold exposure but not focus should still
+    * hold exposure, and a browser supporting none of this keeps working exactly as it did.
+    */
+  private def holdControlsStill(stream: dom.MediaStream): Future[Seq[String]] =
+    stream.getVideoTracks().headOption match
+      case None        => Future.successful(Seq.empty)
+      case Some(track) =>
+        val dynamic = track.asInstanceOf[js.Dynamic]
+        if js.isUndefined(dynamic.getCapabilities) then Future.successful(Seq.empty)
+        else
+          after(settleBeforeLockMillis).flatMap: _ =>
+            manualCapable(dynamic.getCapabilities())
+              .foldLeft(Future.successful(Seq.empty[String])): (earlier, control) =>
+                earlier.flatMap: locked =>
+                  val wanted = js.Dynamic.literal()
+                  wanted.updateDynamic(control)("manual")
+                  track
+                    .applyConstraints(
+                      js.Dynamic.literal(advanced = js.Array(wanted)).asInstanceOf[dom.MediaTrackConstraints]
+                    )
+                    .toFuture
+                    .map(_ => locked :+ control)
+                    .recover { case _ => locked }
+              .map: locked =>
+                // Reported because the difference is visible on the traces: with the controls held, the quadrants
+                // the movement never enters should go quiet.
+                if locked.isEmpty then dom.console.info("The camera holds none of its controls still")
+                else dom.console.info(s"Camera controls held still: ${locked.mkString(", ")}")
+                locked
+
+  private def after(millis: Int): Future[Unit] =
+    val settled = scala.concurrent.Promise[Unit]()
+    dom.window.setTimeout(() => settled.success(()), millis.toDouble)
+    settled.future
 
   /** Narrows an open camera to the largest mode within the budget at the device's own aspect ratio.
     *

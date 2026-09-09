@@ -23,8 +23,8 @@ private[fe] object RestPhase:
     */
   val StillTolerance: Double = 1.5
 
-  /** Shortest opening stillness worth trusting, in samples. Two seconds: long enough that a slow rep cannot be
-    * mistaken for the hand being parked.
+  /** Shortest opening stillness worth trusting, in samples. Two seconds: long enough that a slow rep cannot be mistaken
+    * for the hand being parked.
     */
   val MinimumStillSamples: Int = 20
 
@@ -50,8 +50,8 @@ private[fe] object RestPhase:
         else index += 1
       index
 
-  /** Where a channel's resting level sits within the range it sweeps once moving: 1 at its brightest, 0 at its
-    * darkest, or `None` when there is not enough stillness or not enough movement to tell.
+  /** Where a channel's resting level sits within the range it sweeps once moving: 1 at its brightest, 0 at its darkest,
+    * or `None` when there is not enough stillness or not enough movement to tell.
     */
   def restFraction(samples: Seq[Double], stillFor: Int): Option[Double] =
     val moving = samples.drop(stillFor)

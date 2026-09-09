@@ -11,37 +11,31 @@ private[fe] final case class DetectorSettings(
     minimumDistanceSamples: Int = 5,
     /** A peak must stand this far above the surrounding valleys, relative to how active the window is. */
     prominenceFactor: Double = 1.5,
-    /** and at least this far in absolute terms, so a still scene's noise cannot clear a threshold that scales with it
-      * and be counted as movement.
+    /** and at least this far in absolute terms, so a still scene cannot clear a threshold that scales with it.
+      *
+      * Set from what actually varies at rest rather than from sensor noise alone. Per-pixel noise averages away -- a
+      * quadrant's brightness is the mean of some six hundred pixels -- but auto-exposure hunting, mains flicker and the
+      * camera's own denoising move the whole frame together and survive that average intact, which is why a floor set
+      * for sensor noise alone was far too low.
+      *
+      * The cost is a floor on how small a rep may be: a peak stands about twice a channel's amplitude above its
+      * valleys, so this rejects any movement swinging a quadrant's brightness by less than half of it.
       */
-    prominenceFloor: Double = 1.0,
+    prominenceFloor: Double = 5.0,
     /** Fifteen seconds of samples before a lock is attempted: enough to hold several cycles of the slowest cadence in
       * the band.
       */
     minimumSamplesForLock: Int = 150,
     /** How closely two channels' periods must match to be believed. */
     periodTolerance: Double = 0.25,
-    /** How many peaks a channel must show before it may claim a period at all.
+    /** How many peaks in a row make a sustained movement.
       *
-      * Incidental movement — someone shifting in a chair, walking past — produces peaks as large as a rep's, so
-      * amplitude cannot tell the two apart. What distinguishes exercise is that it repeats. Requiring several peaks
-      * means a channel has to show a cadence, not merely a couple of events.
+      * Exercise is not one event but a stream of them. An isolated peak, or two, is someone shifting in a chair or
+      * reaching for a towel; the same peak arriving again and again is a set. Until this many have accumulated nothing
+      * is counted, and when the last of them arrives they all count together -- each one is evidence for the others,
+      * and none of them was a rep on its own.
       */
-    minimumPeaksForPeriod: Int = 4,
-    /** How far an individual gap between peaks may stray from the typical one, as a fraction of it.
-      *
-      * A cadence is even. Peaks spaced 8, 23 and 11 samples apart have a median like a real signal's but are plainly
-      * not rhythmic, and this is what rejects them.
-      */
-    maximumIntervalSpread: Double = 0.35,
-    /** How many of the most recent peaks describe the cadence being kept now.
-      *
-      * Judging evenness across the whole buffer means a single pause poisons it until that pause scrolls out of the
-      * minute entirely — a minute of not counting after movement resumes. Looking only at the recent peaks makes the
-      * period what the user is doing now, so a pause is forgotten after a handful of reps rather than after the buffer
-      * turns over. It also lets the cadence change without the earlier pace arguing against it.
-      */
-    cadencePeaks: Int = 5,
+    minimumSustainedPeaks: Int = 5,
     /** Samples ignored at the start of a window while the filter settles. A band-pass starting from rest rings when the
       * signal first arrives, and that ringing would otherwise dominate the very statistics used to decide what counts
       * as a peak.
@@ -49,6 +43,14 @@ private[fe] final case class DetectorSettings(
     settlingSamples: Int = 20
 ):
   val band: Biquad = Biquad.bandPass(lowHz, highHz, sampleRateHz)
+
+  /** The longest gap that still belongs to the same sustained movement.
+    *
+    * Derived rather than chosen: it is the period of the slowest cadence the band-pass admits, so a gap too long to be
+    * a rep at any pace this detector can see is also too long to hold a group together. Widening the band later moves
+    * this with it instead of leaving the two quietly disagreeing.
+    */
+  val maximumGapSamples: Int = math.round(sampleRateHz / lowHz).toInt
 
 /** Whether the detector currently trusts what it is measuring. Mirrors a phase-locked loop's lock detector: locked
   * means the output can be believed, anything else means say so rather than guess.
@@ -73,28 +75,36 @@ private[fe] object RepAnalysis:
   private[acquire] def rootMeanSquare(samples: Seq[Double]): Double =
     if samples.isEmpty then 0.0 else math.sqrt(samples.map(value => value * value).sum / samples.size)
 
-  /** The cadence a channel is keeping, in samples per rep, or `None` if it is not keeping one.
-    *
-    * The median rather than the mean, so one missed or spurious peak does not drag the estimate — but a median alone
-    * would describe any set of peaks whatsoever. A period is only claimed when there are enough peaks to call it a
-    * rhythm and every gap between them resembles the others.
+  /** Median interval between successive peaks, in samples. The median rather than the mean so one missed or spurious
+    * peak does not drag the estimate.
     */
-  private[acquire] def periodOf(
-      allPeaks: Seq[Int],
-      minimumPeaks: Int,
-      maximumSpread: Double,
-      cadencePeaks: Int
-  ): Option[Double] =
-    // Only the recent peaks: the period is the cadence being kept now, not an average of everything remembered.
-    val peaks = allPeaks.takeRight(math.max(cadencePeaks, minimumPeaks))
+  private[acquire] def periodOf(peaks: Seq[Int]): Option[Double] =
     val intervals = peaks.sliding(2).collect { case Seq(first, second) => (second - first).toDouble }.toSeq
-    if peaks.sizeIs < minimumPeaks || intervals.isEmpty then None
-    else
+    Option.when(intervals.nonEmpty):
       val sorted = intervals.sorted
       val middle = sorted.length / 2
-      val median = if sorted.length % 2 == 1 then sorted(middle) else (sorted(middle - 1) + sorted(middle)) / 2
-      val even = median > 0 && intervals.forall(interval => math.abs(interval - median) / median <= maximumSpread)
-      Option.when(even)(median)
+      if sorted.length % 2 == 1 then sorted(middle) else (sorted(middle - 1) + sorted(middle)) / 2
+
+  /** The peaks that belong to a sustained movement: runs of at least `minimumPeaks`, each no further from the last than
+    * `maximumGap`. Peaks outside such a run are dropped, however prominent they were.
+    *
+    * Read over the whole buffer on every update, so a run that has only reached three peaks is simply not counted yet
+    * rather than counted and later regretted. When its fourth arrives the whole run becomes countable at once.
+    *
+    * This is a separate question from whether a cadence is locked, and both must be satisfied: the lock asks whether
+    * two quadrants agree about a period, this asks whether the movement kept going.
+    */
+  private[acquire] def sustained(peaks: Seq[Int], minimumPeaks: Int, maximumGap: Int): Seq[Int] =
+    val sorted = peaks.sorted
+    var runs = Vector.empty[Vector[Int]]
+    var current = Vector.empty[Int]
+    for peak <- sorted do
+      if current.isEmpty || peak - current.last <= maximumGap then current = current :+ peak
+      else
+        runs = runs :+ current
+        current = Vector(peak)
+    if current.nonEmpty then runs = runs :+ current
+    runs.filter(_.sizeIs >= minimumPeaks).flatten
 
   def analyse(samples: Seq[Double], quadrant: Quadrant, settings: DetectorSettings): ChannelAnalysis =
     // Centring first: the band-pass rejects a constant in steady state, but a filter starting from rest still sees
@@ -109,13 +119,7 @@ private[fe] object RepAnalysis:
     val peaks = PeakDetector
       .peaks(settled, settings.minimumDistanceSamples, threshold)
       .map(_ + settings.settlingSamples)
-    ChannelAnalysis(
-      quadrant,
-      filtered,
-      power,
-      peaks,
-      periodOf(peaks, settings.minimumPeaksForPeriod, settings.maximumIntervalSpread, settings.cadencePeaks)
-    )
+    ChannelAnalysis(quadrant, filtered, power, peaks, periodOf(peaks))
 
   private[acquire] def agree(first: ChannelAnalysis, second: ChannelAnalysis, tolerance: Double): Boolean =
     (first.periodSamples, second.periodSamples) match
@@ -170,9 +174,7 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
   /** Sets the tally back to nothing without disturbing the detection behind it.
     *
     * Deliberately not a reset: the lock, the channel being counted from and the position of the last counted peak all
-    * stand, so a set already in progress keeps being counted and simply starts from zero. Wiping the position would
-    * make the next update rediscover every peak still in the buffer and count them all over again, and wiping the
-    * buffers would throw away the cadence and cost several reps re-acquiring it.
+    * stand, so a set already in progress keeps being counted and simply starts from zero.
     */
   def zeroCount(): Unit =
     counted = 0
@@ -211,7 +213,11 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
             partner.quadrant,
             leader.periodSamples.getOrElse(0.0) / settings.sampleRateHz
           )
-          val absolute = leader.peaks.map(index => totalSamples - windowLength + index)
+          // Alongside the lock rather than instead of it: the lock says a cadence is being kept, this says the
+          // movement was sustained. A peak has to satisfy both before it is a rep.
+          val supported =
+            RepAnalysis.sustained(leader.peaks, settings.minimumSustainedPeaks, settings.maximumGapSamples)
+          val absolute = supported.map(index => totalSamples - windowLength + index)
           val fresh = lastCountedIndex match
             case None => absolute
             // A peak must clear the last counted one by the minimum rep interval, not merely come after it.

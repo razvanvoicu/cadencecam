@@ -49,8 +49,9 @@ class BiquadSuite extends FunSuite:
     assert(fast < 0.4, f"4.5 Hz came through at $fast%.3f")
 
   test("rings for about a cycle when hit with a step, which is why steps must not reach it"):
-    // The reason common-mode removal happens before filtering: a step is broadband, and what comes out the far
-    // side looks like a rep.
+    // Why a step must not reach the filter: a step is broadband, and what comes out the far side looks like a rep.
+    // Common-mode subtraction used to be the defence and was measured to be worse than the problem; holding the
+    // camera's exposure and white balance still now stops most steps being produced in the first place.
     val step = Seq.fill(30)(0.0) ++ Seq.fill(70)(20.0)
     val response = band.filter(step)
     val peaks = PeakDetector.peaks(response, minimumDistance = 5, minimumProminence = 0.5)

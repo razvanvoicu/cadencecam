@@ -1,6 +1,7 @@
 package sgrv.fe.acquire
 
 import munit.FunSuite
+import scala.scalajs.js
 
 class CameraSuite extends FunSuite:
 
@@ -86,3 +87,35 @@ class CameraSuite extends FunSuite:
     assertEquals(CameraDevice.nameOf(CameraDevice("a", "Back camera"), 0), "Back camera")
     assertEquals(CameraDevice.nameOf(CameraDevice("a", ""), 1), "Camera 2")
     assertEquals(CameraDevice.nameOf(CameraDevice("a", "   "), 0), "Camera 1")
+
+  test("only the controls a camera says it can hold manually are asked for"):
+    val capabilities = js.Dynamic.literal(
+      exposureMode = js.Array("none", "manual", "continuous"),
+      whiteBalanceMode = js.Array("continuous"),
+      focusMode = js.Array("manual", "single-shot")
+    )
+
+    assertEquals(Camera.manualCapable(capabilities), Seq("exposureMode", "focusMode"))
+
+  test("a camera that reports no control modes is asked for nothing"):
+    assertEquals(Camera.manualCapable(js.Dynamic.literal()), Seq.empty)
+
+  test("a camera reporting the controls but not manual is asked for nothing"):
+    val automaticOnly = js.Dynamic.literal(
+      exposureMode = js.Array("continuous"),
+      whiteBalanceMode = js.Array("continuous"),
+      focusMode = js.Array("continuous")
+    )
+
+    assertEquals(Camera.manualCapable(automaticOnly), Seq.empty)
+
+  test("a capability reported as something other than a list of modes is ignored, not trusted"):
+    // Browsers vary in what they report here, and a malformed entry must not take the camera down with it.
+    val odd = js.Dynamic.literal(exposureMode = "manual", whiteBalanceMode = 3, focusMode = js.Array("manual"))
+
+    assertEquals(Camera.manualCapable(odd), Seq("focusMode"))
+
+  test("the controls held still are the ones that re-meter on the movement being counted"):
+    assertEquals(Camera.manualControls, Seq("exposureMode", "whiteBalanceMode", "focusMode"))
+    // Long enough for metering to converge, short enough not to spend a set on automatic.
+    assert(Camera.settleBeforeLockMillis >= 500 && Camera.settleBeforeLockMillis <= 3000)

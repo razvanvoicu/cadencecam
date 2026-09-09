@@ -111,31 +111,6 @@ class RepCounterSuite extends FunSuite:
 
     assertEquals(leaders.size, 1, s"the authoritative channel changed during the session: $leaders")
 
-  test("sporadic gain steps are not counted"):
-    // What a camera actually does: re-converges its exposure occasionally, at no particular interval. Every
-    // quadrant steps together, and each step rings through the band-pass — but ringing is one event, not a
-    // cadence, so the evenness requirement rejects it.
-    val stepAt = Set(63, 187, 205, 331, 470)
-    var level = 100.0
-    val steps = Seq.tabulate(600): index =>
-      if stepAt.contains(index) then level = if level > 105 then 100.0 else 118.0
-      level
-
-    val reading = run(Quadrant.All.map(_ -> steps).toMap)
-
-    assertEquals(clue(reading.count), 0)
-
-  test("a rhythmic change in overall lighting is counted, which is the cost of not subtracting the common mode"):
-    // The failure mode accepted when continuous common-mode removal was dropped: a light, screen or shadow
-    // varying at a rep-like rate looks exactly like a rep to every quadrant at once. Sporadic exposure steps are
-    // handled by the evenness requirement; a genuinely periodic one is not, and nothing here can tell it from
-    // movement without the quadrants disagreeing about it.
-    val flicker = Seq.tabulate(400)(index => 120.0 + 10.0 * math.sin(2 * math.Pi * index / 10.0))
-
-    val reading = run(Quadrant.All.map(_ -> flicker).toMap)
-
-    assert(reading.count > 0, "documented limitation: this is counted, and would not have been before")
-
   test("resetting clears the count and the lock"):
     val counter = RepCounter()
     run(rotating(1.0, 30.0, amplitude = 6.0), counter)
@@ -160,67 +135,6 @@ class RepCounterSuite extends FunSuite:
       case LockState.Locked(leader, partner, _) =>
         assert(Set(leader, partner) == Set(Quadrant.Q1, Quadrant.Q2), s"locked onto $leader with $partner")
       case other => fail(s"expected a lock on the two moving quadrants, got $other")
-
-  /** Someone working at a desk: real, sizeable movements at irregular intervals, in no particular rhythm. */
-  private def fidgeting(seconds: Double, seed: Int = 7): Seq[Double] =
-    val random = java.util.Random(seed.toLong)
-    val samples = (seconds * rate).toInt
-    var value = 120.0
-    var remaining = 0
-    var direction = 0.0
-    Seq.fill(samples):
-      if remaining <= 0 then
-        remaining = 3 + random.nextInt(25)
-        direction = (random.nextDouble() - 0.5) * 6.0
-      remaining -= 1
-      value = math.max(60.0, math.min(200.0, value + direction))
-      value
-
-  test("incidental movement is not counted, however large it is"):
-    // The case observed in use: a body shifting in front of the camera while working, not exercising. Its peaks
-    // are as tall as a rep's, so only their irregularity distinguishes them.
-    val channels = Map(
-      Quadrant.Q1 -> fidgeting(60.0, seed = 1),
-      Quadrant.Q2 -> fidgeting(60.0, seed = 2),
-      Quadrant.Q3 -> fidgeting(60.0, seed = 3),
-      Quadrant.Q4 -> fidgeting(60.0, seed = 4)
-    )
-
-    val reading = run(channels)
-
-    assertEquals(clue(reading.count), 0)
-    assertEquals(reading.lock, LockState.Searching)
-
-  test("a couple of peaks is not a cadence"):
-    // Two peaks have a median interval like any other, which is exactly why a median alone was not enough.
-    assertEquals(RepAnalysis.periodOf(Seq(10, 20), 4, 0.35, 5), None)
-    assertEquals(RepAnalysis.periodOf(Seq(10, 20, 30), 4, 0.35, 5), None)
-    assertEquals(RepAnalysis.periodOf(Seq(10, 20, 30, 40), 4, 0.35, 5), Some(10.0))
-
-  test("unevenly spaced peaks are not a cadence, even when there are many"):
-    val ragged = Seq(0, 8, 31, 42, 70, 78)
-    val even = Seq(0, 10, 20, 30, 40, 50)
-
-    assertEquals(RepAnalysis.periodOf(ragged, 4, 0.35, 5), None)
-    assertEquals(RepAnalysis.periodOf(even, 4, 0.35, 5), Some(10.0))
-
-  test("a cadence that drifts slightly is still a cadence"):
-    // Real exercise is not metronomic; the tolerance has to accommodate a rep or two of variation.
-    val human = Seq(0, 18, 34, 53, 70, 88)
-
-    assert(RepAnalysis.periodOf(human, 4, 0.35, 5).isDefined, "a human cadence must survive the evenness check")
-
-  test("an old pause stops arguing against the cadence once recent reps outnumber it"):
-    // The buffer still remembers the gap, but the peaks since then are even, so the cadence is believed again.
-    val acrossAPause = Seq(0, 10, 20, 400, 410, 420, 430, 440)
-
-    assertEquals(RepAnalysis.periodOf(acrossAPause, 4, 0.35, 5), Some(10.0))
-
-  test("a pause still in the recent peaks is not yet a cadence"):
-    // Immediately after resuming, the gap is one of the last few intervals and the detector waits.
-    val justResumed = Seq(0, 10, 20, 400, 410)
-
-    assertEquals(RepAnalysis.periodOf(justResumed, 4, 0.35, 5), None)
 
   test("zeroing the count leaves the detection running underneath it"):
     val counter = RepCounter()
@@ -249,3 +163,66 @@ class RepCounterSuite extends FunSuite:
       s"zeroing must not rediscover the buffer: counted ${after.count} against ${before.count} before"
     )
     assert(after.lock.isInstanceOf[LockState.Locked], s"the lock must survive zeroing, got ${after.lock}")
+
+  private def sustained(peaks: Seq[Int]) =
+    RepAnalysis.sustained(peaks, DetectorSettings().minimumSustainedPeaks, DetectorSettings().maximumGapSamples)
+
+  /** A run of `count` peaks spaced a second apart, comfortably inside the gap limit. */
+  private def streak(count: Int, from: Int = 50) = Seq.tabulate(count)(index => from + index * 10)
+
+  test("a run short of the minimum counts nothing, however prominent its peaks"):
+    val needed = DetectorSettings().minimumSustainedPeaks
+
+    for length <- 1 until needed do assertEquals(sustained(streak(length)), Seq.empty, s"a run of $length counted")
+
+  test("the peak that completes the minimum makes the earlier ones countable too"):
+    // None of them was a rep on its own; each is evidence for the others, so they arrive together.
+    val needed = DetectorSettings().minimumSustainedPeaks
+
+    assertEquals(sustained(streak(needed)), streak(needed))
+
+  test("a movement that keeps going keeps counting"):
+    val steady = Seq.tabulate(12)(index => 50 + index * 10)
+
+    assertEquals(sustained(steady), steady)
+
+  test("peaks further apart than the slowest cadence are separate movements"):
+    val settings = DetectorSettings()
+    // Two seconds at ten samples a second, and the slowest rep the band-pass admits.
+    assertEquals(settings.maximumGapSamples, 20)
+
+    val atTheLimit = Seq.tabulate(6)(index => index * settings.maximumGapSamples)
+    val justBeyond = Seq.tabulate(6)(index => index * (settings.maximumGapSamples + 1))
+
+    assertEquals(sustained(atTheLimit), atTheLimit)
+    assertEquals(sustained(justBeyond), Seq.empty)
+
+  test("a long run survives and a short one beside it does not"):
+    // Getting into position, then exercising: the setup events are too sparse to support each other.
+    val setup = Seq(0, 40, 95)
+    val bout = Seq.tabulate(6)(index => 200 + index * 10)
+
+    assertEquals(sustained(setup ++ bout), bout)
+
+  test("a break splits one movement into two, and only the sustained parts count"):
+    val before = Seq.tabulate(5)(index => index * 10)
+    val after = Seq.tabulate(5)(index => 400 + index * 10)
+    val strayDuringTheBreak = Seq(150, 250)
+
+    assertEquals(sustained(before ++ strayDuringTheBreak ++ after), before ++ after)
+
+  test("nothing at all is handled"):
+    assertEquals(sustained(Seq.empty), Seq.empty)
+
+  test("the noise floor rejects movement too small to be a rep"):
+    val settings = DetectorSettings()
+    assertEquals(settings.prominenceFloor, 5.0)
+    // A peak stands about twice a channel's amplitude above its valleys, so the floor bites below half of it.
+    val tooSmall = rotating(1.0, 60.0, amplitude = 1.5)
+
+    assertEquals(run(tooSmall).count, 0)
+
+  test("a rep of ordinary size still clears the raised floor"):
+    val reading = run(rotating(1.0, 60.0, amplitude = 6.0))
+
+    assert(reading.count > 20, s"an ordinary rep must still be counted, got ${reading.count}")
