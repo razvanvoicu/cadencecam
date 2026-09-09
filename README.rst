@@ -85,11 +85,12 @@ from the explicit port in ``LOCAL_BASE_URL``. The backend has no port default an
 does not accept a command-line port: a missing, non-numeric, or out-of-range
 ``PORT`` stops startup with a clear configuration error.
 
-Static-file expiry has no compiled-in default. ``test.env`` explicitly sets
-``STATIC_ASSET_CACHE_MAX_AGE_SECONDS=300`` for the local ``run`` task, while ``prod.env`` sets it to ``86400``
-(one day) for both the standalone ``artifact`` image and ``deployGCloud``. A missing, non-numeric, or negative
-value stops startup with a configuration error. ``index.html`` remains ``no-cache`` so a launch can discover a
-new application build.
+Static-file expiry has no compiled-in default. Both ``test.env`` (the local ``run`` task) and ``prod.env`` (the
+standalone ``artifact`` image and ``deployGCloud``) currently set ``STATIC_ASSET_CACHE_MAX_AGE_SECONDS=0``,
+because every deployment is still a test deployment and a cached ``style.css`` or ``main.js`` outlives a server
+restart, hiding a change that was in fact shipped. Raise ``prod.env`` to a real expiry (``86400`` is one day)
+once deployments become genuinely production. A missing, non-numeric, or negative value stops startup with a
+configuration error. ``index.html`` remains ``no-cache`` so a launch can discover a new application build.
 
 On Windows, the development server can be stopped by port with:
 

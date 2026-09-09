@@ -115,12 +115,12 @@ class MainSuite extends munit.FunSuite:
     )
     assert(Main.staticCacheControl(Some("-1")).isLeft)
 
-  test("uses a five-minute local cache and a one-day production cache"):
+  test("serves static assets uncached in both environments while the app is under active development"):
     val prodEnv = resourceText("prod.env").linesIterator.map(_.trim).toSet
     val testEnv = resourceText("test.env").linesIterator.map(_.trim).toSet
 
-    assert(prodEnv.contains("STATIC_ASSET_CACHE_MAX_AGE_SECONDS=86400"))
-    assert(testEnv.contains("STATIC_ASSET_CACHE_MAX_AGE_SECONDS=300"))
+    assert(prodEnv.contains("STATIC_ASSET_CACHE_MAX_AGE_SECONDS=0"))
+    assert(testEnv.contains("STATIC_ASSET_CACHE_MAX_AGE_SECONDS=0"))
 
   test("selects the bind address from the environment, defaulting to IPv4 loopback"):
     assertEquals(Main.bindAddress(Some("0.0.0.0")), "0.0.0.0")
