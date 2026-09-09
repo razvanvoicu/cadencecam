@@ -273,22 +273,38 @@ button,
   transform: translateX(-1px);
 }
 
-/* Sits over the preview in the corner the quadrant lines leave empty, so it covers no control and no reading. */
+/* The foot of the panel: reset at the left, the lock reading filling the rest. Sharing the row rather than
+   floating over it means the button occupies the corner without costing height or covering the text. */
+.acquirer-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.acquirer-footer .lock-state {
+  flex: 1;
+  min-width: 0;
+  /* The standalone label carried a bottom margin; inside the row it would lift the text off the button's centre. */
+  margin-bottom: 0;
+}
+
+/* The spacer mirrors the button's footprint exactly, which is what keeps the reading centred on the panel. */
+.reset-button,
+.footer-spacer {
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+}
+
 .reset-button {
-  position: absolute;
-  z-index: 2;
-  bottom: 0.5rem;
-  left: 0.5rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 2.5rem;
-  height: 2.5rem;
   padding: 0;
-  background: rgb(0 0 0 / 45%);
-  border: 1px solid rgb(255 255 255 / 35%);
+  background: transparent;
+  border: 1px solid var(--border);
   border-radius: 50%;
-  color: #fff;
+  color: var(--fg);
   font-size: 1.3rem;
   line-height: 1;
   cursor: pointer;
@@ -297,12 +313,12 @@ button,
 }
 
 .reset-button:active {
-  background: rgb(0 0 0 / 70%);
+  background: var(--bg);
 }
 
 @media (hover: hover) {
   .reset-button:hover {
-    border-color: #fff;
+    border-color: var(--fg);
   }
 }
 
@@ -405,10 +421,13 @@ button,
   pointer-events: none;
 }
 
+/* Three columns with equal, flexible outer ones: the middle column lands on the centre of the panel whatever the
+   label beside it is, so the number itself is centred rather than the number-and-label pair. minmax(0, ...) keeps a
+   long label from stealing width from column three and pushing the number off centre on a narrow screen. */
 .rep-count {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: baseline;
-  justify-content: center;
   gap: 0.5rem;
   padding: 0.25rem 0;
 }
@@ -416,6 +435,7 @@ button,
 /* Readable at arm's length on a phone propped against something, which is how this gets used — but no longer so
    large that it crowds the traces below it. */
 .rep-count-value {
+  grid-column: 2;
   font-size: clamp(2.75rem, 18vw, 4.5rem);
   font-weight: 700;
   line-height: 1;
@@ -423,6 +443,9 @@ button,
 }
 
 .rep-count-label {
+  grid-column: 3;
+  /* Left-justified, so it keeps the gap it had beside the number instead of drifting out with the column. */
+  justify-self: start;
   color: var(--muted);
   font-size: 1rem;
 }

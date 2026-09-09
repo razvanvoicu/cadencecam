@@ -193,20 +193,7 @@ object Main:
         cls := "camera-frame",
         cls("mirrored") <-- mirrored.signal,
         video,
-        div(cls := "quadrant-lines"),
-        button(
-          cls := "reset-button",
-          typ := "button",
-          // U+21BA, the anticlockwise open circle arrow: monochrome, present in the system fonts of every
-          // platform this runs on, and unambiguous without a caption.
-          "\u21ba",
-          aria.label := "Reset the count",
-          title := "Reset the count",
-          onClick --> { _ =>
-            counter.zeroCount()
-            repCount.set(counter.reading.count)
-          }
-        )
+        div(cls := "quadrant-lines")
       )
 
       // Set on the element rather than as Laminar attributes: playsinline in particular is what stops iOS taking
@@ -355,16 +342,36 @@ object Main:
             span(cls := "rep-count-value", child.text <-- repCount.signal.map(_.toString)),
             span(cls := "rep-count-label", "reps")
           ),
-          // Says which of the three it is doing rather than letting a stalled count look like a steady one.
-          p(
-            cls := "lock-state",
-            child.text <-- lock.signal.map:
-              case LockState.Acquiring(samples, needed) =>
-                val seconds = math.max(0, needed - samples) / 10
-                if needed == 0 then "Waiting for the camera…" else s"Finding a cadence… about ${seconds}s"
-              case LockState.Searching                               => "No steady cadence yet — counting is paused"
-              case LockState.Locked(channel, partner, periodSeconds) =>
-                f"Counting from $channel with $partner · $periodSeconds%.1fs per rep"
+          div(
+            cls := "acquirer-footer",
+            button(
+              cls := "reset-button",
+              typ := "button",
+              // U+21BA, the anticlockwise open circle arrow: monochrome, present in the system fonts of every
+              // platform this runs on, and unambiguous without a caption.
+              "\u21ba",
+              aria.label := "Reset the count",
+              title := "Reset the count",
+              onClick --> { _ =>
+                counter.zeroCount()
+                repCount.set(counter.reading.count)
+              }
+            ),
+            // Says which of the three it is doing rather than letting a stalled count look like a steady one.
+            p(
+              cls := "lock-state",
+              child.text <-- lock.signal.map:
+                case LockState.Acquiring(samples, needed) =>
+                  val seconds = math.max(0, needed - samples) / 10
+                  if needed == 0 then "Waiting for the camera…" else s"Finding a cadence… about ${seconds}s"
+                case LockState.Searching => "No steady cadence — paused"
+                // Kept short enough to sit on one line between the reset control and its counterweight.
+                case LockState.Locked(channel, partner, periodSeconds) =>
+                  f"Counting $channel+$partner · $periodSeconds%.1fs/rep"
+            ),
+            // Balances the reset control on the other side, so the reading is centred on the panel rather than on
+            // whatever is left of it. Hidden from assistive technology: it carries nothing to announce.
+            div(cls := "footer-spacer", aria.hidden := true)
           ),
           div(
             cls := "acquirer-actions",
