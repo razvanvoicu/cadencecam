@@ -20,10 +20,10 @@ private[fe] object SavedRepCount:
 
 /** Carries the rep total across a page load, so a reload mid-workout resumes the count instead of starting over.
   *
-  * A phone left propped against something reloads for reasons that have nothing to do with the user: the tab is
-  * evicted under memory pressure, the screen locks and the page is restored, a stray swipe refreshes. None of those
-  * mean the set is over, and losing the tally to one is worse than the alternative — a stale count is visible and one
-  * button clears it, whereas a lost one cannot be recovered at all.
+  * A phone left propped against something reloads for reasons that have nothing to do with the user: the tab is evicted
+  * under memory pressure, the screen locks and the page is restored, a stray swipe refreshes. None of those mean the
+  * set is over, and losing the tally to one is worse than the alternative — a stale count is visible and one button
+  * clears it, whereas a lost one cannot be recovered at all.
   *
   * What keeps that from becoming a count that haunts the next session is the retention window: a total is resumed only
   * while it is recent enough to plausibly belong to the workout still in progress.

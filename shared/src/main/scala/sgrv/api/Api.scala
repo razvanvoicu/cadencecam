@@ -36,3 +36,16 @@ object CountingSession:
   /** The contributor's id, which is also the key its entry appears under. Shared so the two ends cannot drift. */
   val Key = "counting-session"
   given JsonCodec[CountingSession] = DeriveJsonCodec.gen[CountingSession]
+
+/** How far the acquirer has counted, reported periodically into its counting session.
+  *
+  * Only the total: which device counted it, and whether a second acquirer should carry on from it, are questions the
+  * dashboard will need answered but this record does not yet decide.
+  */
+@jsonNoExtraFields
+final case class RepProgress(reps: Int)
+
+object RepProgress:
+  /** Where the acquirer reports to. Shared so the route and the caller cannot drift apart. */
+  val Path = "/countingSession/reps"
+  given JsonCodec[RepProgress] = DeriveJsonCodec.gen[RepProgress]

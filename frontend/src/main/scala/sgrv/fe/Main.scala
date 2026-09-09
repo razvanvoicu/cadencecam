@@ -13,6 +13,7 @@ import sgrv.fe.acquire.{
   LockState,
   RepCounter,
   RepCountStore,
+  RepProgressReporter,
   Quadrant,
   QuadrantSignals,
   Sample,
@@ -186,6 +187,7 @@ object Main:
       val currentDevice = Var(Option.empty[String])
       val menuOpen = Var(false)
       val counter = RepCounter()
+      val reporter = RepProgressReporter(http)
       var totalSamples = 0
       val signals = QuadrantSignals()
       val tick = Var(0)
@@ -311,8 +313,16 @@ object Main:
 
       div(
         cls := "acquirer-view",
-        onMountCallback(_ => startCamera()),
-        onUnmountCallback(_ => release()),
+        onMountCallback { _ =>
+          startCamera()
+          // Reads the total rather than being pushed it, so a tick reports whatever is current at the moment it
+          // fires and no report can be left describing a count that has since moved on.
+          reporter.start(() => repCount.now())
+        },
+        onUnmountCallback { _ =>
+          reporter.stop()
+          release()
+        },
         div(
           cls := "screen acquirer",
           div(

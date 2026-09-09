@@ -25,6 +25,12 @@ private[sessions] object CountingSessionSchema:
     */
   val completedAt = "completedAt"
 
+  /** The acquirer's running total, and when it was last reported. Overwritten rather than appended: the dashboard wants
+    * the current count, and the history of how it got there is not what this record is for.
+    */
+  val reps = "reps"
+  val repsAt = "repsAt"
+
 /** The listener's private adapter over the host's generic `firestore` capability.
   *
   * A counting session is one login's workout: the record opened when the user signs in, and the place the acquirer's
@@ -51,6 +57,22 @@ private[sessions] final class CountingSessionStore(firestore: Firestore):
         document(id).update(Map[String, AnyRef](CountingSessionSchema.completedAt -> stamp(completedAt)).asJava)
       )
       .unit
+
+  /** Records how far the acquirer has counted.
+    *
+    * An update rather than a merging set, for the same reason as [[complete]]: a report for a session that was never
+    * opened is a mistake worth surfacing, not a record worth conjuring.
+    */
+  def recordProgress(id: String, reps: Int, at: Instant): Task[Unit] =
+    GoogleFuture.fromApiFuture(document(id).update(progress(reps, at).asJava)).unit
+
+  private def progress(reps: Int, at: Instant): Map[String, AnyRef] =
+    Map[String, AnyRef](
+      // Firestore has one integer type and it is 64-bit; boxing to Long keeps a read back from depending on which
+      // numeric type happened to be written.
+      CountingSessionSchema.reps -> java.lang.Long.valueOf(reps.toLong),
+      CountingSessionSchema.repsAt -> stamp(at)
+    )
 
   private def fields(userEmail: String, startedAt: Instant): Map[String, AnyRef] =
     Map[String, AnyRef](
