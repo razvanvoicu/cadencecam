@@ -29,8 +29,7 @@ private[fe] final class RepProgressReporter(
 
   /** Begins reporting whatever `reps` returns at each tick. Starting twice is a no-op rather than a second timer. */
   def start(reps: () => Int): Unit =
-    if handle.isEmpty then
-      handle = Some(dom.window.setInterval(() => report(reps()), intervalMillis.toDouble))
+    if handle.isEmpty then handle = Some(dom.window.setInterval(() => report(reps()), intervalMillis.toDouble))
 
   def stop(): Unit =
     handle.foreach(dom.window.clearInterval)
