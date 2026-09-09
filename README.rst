@@ -860,6 +860,11 @@ available locally. The deploying account needs permission to push to that reposi
 configured runtime identity separately needs the Firestore permissions used by the backend, and the deploying
 user needs ``roles/iam.serviceAccountUser`` on it.
 
+The service is deployed with ``--max-instances 1``. The dashboard is fed from the acquirer's own connection
+in the instance's memory, so a second instance could hold one end of a pair without the other and deliver
+nothing, in a way that would not reproduce locally where there is only ever one process. Raise the limit only
+together with a way for a dashboard to reach the instance holding its acquirer.
+
 The staged runtime libraries include the packaged ``sharedJVM`` project explicitly. Inter-project sbt
 dependencies otherwise appear on the backend runtime classpath as class directories rather than JAR files and
 would be lost when assembling the Docker context.

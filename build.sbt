@@ -782,6 +782,11 @@ lazy val root = {
                   "--port",
                   "8080",
                   "--allow-unauthenticated",
+                  // One instance, because the dashboard is fed from the acquirer's connection in memory: with two,
+                  // the pair can land on different instances and the fan-out silently delivers nothing. Lift this
+                  // only together with a way for a dashboard to reach the instance holding its acquirer.
+                  "--max-instances",
+                  "1",
                   "--env-vars-file",
                   envFile.getAbsolutePath,
                   "--quiet"
