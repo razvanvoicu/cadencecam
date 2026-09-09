@@ -12,6 +12,7 @@ import sgrv.fe.acquire.{
   FrameSampler,
   LockState,
   RepCounter,
+  RepCountStore,
   Quadrant,
   QuadrantSignals,
   Sample,
@@ -35,6 +36,7 @@ object Main:
     val localStorage = dom.window.localStorage
     given stateStore: FrontendStateStore = FrontendStateStore(localStorage)
     given refreshStateStore: RefreshStateStore = RefreshStateStore(localStorage)
+    val repCountStore = RepCountStore(localStorage)
 
     /** Losing the session also abandons whichever role this device had taken. */
     def signedOut(state: UserState)(current: FrontendState): FrontendState =
@@ -171,7 +173,11 @@ object Main:
       */
     def acquirer(): Element =
       val cameraState = Var[CameraState](CameraState.Idle)
-      val repCount = Var(0)
+      // Reps counted before the current detector run, which the detector itself knows nothing about: those carried
+      // over from a previous page load, and those counted before a camera switch. Shown at once, so a reload mid-set
+      // does not look as though it lost the count while the detector spends its first seconds finding the cadence.
+      var baseline = repCountStore.restore(js.Date.now())
+      val repCount = Var(baseline)
       val lock = Var[LockState](LockState.Acquiring(0, 0))
       // Derived from the camera itself rather than chosen: one on the same side as the screen is shown mirrored,
       // one facing away is not. Not persisted, since it belongs to the hardware rather than to the user.
@@ -215,7 +221,12 @@ object Main:
         signals.record(sample)
         totalSamples += 1
         val reading = counter.update(signals.window(signals.capacity), totalSamples)
-        repCount.set(reading.count)
+        val total = baseline + reading.count
+        // Written on change rather than on every sample: ten writes a second would record nothing new between reps.
+        // The sample's own timestamp dates the reading, so the age a later load measures is the age of the last rep
+        // rather than of the last frame.
+        if total != repCount.now() then repCountStore.save(total, sample.atMillis)
+        repCount.set(total)
         lock.set(reading.lock)
         tick.update(_ + 1)
         sampleCount += 1
@@ -234,9 +245,12 @@ object Main:
         sampleCount = 0
         measuredHz.set(None)
         signals.clear()
+        // Detection starts over from nothing, but the reps already counted stand: switching cameras mid-set is a
+        // change of viewpoint, not a new workout. Absorbing them into the baseline first is what keeps them.
+        baseline += counter.reading.count
         counter.reset()
         totalSamples = 0
-        repCount.set(0)
+        repCount.set(baseline)
         lock.set(LockState.Acquiring(0, 0))
 
       def startCamera(deviceId: Option[String] = None): Unit =
@@ -353,7 +367,11 @@ object Main:
               aria.label := "Reset the count",
               title := "Reset the count",
               onClick --> { _ =>
+                baseline = 0
                 counter.zeroCount()
+                // Cleared rather than saved as zero: a reload should find nothing to resume, rather than a zero that
+                // goes on being resumed for the rest of the retention window.
+                repCountStore.clear()
                 repCount.set(counter.reading.count)
               }
             ),
