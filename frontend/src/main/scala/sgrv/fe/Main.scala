@@ -14,6 +14,7 @@ import sgrv.fe.acquire.{
   RepCounter,
   RepCountStore,
   RepProgressReporter,
+  RestPhase,
   Quadrant,
   QuadrantSignals,
   Sample,
@@ -186,6 +187,10 @@ object Main:
       val devices = Var(Seq.empty[CameraDevice])
       val currentDevice = Var(Option.empty[String])
       val menuOpen = Var(false)
+      // Where each channel's peak falls within a rep, once the buffer has shown the hand at rest. Kept per quadrant
+      // and retained: the opening stillness scrolls out of the minute, but what it established stays true, and a
+      // leader switch should show that leader's own offset rather than the previous one's.
+      val restOffsets = Var(Map.empty[Quadrant, Double])
       val counter = RepCounter()
       val reporter = RepProgressReporter(http)
       var totalSamples = 0
@@ -222,7 +227,12 @@ object Main:
       def onSample(sample: Sample): Unit =
         signals.record(sample)
         totalSamples += 1
-        val reading = counter.update(signals.window(signals.capacity), totalSamples)
+        val window = signals.window(signals.capacity)
+        val reading = counter.update(window, totalSamples)
+        reading.lock match
+          case LockState.Locked(channel, _, _) =>
+            RestPhase.offsetOf(window, channel).foreach(offset => restOffsets.update(_ + (channel -> offset)))
+          case _ => ()
         val total = baseline + reading.count
         // Written on change rather than on every sample: ten writes a second would record nothing new between reps.
         // The sample's own timestamp dates the reading, so the age a later load measures is the age of the last rep
@@ -247,6 +257,7 @@ object Main:
         sampleCount = 0
         measuredHz.set(None)
         signals.clear()
+        restOffsets.set(Map.empty)
         // Detection starts over from nothing, but the reps already counted stand: switching cameras mid-set is a
         // change of viewpoint, not a new workout. Absorbing them into the baseline first is what keeps them.
         baseline += counter.reading.count
@@ -400,14 +411,20 @@ object Main:
             // Says which of the three it is doing rather than letting a stalled count look like a steady one.
             p(
               cls := "lock-state",
-              child.text <-- lock.signal.map:
-                case LockState.Acquiring(samples, needed) =>
-                  val seconds = math.max(0, needed - samples) / 10
-                  if needed == 0 then "Waiting for the camera…" else s"Finding a cadence… about ${seconds}s"
-                case LockState.Searching => "No steady cadence — paused"
-                // Kept short enough to sit on one line between the reset control and its counterweight.
-                case LockState.Locked(channel, partner, periodSeconds) =>
-                  f"Counting $channel+$partner · $periodSeconds%.1fs/rep"
+              child.text <-- lock.signal
+                .combineWith(restOffsets.signal)
+                .map: (state, offsets) =>
+                  state match
+                    case LockState.Acquiring(samples, needed) =>
+                      val seconds = math.max(0, needed - samples) / 10
+                      if needed == 0 then "Waiting for the camera…" else s"Finding a cadence… about ${seconds}s"
+                    case LockState.Searching => "No steady cadence — paused"
+                    // Kept short enough to sit on one line between the reset control and its counterweight.
+                    case LockState.Locked(channel, partner, periodSeconds) =>
+                      // How far into a rep this channel's tick lands, when the buffer has been able to say. Shown while
+                      // it is only a diagnostic: it is the number that decides whether a tick agrees with the exerciser.
+                      val phase = offsets.get(channel).fold("")(offset => f" · φ$offset%.2f")
+                      f"Counting $channel+$partner · $periodSeconds%.1fs/rep$phase"
             ),
             // Balances the reset control on the other side, so the reading is centred on the panel rather than on
             // whatever is left of it. Hidden from assistive technology: it carries nothing to announce.
