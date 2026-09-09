@@ -286,6 +286,18 @@ object Main:
         div(
           cls := "signal-pane",
           span(cls := "signal-label", quadrant.toString),
+          // Marks the channel the count is actually being taken from. Which quadrant wins is decided by signal
+          // power, so it moves with the lighting rather than with the exercise, and watching it move is the point:
+          // it explains where a tick lands in the movement, which the count alone cannot.
+          div(
+            cls := "leader-dot",
+            cls("shown") <-- lock.signal.map:
+              case LockState.Locked(channel, _, _) => channel == quadrant
+              case _                               => false
+            ,
+            // The status line already names the leader in words; this is the same fact placed on the trace.
+            aria.hidden := true
+          ),
           pane,
           // Redraw on every sample, so the trace keeps scrolling on a still scene too: samples arrive whether or
           // not anything in front of the camera moves.

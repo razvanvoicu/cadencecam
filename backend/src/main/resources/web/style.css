@@ -406,6 +406,25 @@ button,
   height: 100%;
 }
 
+/* The quadrant currently leading the count. Top-right, opposite the label, and deliberately without a transition:
+   the leader switching is the event worth seeing, and a fade would smear exactly that moment. */
+.leader-dot {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  /* Blue against the green trace, so it reads as a marker rather than as part of the signal. */
+  background: #3b82f6;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.leader-dot.shown {
+  opacity: 1;
+}
+
 .signal-label {
   position: absolute;
   top: 0.15rem;
