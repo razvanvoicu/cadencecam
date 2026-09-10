@@ -36,6 +36,12 @@ private[fe] final case class DetectorSettings(
       * and none of them was a rep on its own.
       */
     minimumSustainedPeaks: Int = 5,
+    /** How many recent reps the reported pace is measured over.
+      *
+      * Ten is long enough that one slow rep does not swing the figure and short enough to follow a real change of pace
+      * within a set, rather than reporting an average of a workout that has moved on.
+      */
+    paceWindowReps: Int = 10,
     /** Samples ignored at the start of a window while the filter settles. A band-pass starting from rest rings when the
       * signal first arrives, and that ringing would otherwise dominate the very statistics used to decide what counts
       * as a peak.
@@ -165,11 +171,25 @@ private[fe] object RepAnalysis:
   */
 private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings()):
   private var counted = 0
+  // When the recent counted reps happened, in absolute sample positions, for reporting the pace being kept.
+  private var recent = Vector.empty[Int]
   private var lastCountedIndex: Option[Int] = None
   private var authoritative: Option[Quadrant] = None
   private var state: LockState = LockState.Acquiring(0, settings.minimumSamplesForLock)
 
   def reading: RepReading = RepReading(counted, state)
+
+  /** The pace of the last few reps, in reps per minute, or zero when too few have been seen to say.
+    *
+    * Measured across the gaps between counted reps rather than from the detected period: the period is what the
+    * detector believes the cadence to be, while this is what actually got counted, and when those disagree the second
+    * is the honest one to show.
+    */
+  def repsPerMinute: Double =
+    if recent.sizeIs < 2 then 0.0
+    else
+      val span = (recent.last - recent.head).toDouble
+      if span <= 0 then 0.0 else 60.0 * settings.sampleRateHz * (recent.size - 1) / span
 
   /** Sets the tally back to nothing without disturbing the detection behind it.
     *
@@ -181,6 +201,7 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
 
   def reset(): Unit =
     counted = 0
+    recent = Vector.empty
     lastCountedIndex = None
     authoritative = None
     state = LockState.Acquiring(0, settings.minimumSamplesForLock)
@@ -226,6 +247,7 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
             case Some(last) => absolute.filter(_ >= last + settings.minimumDistanceSamples)
           if fresh.nonEmpty then
             counted += fresh.size
+            recent = (recent ++ fresh.sorted).takeRight(settings.paceWindowReps)
             lastCountedIndex = Some(fresh.max)
 
     reading

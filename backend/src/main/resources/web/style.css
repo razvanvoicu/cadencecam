@@ -8,6 +8,11 @@
   --accent: #2f6feb;
   --backdrop: rgb(0 0 0 / 45%);
   --shadow: rgb(0 0 0 / 20%);
+  /* The calorie panel keeps its colour in both themes: it is a deliberate field rather than part of the surface,
+     and a panel that inverted with the theme would read as a different element rather than the same one. */
+  --calorie-bg: #16233a;
+  /* The card's inner padding, named so the calorie panel can cancel exactly it and reach the frame's edge. */
+  --screen-padding: 1.25rem;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -176,7 +181,7 @@ button,
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  padding: 1.25rem;
+  padding: var(--screen-padding);
   background: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -186,12 +191,6 @@ button,
   margin: 0;
   font-size: 1.25rem;
   font-weight: 600;
-}
-
-.screen-note {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.4;
 }
 
 .back-button {
@@ -275,13 +274,13 @@ button,
 
 /* The foot of the panel: reset at the left, the lock reading filling the rest. Sharing the row rather than
    floating over it means the button occupies the corner without costing height or covering the text. */
-.acquirer-footer {
+.control-row {
   display: flex;
   align-items: center;
   gap: 0.75rem;
 }
 
-.acquirer-footer .lock-state {
+.control-row .lock-state {
   flex: 1;
   min-width: 0;
   /* The standalone label carried a bottom margin; inside the row it would lift the text off the button's centre. */
@@ -333,6 +332,51 @@ button,
   margin: 0 0 0.75rem;
   font-size: 0.95rem;
   line-height: 1.4;
+}
+
+/* The dashboard occupies the same frame as the acquirer, and for the same reason: it is one screen on a phone,
+   sized to the viewport rather than to its contents. Both are columns of rows, so a landscape arrangement later is a
+   change of direction here rather than a different layout. */
+.dashboard-view {
+  display: flex;
+  flex-direction: column;
+  /* Dynamic viewport height, so a phone's collapsing address bar does not leave the panel short. */
+  height: 100dvh;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.screen.dashboard {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  /* So the panel below can be told to take what is left, rather than being pushed past the bottom. */
+  min-height: 0;
+}
+
+/* Takes the height the readouts above leave it, and the full width of the frame. */
+.calorie-panel {
+  display: flex;
+  flex-direction: column;
+  /* Spread rather than bunched: the panel is deliberately tall, and two readings centred together in it would
+     leave most of the height empty above and below them. */
+  justify-content: space-evenly;
+  flex: 1;
+  min-height: 0;
+  /* Full width of the frame rather than of the card's contents: the horizontal padding is cancelled so the panel
+     reaches both edges, and the bottom one too so it finishes flush with the card. */
+  margin: 0.5rem calc(-1 * var(--screen-padding)) calc(-1 * var(--screen-padding));
+  padding: 2vh;
+  box-sizing: border-box;
+  /* Square at the sides, and matching the card's own curve where it meets the corners. */
+  border-radius: 0 0 11px 11px;
+  background: var(--calorie-bg);
+  /* Re-scoped rather than overridden per element: the readouts inside are the same builders used on the light
+     surface above, and they read these tokens. Setting them here recolours the whole panel's contents at once, and
+     keeps working if either theme changes. */
+  --fg: #eef2ff;
+  --muted: #9fb3d9;
+  color: var(--fg);
 }
 
 .acquirer-view {

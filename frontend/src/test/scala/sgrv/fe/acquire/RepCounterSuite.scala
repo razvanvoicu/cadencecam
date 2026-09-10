@@ -226,3 +226,39 @@ class RepCounterSuite extends FunSuite:
     val reading = run(rotating(1.0, 60.0, amplitude = 6.0))
 
     assert(reading.count > 20, s"an ordinary rep must still be counted, got ${reading.count}")
+
+  test("the pace is the one the counted reps actually kept"):
+    val counter = RepCounter()
+    val channels = rotating(1.0, 60.0, amplitude = 6.0)
+    run(channels, counter)
+
+    // A rep a second is sixty a minute, allowing for the human wobble the generator does not have.
+    assertEqualsDouble(counter.repsPerMinute, 60.0, 2.0)
+
+  test("a faster cadence reports a faster pace"):
+    val slow = RepCounter()
+    val fast = RepCounter()
+    run(rotating(0.75, 60.0, amplitude = 6.0), slow)
+    run(rotating(1.5, 60.0, amplitude = 6.0), fast)
+
+    assertEqualsDouble(slow.repsPerMinute, 45.0, 2.0)
+    assertEqualsDouble(fast.repsPerMinute, 90.0, 3.0)
+
+  test("too few reps to know a pace is reported as no pace, rather than as a guess"):
+    val counter = RepCounter()
+
+    assertEquals(counter.repsPerMinute, 0.0)
+
+  test("resetting the detector forgets the pace along with the count"):
+    val counter = RepCounter()
+    run(rotating(1.0, 60.0, amplitude = 6.0), counter)
+    assert(counter.repsPerMinute > 0)
+
+    counter.reset()
+
+    assertEquals(counter.repsPerMinute, 0.0)
+
+  test("the pace follows the recent reps rather than the whole session"):
+    // Measured over the last few, so a change of pace within a set is reported rather than averaged away.
+    val settings = DetectorSettings()
+    assertEquals(settings.paceWindowReps, 10)

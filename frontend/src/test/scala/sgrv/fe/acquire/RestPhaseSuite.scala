@@ -4,7 +4,6 @@ import munit.FunSuite
 
 class RestPhaseSuite extends FunSuite:
 
-  private val rate = 10.0
   private val level = 120.0
 
   /** One quadrant's view of a set: the hand parked, then a cadence, then parked again. `restHigh` is whether the hand

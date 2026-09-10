@@ -81,6 +81,16 @@ class CountingSessionSuite extends munit.FunSuite:
 
     assertEquals(skipped, Some(Set("firestore", "session-store")))
 
+  test("the live relay is discovered on the classpath"):
+    // Its sockets are the only path between the two devices, and a plugin that compiles but is never scanned would
+    // leave a dashboard waiting forever with nothing to say why.
+    val statuses = run(RouteDiscovery.discover(CapabilityRegistry.empty))
+
+    val skipped = statuses.collectFirst:
+      case PluginStatus.Skipped(LiveRelay.id, _, missing) => missing.map(_.id).toSet
+
+    assertEquals(skipped, Some(Set("session-store")))
+
   test("the trace route is discovered on the classpath too"):
     // Same reason: a plugin can compile perfectly and still never be reached by the scan.
     val statuses = run(RouteDiscovery.discover(CapabilityRegistry.empty))

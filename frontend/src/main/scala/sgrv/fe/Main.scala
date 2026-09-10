@@ -15,6 +15,7 @@ import sgrv.fe.acquire.{
   RepCountStore,
   RepProgressReporter,
   RestPhase,
+  StatusLine,
   CaptureState,
   TraceCapture,
   Quadrant,
@@ -22,6 +23,8 @@ import sgrv.fe.acquire.{
   Sample,
   SignalGraph
 }
+import sgrv.api.{Live, LiveCommand, LiveReading, LiveState}
+import sgrv.fe.live.LiveSocket
 import sgrv.fe.refreshstate.RefreshStateStore
 import sgrv.fe.refreshstate.SessionRefreshWorker
 import zio.json.*
@@ -165,12 +168,101 @@ object Main:
       screen match
         case Screen.Selection => selection(displayName)
         case Screen.Acquirer  => acquirer()
-        case Screen.Dashboard =>
-          placeholder(
-            "dashboard",
-            "Dashboard",
-            "The live rep count from the acquiring device is not implemented yet."
+        case Screen.Dashboard => dashboard()
+
+    /** Watches the count arriving from whichever device is acquiring for this account.
+      *
+      * It holds no count of its own. Everything shown here is a copy of what the acquirer last said, and the two
+      * controls ask that device to do the things its own controls do rather than acting locally — so the acquirer stays
+      * the single authority on the tally, and a dashboard that has been away simply catches up.
+      *
+      * Laid out as a column of rows sized by their content, with the panel taking what is left. Nothing is positioned
+      * absolutely and no row has a fixed height, so a landscape arrangement later is a change of direction on the
+      * container rather than a rewrite.
+      */
+    def dashboard(): Element =
+      val menuOpen = Var(false)
+      val live = Var(Option.empty[LiveState])
+      val connected = Var(false)
+
+      val reading = live.signal.map(_.flatMap(_.reading))
+      val reps = reading.map(_.fold(0)(_.reps))
+      val pace = reading.map(_.fold(0.0)(_.repsPerMinute))
+
+      /** Three situations that a single "waiting" would render identical, told apart.
+        *
+        * A dashboard whose own socket is down, one connected to an account with nothing counting, and one connected to
+        * a device that has not yet found a cadence are different problems with different remedies, and only the last of
+        * them is the app working normally.
+        */
+      val status = live.signal
+        .combineWith(connected.signal)
+        .map:
+          case (_, false)                               => "Connecting…"
+          case (Some(LiveState(true, Some(latest))), _) => latest.status
+          case (Some(LiveState(true, None)), _)         => "Waiting for the first rep"
+          case (Some(LiveState(false, _)), _)           => "No device is counting yet"
+          case (None, _)                                => StatusLine.Waiting
+
+      val relay: LiveSocket = LiveSocket(
+        Live.DashboardPath,
+        text =>
+          text.fromJson[LiveState] match
+            case Right(state)  => live.set(Some(state))
+            case Left(details) => dom.console.warn(s"Ignoring an unreadable update: $details"),
+        onOpen = () => connected.set(true),
+        onClosed = () => connected.set(false)
+      )
+
+      def ask(instruction: LiveCommand): Unit =
+        val _ = relay.send(instruction.toJson)
+
+      def menuItem(label: String, act: () => Unit): Element =
+        button(cls := "menu-item", typ := "button", label, onClick --> (_ => { menuOpen.set(false); act() }))
+
+      div(
+        cls := "dashboard-view",
+        onMountCallback(_ => relay.connect()),
+        onUnmountCallback(_ => relay.close()),
+        div(
+          cls := "screen dashboard",
+          div(
+            cls := "acquirer-header",
+            h1(cls := "screen-title", "Dashboard"),
+            button(
+              cls := "menu-button",
+              typ := "button",
+              aria.label := "Menu",
+              aria.expanded <-- menuOpen.signal,
+              "\u2630",
+              onClick --> (_ => menuOpen.update(open => !open))
+            )
+          ),
+          // A backdrop so a tap anywhere else dismisses the menu, which is what a phone expects.
+          child <-- menuOpen.signal.map:
+            case false => emptyNode
+            case true  => div(cls := "menu-backdrop", onClick --> (_ => menuOpen.set(false))),
+          Readouts.reading(reps.map(_.toString), "reps"),
+          Readouts.controls(status, () => ask(LiveCommand.Reset)),
+          Readouts.reading(Readouts.perMinute(pace), "reps/min"),
+          div(
+            cls := "acquirer-actions",
+            cls("open") <-- menuOpen.signal,
+            menuItem("Capture signal trace", () => ask(LiveCommand.CaptureTrace)),
+            menuItem("About", () => openAbout()),
+            menuItem("Back", () => show(Screen.Selection)),
+            menuItem("Logout", () => logout())
+          ),
+          // Takes whatever the rows above leave, which is what makes this the panel and them the readouts.
+          div(
+            cls := "calorie-panel",
+            // Equal to the reps for now: the arithmetic that turns movement into energy needs a body and an
+            // exercise to be meaningful, and neither is known yet.
+            Readouts.reading(reps.map(_.toString), "cal"),
+            Readouts.reading(Readouts.perMinute(pace), "cal/min")
           )
+        )
+      )
 
     /** The camera and its sampler are browser resources, so they live outside the persisted FrontendState and are torn
       * down when this view unmounts — otherwise the camera would stay held after leaving the screen.
@@ -194,6 +286,19 @@ object Main:
       // leader switch should show that leader's own offset rather than the previous one's.
       val restOffsets = Var(Map.empty[Quadrant, Double])
       val capture = Var[CaptureState](CaptureState.Idle)
+      // Composed once and used twice: shown here, and sent verbatim to whatever is watching. Re-deriving the wording
+      // at the other end would let the two screens drift apart on the first change to either.
+      val statusText = lock.signal
+        .combineWith(restOffsets.signal)
+        .map: (state, offsets) =>
+          state match
+            case LockState.Locked(channel, _, _) =>
+              // How far into a rep this channel's tick lands, when the buffer has been able to say. Shown while it is
+              // only a diagnostic: it is the number that decides whether a tick agrees with the exerciser.
+              val phase = offsets.get(channel).fold("")(offset => f" · φ$offset%.2f")
+              StatusLine.of(state) + phase
+            case other => StatusLine.of(other)
+      var latestStatus = StatusLine.of(LockState.Acquiring(0, 0))
       val counter = RepCounter()
       val reporter = RepProgressReporter(http)
       var totalSamples = 0
@@ -235,6 +340,17 @@ object Main:
       var firstSampleAt = Option.empty[Double]
       var sampleCount = 0
 
+      var lastPublished = Option.empty[LiveReading]
+
+      /** Sends a reading only when it says something new.
+        *
+        * Samples arrive ten times a second and almost all of them repeat the last: the count is unchanged between reps,
+        * and the pace is only worth reporting to the nearest whole number a screen will show.
+        */
+      def publish(): Unit =
+        val reading = LiveReading(repCount.now(), math.round(counter.repsPerMinute).toDouble, latestStatus)
+        if !lastPublished.contains(reading) then if relay.send(reading.toJson) then lastPublished = Some(reading)
+
       def onSample(sample: Sample): Unit =
         signals.record(sample)
         totalSamples += 1
@@ -251,6 +367,7 @@ object Main:
         if total != repCount.now() then repCountStore.save(total, sample.atMillis)
         repCount.set(total)
         lock.set(reading.lock)
+        publish()
         tick.update(_ + 1)
         sampleCount += 1
         firstSampleAt match
@@ -258,6 +375,40 @@ object Main:
           case Some(start) =>
             val elapsed = sample.atMillis - start
             if elapsed > 0 then measuredHz.set(Some((sampleCount - 1) * 1000.0 / elapsed))
+
+      /** Zeroes the tally without disturbing the detection behind it. Reached from this device's own control and from a
+        * watching one, which must mean the same thing on both.
+        */
+      def resetCount(): Unit =
+        baseline = 0
+        counter.zeroCount()
+        // Cleared rather than saved as zero: a reload should find nothing to resume, rather than a zero that goes on
+        // being resumed for the rest of the retention window.
+        repCountStore.clear()
+        repCount.set(counter.reading.count)
+
+      def captureTrace(): Unit =
+        if TraceCapture.worthSending(signals) then
+          TraceCapture.send(
+            http,
+            TraceCapture.of(signals, repCount.now(), lock.now(), None, cameraReport, controlNote, controlsAtSample),
+            capture.set
+          )
+        else capture.set(CaptureState.Failed("nothing recorded yet"))
+
+      /** Carries readings out to whatever is watching, and the two commands back.
+        *
+        * The acquirer is the authority throughout: a command is a request to do the same thing this device's own
+        * controls do, not a way to set the count from outside.
+        */
+      lazy val relay: LiveSocket = LiveSocket(
+        Live.AcquirerPath,
+        text =>
+          text.fromJson[LiveCommand] match
+            case Right(LiveCommand.Reset)        => resetCount()
+            case Right(LiveCommand.CaptureTrace) => captureTrace()
+            case Left(details)                   => dom.console.warn(s"Ignoring an unreadable command: $details")
+      )
 
       def release(): Unit =
         sampler.foreach(_.stop())
@@ -362,7 +513,12 @@ object Main:
 
       div(
         cls := "acquirer-view",
+        statusText --> { text =>
+          latestStatus = text
+          publish()
+        },
         onMountCallback { _ =>
+          relay.connect()
           startCamera()
           // Reads the total rather than being pushed it, so a tick reports whatever is current at the moment it
           // fires and no report can be left describing a count that has since moved on.
@@ -370,6 +526,7 @@ object Main:
         },
         onUnmountCallback { _ =>
           live = false
+          relay.close()
           reporter.stop()
           release()
         },
@@ -411,52 +568,8 @@ object Main:
                   button(cls := "back-button", typ := "button", "Try again", onClick --> (_ => startCamera()))
                 )
           ),
-          div(
-            cls := "rep-count",
-            span(cls := "rep-count-value", child.text <-- repCount.signal.map(_.toString)),
-            span(cls := "rep-count-label", "reps")
-          ),
-          div(
-            cls := "acquirer-footer",
-            button(
-              cls := "reset-button",
-              typ := "button",
-              // U+21BA, the anticlockwise open circle arrow: monochrome, present in the system fonts of every
-              // platform this runs on, and unambiguous without a caption.
-              "\u21ba",
-              aria.label := "Reset the count",
-              title := "Reset the count",
-              onClick --> { _ =>
-                baseline = 0
-                counter.zeroCount()
-                // Cleared rather than saved as zero: a reload should find nothing to resume, rather than a zero that
-                // goes on being resumed for the rest of the retention window.
-                repCountStore.clear()
-                repCount.set(counter.reading.count)
-              }
-            ),
-            // Says which of the three it is doing rather than letting a stalled count look like a steady one.
-            p(
-              cls := "lock-state",
-              child.text <-- lock.signal
-                .combineWith(restOffsets.signal)
-                .map: (state, offsets) =>
-                  state match
-                    case LockState.Acquiring(samples, needed) =>
-                      val seconds = math.max(0, needed - samples) / 10
-                      if needed == 0 then "Waiting for the camera…" else s"Finding a cadence… about ${seconds}s"
-                    case LockState.Searching => "No steady cadence — paused"
-                    // Kept short enough to sit on one line between the reset control and its counterweight.
-                    case LockState.Locked(channel, partner, periodSeconds) =>
-                      // How far into a rep this channel's tick lands, when the buffer has been able to say. Shown while
-                      // it is only a diagnostic: it is the number that decides whether a tick agrees with the exerciser.
-                      val phase = offsets.get(channel).fold("")(offset => f" · φ$offset%.2f")
-                      f"Counting $channel+$partner · $periodSeconds%.1fs/rep$phase"
-            ),
-            // Balances the reset control on the other side, so the reading is centred on the panel rather than on
-            // whatever is left of it. Hidden from assistive technology: it carries nothing to announce.
-            div(cls := "footer-spacer", aria.hidden := true)
-          ),
+          Readouts.reading(repCount.signal.map(_.toString), "reps"),
+          Readouts.controls(statusText, () => resetCount()),
           div(
             cls := "acquirer-actions",
             cls("open") <-- menuOpen.signal,
@@ -489,16 +602,7 @@ object Main:
                 disabled := state == CaptureState.Sending,
                 // Deliberately does not close the menu: the outcome is reported on this very item, and closing
                 // would hide the one thing the tap was for.
-                onClick --> { _ =>
-                  if TraceCapture.worthSending(signals) then
-                    TraceCapture.send(
-                      http,
-                      TraceCapture
-                        .of(signals, repCount.now(), lock.now(), None, cameraReport, controlNote, controlsAtSample),
-                      capture.set
-                    )
-                  else capture.set(CaptureState.Failed("nothing recorded yet"))
-                }
+                onClick --> (_ => captureTrace())
               )
             ,
             menuItem("About", () => openAbout()),
@@ -511,19 +615,6 @@ object Main:
         div(
           cls := "signal-graphs",
           Seq(Quadrant.Q2, Quadrant.Q1, Quadrant.Q3, Quadrant.Q4).map(graphPane)
-        )
-      )
-
-    def placeholder(modifier: String, heading: String, note: String): Element =
-      div(
-        cls := s"screen $modifier",
-        h1(cls := "screen-title", heading),
-        p(cls := "screen-note", note),
-        button(
-          cls := "back-button",
-          typ := "button",
-          "Back to selection",
-          onClick --> (_ => show(Screen.Selection))
         )
       )
 
