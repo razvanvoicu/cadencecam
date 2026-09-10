@@ -20,18 +20,17 @@ private[fe] enum CaptureState:
 /** Sends a minute of the four quadrant signals to the counting session that produced them.
   *
   * The point is to stop guessing. Every threshold in the detector was set by reasoning about signals nobody had
-  * recorded, and each guess has been wrong in a different direction — a movement that terminates in its own
-  * quadrant, a filter ringing at rep cadence, setup movement that turned out to be accidentally rhythmic. A real
-  * recording, of real lighting, can be replayed against a changed detector as often as a question needs asking,
-  * which no amount of reasoning about synthetic curls can substitute for.
+  * recorded, and each guess has been wrong in a different direction — a movement that terminates in its own quadrant, a
+  * filter ringing at rep cadence, setup movement that turned out to be accidentally rhythmic. A real recording, of real
+  * lighting, can be replayed against a changed detector as often as a question needs asking, which no amount of
+  * reasoning about synthetic curls can substitute for.
   */
 private[fe] object TraceCapture:
 
   /** Builds the recording from whatever the buffers currently hold.
     *
-    * Deliberately the whole buffer rather than a chosen window: what makes a trace worth keeping is usually
-    * something that already happened, and the interesting part is often just before the moment someone reaches for
-    * the button.
+    * Deliberately the whole buffer rather than a chosen window: what makes a trace worth keeping is usually something
+    * that already happened, and the interesting part is often just before the moment someone reaches for the button.
     */
   private[fe] def of(
       signals: QuadrantSignals,

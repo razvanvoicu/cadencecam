@@ -95,7 +95,7 @@ class CameraSuite extends FunSuite:
       focusMode = js.Array("manual", "single-shot")
     )
 
-    assertEquals(Camera.manualCapable(capabilities), Seq("exposureMode", "focusMode"))
+    assertEquals(Camera.manualCapable(capabilities).map(_.mode), Seq("exposureMode", "focusMode"))
 
   test("a camera that reports no control modes is asked for nothing"):
     assertEquals(Camera.manualCapable(js.Dynamic.literal()), Seq.empty)
@@ -113,9 +113,38 @@ class CameraSuite extends FunSuite:
     // Browsers vary in what they report here, and a malformed entry must not take the camera down with it.
     val odd = js.Dynamic.literal(exposureMode = "manual", whiteBalanceMode = 3, focusMode = js.Array("manual"))
 
-    assertEquals(Camera.manualCapable(odd), Seq("focusMode"))
+    assertEquals(Camera.manualCapable(odd).map(_.mode), Seq("focusMode"))
 
   test("the controls held still are the ones that re-meter on the movement being counted"):
-    assertEquals(Camera.manualControls, Seq("exposureMode", "whiteBalanceMode", "focusMode"))
+    assertEquals(Camera.manualControls.map(_.mode), Seq("exposureMode", "whiteBalanceMode", "focusMode"))
     // Long enough for metering to converge, short enough not to spend a set on automatic.
     assert(Camera.settleBeforeLockMillis >= 500 && Camera.settleBeforeLockMillis <= 3000)
+
+  test("holding a control still carries the value it settled on, not only the mode"):
+    // Without the value, "manual" tells the camera to stop deciding without saying what to do instead, and what it
+    // then picks is nothing in particular -- which is how a correct exposure turns dark a second after opening.
+    val settled = js.Dynamic.literal("exposureTime" -> 312.5, "colorTemperature" -> 4200)
+
+    val exposure = Camera.pinning(ManualControl("exposureMode", "exposureTime"), settled)
+
+    assertEquals(exposure.exposureMode.asInstanceOf[String], "manual")
+    assertEquals(exposure.exposureTime.asInstanceOf[Double], 312.5)
+
+  test("a control the camera reports no value for is asked only for the mode"):
+    // Better to hand over a mode alone than to invent a number for a setting this camera never mentioned.
+    val settled = js.Dynamic.literal("exposureTime" -> 312.5)
+
+    val focus = Camera.pinning(ManualControl("focusMode", "focusDistance"), settled)
+
+    assertEquals(focus.focusMode.asInstanceOf[String], "manual")
+    assert(js.isUndefined(focus.focusDistance), "a value was invented for a setting the camera never reported")
+
+  test("each control is pinned by its own setting"):
+    assertEquals(
+      Camera.manualControls.map(control => control.mode -> control.setting).toMap,
+      Map(
+        "exposureMode" -> "exposureTime",
+        "whiteBalanceMode" -> "colorTemperature",
+        "focusMode" -> "focusDistance"
+      )
+    )

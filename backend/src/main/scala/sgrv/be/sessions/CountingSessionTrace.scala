@@ -12,10 +12,9 @@ import zio.json.*
 
 /** Accepts a captured recording of the acquirer's signals and files it under the session that produced it.
   *
-  * Kept for offline work rather than for the app to read back. Every threshold in the detector was chosen by
-  * reasoning about signals nobody had recorded, and each guess made that way has been wrong in a different
-  * direction; a real recording turns a question about behaviour into something that can be replayed rather than
-  * argued about.
+  * Kept for offline work rather than for the app to read back. Every threshold in the detector was chosen by reasoning
+  * about signals nobody had recorded, and each guess made that way has been wrong in a different direction; a real
+  * recording turns a question about behaviour into something that can be replayed rather than argued about.
   */
 object CountingSessionTrace extends BackendPlugin:
   type Requires = Firestore & SessionStore
@@ -28,8 +27,8 @@ object CountingSessionTrace extends BackendPlugin:
   override val routes: Routes[Requires & RequestContext, Nothing] =
     Routes(Method.POST / "countingSession" / "trace" -> handler((request: Request) => apply(request)))
 
-  /** A minute of four channels at ten hertz is a few tens of kilobytes; ten times that is not a recording of this
-    * app but a mistake or an abuse, and is refused before it reaches Firestore.
+  /** A minute of four channels at ten hertz is a few tens of kilobytes; ten times that is not a recording of this app
+    * but a mistake or an abuse, and is refused before it reaches Firestore.
     */
   private[sessions] val maximumSamplesPerChannel = 6000
 
@@ -57,13 +56,15 @@ object CountingSessionTrace extends BackendPlugin:
 
   /** The recording a request body carries, or why it does not carry one. */
   private[sessions] def parse(body: String): Either[String, SignalTrace] =
-    body.fromJson[SignalTrace].flatMap: trace =>
-      val longest = trace.samples.values.map(_.size).maxOption.getOrElse(0)
-      if trace.samples.isEmpty then Left("A trace with no channels records nothing")
-      else if longest > maximumSamplesPerChannel then
-        Left(s"A channel of $longest samples is longer than any recording this app makes")
-      else if trace.sampleRateHz <= 0 then Left(s"Nonsensical sample rate ${trace.sampleRateHz}")
-      else Right(trace)
+    body
+      .fromJson[SignalTrace]
+      .flatMap: trace =>
+        val longest = trace.samples.values.map(_.size).maxOption.getOrElse(0)
+        if trace.samples.isEmpty then Left("A trace with no channels records nothing")
+        else if longest > maximumSamplesPerChannel then
+          Left(s"A channel of $longest samples is longer than any recording this app makes")
+        else if trace.sampleRateHz <= 0 then Left(s"Nonsensical sample rate ${trace.sampleRateHz}")
+        else Right(trace)
 
   /** Opaque and unguessable, so one session's recordings cannot be enumerated from another's. */
   private[sessions] def traceId(): String =

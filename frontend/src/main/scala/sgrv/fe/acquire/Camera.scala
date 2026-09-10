@@ -15,6 +15,9 @@ private[fe] enum CameraState:
   case Streaming(width: Int, height: Int)
   case Unavailable(message: String)
 
+/** A camera control that can be held still, paired with the setting that says where to hold it. */
+private[acquire] final case class ManualControl(mode: String, setting: String)
+
 private[fe] object Camera:
   /** How many pixels a frame may carry. A budget rather than a fixed size: the shape is left to the device.
     *
@@ -75,7 +78,11 @@ private[fe] object Camera:
     * change that never happens needs no undoing, whereas subtracting it afterwards mixed every channel into every
     * other.
     */
-  private[acquire] val manualControls = Seq("exposureMode", "whiteBalanceMode", "focusMode")
+  private[acquire] val manualControls = Seq(
+    ManualControl("exposureMode", "exposureTime"),
+    ManualControl("whiteBalanceMode", "colorTemperature"),
+    ManualControl("focusMode", "focusDistance")
+  )
 
   /** How long the camera stays automatic before being held still.
     *
@@ -90,12 +97,26 @@ private[fe] object Camera:
     * value to an array of modes fails in a way no `Try` catches — it raises an `Error`, not an exception — so a camera
     * reporting something odd would take the whole capture down instead of simply going unlocked.
     */
-  private[acquire] def manualCapable(capabilities: js.Dynamic): Seq[String] =
+  private[acquire] def manualCapable(capabilities: js.Dynamic): Seq[ManualControl] =
     manualControls.filter: control =>
-      val modes = capabilities.selectDynamic(control)
+      val modes = capabilities.selectDynamic(control.mode)
       !js.isUndefined(modes) &&
       js.Dynamic.global.Array.isArray(modes).asInstanceOf[Boolean] &&
       modes.asInstanceOf[js.Array[Any]].exists(_ == "manual")
+
+  /** What to send to hold one control where it currently sits.
+    *
+    * The mode alone is not enough. "Manual" means the camera stops deciding and uses the value it is given, so a
+    * request carrying no value leaves it to choose one, and what it chooses is nothing in particular — which is how a
+    * correctly exposed picture turns dark a second after opening. Reading the settled automatic value and sending it
+    * back alongside the mode is what makes "manual" mean "stay as you are".
+    */
+  private[acquire] def pinning(control: ManualControl, settings: js.Dynamic): js.Dynamic =
+    val wanted = js.Dynamic.literal()
+    wanted.updateDynamic(control.mode)("manual")
+    val current = settings.selectDynamic(control.setting)
+    if !js.isUndefined(current) && current != null then wanted.updateDynamic(control.setting)(current)
+    wanted
 
   /** Holds each supported control still, once the camera has had a moment to meter.
     *
@@ -110,17 +131,19 @@ private[fe] object Camera:
         if js.isUndefined(dynamic.getCapabilities) then Future.successful(Seq.empty)
         else
           after(settleBeforeLockMillis).flatMap: _ =>
+            // Read after the settle, not before: what gets pinned should be what automatic metering arrived at.
+            val settled = dynamic.getSettings()
             manualCapable(dynamic.getCapabilities())
               .foldLeft(Future.successful(Seq.empty[String])): (earlier, control) =>
                 earlier.flatMap: locked =>
-                  val wanted = js.Dynamic.literal()
-                  wanted.updateDynamic(control)("manual")
                   track
                     .applyConstraints(
-                      js.Dynamic.literal(advanced = js.Array(wanted)).asInstanceOf[dom.MediaTrackConstraints]
+                      js.Dynamic
+                        .literal(advanced = js.Array(pinning(control, settled)))
+                        .asInstanceOf[dom.MediaTrackConstraints]
                     )
                     .toFuture
-                    .map(_ => locked :+ control)
+                    .map(_ => locked :+ control.mode)
                     .recover { case _ => locked }
               .map: locked =>
                 // Reported because the difference is visible on the traces: with the controls held, the quadrants
@@ -176,6 +199,20 @@ private[fe] object Camera:
   /** Releases the camera. Without this the indicator light stays on and the device stays locked to this tab. */
   def stop(stream: dom.MediaStream): Unit =
     stream.getTracks().foreach(_.stop())
+
+  /** Lets a video element go of whatever stream it was showing.
+    *
+    * Stopping a track ends the capture, but an element still holding the stream keeps a reference the browser is
+    * entitled to honour, and on a phone that shows up as a camera that stays on after leaving the screen. Pausing
+    * first, then clearing the source, is the order that leaves nothing behind.
+    */
+  def detach(element: dom.HTMLVideoElement): Unit =
+    try
+      element.pause()
+      element.asInstanceOf[js.Dynamic].srcObject = null
+      element.removeAttribute("src")
+      element.load()
+    catch case _: Throwable => ()
 
   /** The stream's actual size, which may differ from what was asked for. */
   def resolution(stream: dom.MediaStream): Option[(Int, Int)] =

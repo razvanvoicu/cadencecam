@@ -260,6 +260,10 @@ object Main:
         sampler = None
         stream.foreach(Camera.stop)
         stream = None
+        // Stopping the tracks is not enough on its own: while the video element still holds the stream, the browser
+        // can keep the camera powered and its indicator lit after the view has gone. Letting go of it here is what
+        // actually turns the camera off.
+        Camera.detach(video.ref)
         firstSampleAt = None
         sampleCount = 0
         measuredHz.set(None)
