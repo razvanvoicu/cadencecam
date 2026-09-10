@@ -3,8 +3,8 @@ package sgrv.fe.acquire
 /** The words the acquirer shows for what the detector is doing.
   *
   * In one place because two screens show it. The acquirer renders this and also sends it to whatever is watching, so
-  * the dashboard repeats the text rather than re-deriving it — which is the only way the two can be guaranteed to
-  * read identically, rather than merely intended to.
+  * the dashboard repeats the text rather than re-deriving it — which is the only way the two can be guaranteed to read
+  * identically, rather than merely intended to.
   */
 private[fe] object StatusLine:
   def of(lock: LockState): String = lock match

@@ -58,6 +58,12 @@ body {
     calc(1.25rem + env(safe-area-inset-left));
 }
 
+/* The bench is the one screen not meant for a phone. Every other view is deliberately held to a hand's width, and
+   that frame is what left a portrait strip in the middle of a desktop window. */
+.app.wide {
+  max-width: none;
+}
+
 .content {
   display: flex;
   flex: 1;
@@ -377,6 +383,113 @@ button,
   --fg: #eef2ff;
   --muted: #9fb3d9;
   color: var(--fg);
+}
+
+/* The bench is the one screen built for a desktop in landscape: the canvas is what a camera on a tripod frames, so
+   it is given the room, and everything the operator reads sits beside it rather than over it. Anything drawn on top
+   of the canvas would be movement the detector could count. */
+.bench-view {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 1.5rem;
+  /* The height its container gives it, rather than the whole viewport: it already sits inside the app's own frame
+     and padding, and taking the viewport again would push its own bottom off the screen. */
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+/* Square so the operator has an unambiguous target to frame. The trajectories are stated as fractions, so they
+   would survive a stretched panel; what would not survive is a camera framing it loosely in one axis, and a square
+   makes an error in either axis equally obvious. Height drives the width -- with `flex: 1` the basis wins and the
+   aspect ratio is quietly ignored. */
+.bench-stage {
+  position: relative;
+  flex: 0 0 auto;
+  height: 100%;
+  max-width: 100%;
+  aspect-ratio: 1;
+  align-self: center;
+}
+
+.bench-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+}
+
+.bench-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 2rem;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 65%);
+  color: #ffffff;
+  text-align: center;
+}
+
+.bench-readouts {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.5rem;
+  flex: 0 0 22rem;
+  min-width: 0;
+}
+
+/* What was actually shown: the truth the other number is being judged against. */
+.bench-reference .rep-count-value,
+.bench-reference .rep-count-label {
+  color: #ffffff;
+}
+
+/* The detector's answer, green while it is defensible and red once it is not. Colour is not the only signal --
+   the number itself is beside its reference — so this reads the same to anyone who cannot separate the two. */
+.bench-acquired .rep-count-value,
+.bench-acquired .rep-count-label {
+  color: #35c46a;
+}
+
+.bench-acquired.astray .rep-count-value,
+.bench-acquired.astray .rep-count-label {
+  color: #ef4444;
+}
+
+/* Each figure against its own label, so none of them can be read as counting the wrong thing. */
+.bench-progress {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.15rem 1rem;
+  justify-content: center;
+  margin-top: 1.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.bench-stat {
+  display: contents;
+}
+
+.bench-stat-label {
+  text-align: right;
+}
+
+.bench-stat-value {
+  text-align: left;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.bench-back {
+  align-self: center;
 }
 
 .acquirer-view {

@@ -24,6 +24,7 @@ import sgrv.fe.acquire.{
   SignalGraph
 }
 import sgrv.api.{Live, LiveCommand, LiveReading, LiveState}
+import sgrv.fe.bench.BenchView
 import sgrv.fe.live.LiveSocket
 import sgrv.fe.refreshstate.RefreshStateStore
 import sgrv.fe.refreshstate.SessionRefreshWorker
@@ -160,6 +161,12 @@ object Main:
             Screen.Dashboard,
             "Dashboard",
             "Watch the live rep count arriving from the acquiring device."
+          ),
+          roleChoice(
+            "mode-bench",
+            Screen.Bench,
+            "Test",
+            "Show a movement of known cadence and measure the count against it. For a desktop screen."
           )
         )
       )
@@ -169,6 +176,7 @@ object Main:
         case Screen.Selection => selection(displayName)
         case Screen.Acquirer  => acquirer()
         case Screen.Dashboard => dashboard()
+        case Screen.Bench     => BenchView(http, () => show(Screen.Selection))
 
     /** Watches the count arriving from whichever device is acquiring for this account.
       *
@@ -621,6 +629,14 @@ object Main:
     val app =
       div(
         cls := "app",
+        // The bench is the only screen built for a desktop, so it is the only one let out of the phone-width frame.
+        cls("wide") <-- stateStore.signal
+          .map(Shell.of)
+          .distinct
+          .map:
+            case Shell.SignedIn(_, Screen.Bench) => true
+            case _                               => false
+        ,
         child <-- stateStore.signal
           .map(Shell.of)
           .distinct

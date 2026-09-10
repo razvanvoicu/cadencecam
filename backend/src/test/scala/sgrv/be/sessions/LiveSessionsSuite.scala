@@ -203,4 +203,3 @@ class LiveSessionsSuite extends munit.FunSuite:
       yield ()
 
     assertEquals(watcher.texts.last.fromJson[LiveState], Right(LiveState(acquiring = false, Some(reading))))
-

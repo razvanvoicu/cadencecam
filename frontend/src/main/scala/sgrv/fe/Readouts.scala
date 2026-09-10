@@ -29,8 +29,8 @@ private[fe] object Readouts:
 
   /** The reset control, the status line, and a counterweight that keeps the line centred on the panel.
     *
-    * The spacer matches the control's footprint exactly. Without it the line would centre on the space left over
-    * beside the button, which is not the middle of anything the eye can see.
+    * The spacer matches the control's footprint exactly. Without it the line would centre on the space left over beside
+    * the button, which is not the middle of anything the eye can see.
     */
   def controls(status: Signal[String], onReset: () => Unit): HtmlElement =
     div(

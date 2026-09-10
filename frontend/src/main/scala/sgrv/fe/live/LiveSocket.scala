@@ -5,12 +5,12 @@ import org.scalajs.dom
 /** A WebSocket that keeps coming back.
   *
   * Reconnection is not a refinement here, it is the normal case: Cloud Run bounds how long a request may live, and a
-  * WebSocket is a request, so a socket open across a workout will be closed by the platform whether or not anything
-  * is wrong. A phone locking its screen or losing signal for a moment does the same. So a drop is treated as routine
-  * and retried, with a delay that grows only far enough to stop a backend that is genuinely down being hammered.
+  * WebSocket is a request, so a socket open across a workout will be closed by the platform whether or not anything is
+  * wrong. A phone locking its screen or losing signal for a moment does the same. So a drop is treated as routine and
+  * retried, with a delay that grows only far enough to stop a backend that is genuinely down being hammered.
   *
-  * Everything here is best effort by design. A dashboard whose socket is briefly away shows a slightly old count,
-  * which is the right failure: the acquirer is the thing keeping the tally, and this only carries copies of it.
+  * Everything here is best effort by design. A dashboard whose socket is briefly away shows a slightly old count, which
+  * is the right failure: the acquirer is the thing keeping the tally, and this only carries copies of it.
   */
 private[fe] final class LiveSocket(
     path: String,
@@ -32,8 +32,10 @@ private[fe] final class LiveSocket(
     wanted = false
     pending.foreach(dom.window.clearTimeout)
     pending = None
-    socket.foreach(existing => try existing.close()
-    catch case _: Throwable => ())
+    socket.foreach(existing =>
+      try existing.close()
+      catch case _: Throwable => ()
+    )
     socket = None
 
   /** Sends if the socket happens to be open, and drops the message otherwise.
@@ -77,13 +79,15 @@ private[fe] final class LiveSocket(
     if wanted && pending.isEmpty then
       val delay = LiveSocket.delayMillis(attempt)
       attempt += 1
-      pending = Some(dom.window.setTimeout(
-        () =>
-          pending = None
-          open()
-        ,
-        delay.toDouble
-      ))
+      pending = Some(
+        dom.window.setTimeout(
+          () =>
+            pending = None
+            open()
+          ,
+          delay.toDouble
+        )
+      )
 
 private[fe] object LiveSocket:
   val FirstDelayMillis = 500
@@ -91,8 +95,8 @@ private[fe] object LiveSocket:
 
   /** How long to wait before the next attempt: doubling, but bounded.
     *
-    * Bounded low, because the common cause of a drop is the platform closing a long-lived request rather than
-    * anything being broken, and a workout should not pause for half a minute over a routine reconnection.
+    * Bounded low, because the common cause of a drop is the platform closing a long-lived request rather than anything
+    * being broken, and a workout should not pause for half a minute over a routine reconnection.
     */
   private[live] def delayMillis(attempt: Int): Int =
     val doubled = FirstDelayMillis.toLong << math.min(attempt, 16)

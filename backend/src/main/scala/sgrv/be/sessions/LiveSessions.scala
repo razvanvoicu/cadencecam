@@ -8,12 +8,12 @@ import zio.json.*
 
 /** One account's live pairing: the device counting, and the devices watching it.
   *
-  * Keyed by account rather than by browser session, because the two devices are two separate logins to the same
-  * Google account and so have nothing else in common. It is also the shape the acquirer-uniqueness rule will need:
-  * one acquirer per account is a property of this room, not something to be enforced elsewhere later.
+  * Keyed by account rather than by browser session, because the two devices are two separate logins to the same Google
+  * account and so have nothing else in common. It is also the shape the acquirer-uniqueness rule will need: one
+  * acquirer per account is a property of this room, not something to be enforced elsewhere later.
   *
-  * `latest` is kept so a dashboard opened halfway through a set shows the count immediately rather than a blank
-  * screen until the next rep.
+  * `latest` is kept so a dashboard opened halfway through a set shows the count immediately rather than a blank screen
+  * until the next rep.
   */
 private[sessions] final case class Room(
     acquirer: Option[(String, WebSocketChannel)] = None,
@@ -28,8 +28,8 @@ private[sessions] final case class Room(
   * deliver nothing. Lifting that pin means giving a dashboard a way to reach the instance holding its acquirer, and
   * this object is where that would be replaced.
   *
-  * A singleton rather than a capability: it is process-global by nature, it is application code rather than
-  * template code, and giving it a lifetime shorter than the process would be a fiction.
+  * A singleton rather than a capability: it is process-global by nature, it is application code rather than template
+  * code, and giving it a lifetime shorter than the process would be a fiction.
   */
 object LiveSessions:
   private val rooms: Ref[Map[String, Room]] =

@@ -60,6 +60,13 @@ private[fe] enum Screen:
   case Acquirer
   case Dashboard
 
+  /** A dashboard that also produces the movement being counted, for measuring the detector against a known truth.
+    *
+    * The backend cannot tell it from an ordinary dashboard, and should not: it watches the same readings and sends the
+    * same commands. What it adds is on this side -- it knows exactly how many reps it displayed.
+    */
+  case Bench
+
 private[fe] object Screen:
   given JsonCodec[Screen] = DeriveJsonCodec.gen[Screen]
 
