@@ -67,3 +67,42 @@ class FrontendStateSuite extends FunSuite:
       """{"user":{"Unauthenticated":{}},"screen":"Selection","aboutState":{"Closed":{}},"logoutState":{"Idle":{}}}"""
 
     assertEquals(withoutSessionId.fromJson[FrontendState].map(_.countingSessionId), Right(None))
+
+  test("a session confirmed by /me is the same shell as one restored optimistically"):
+    // The reason the view is rendered from the shell: without this, /me answering rebuilds the acquirer, and a
+    // rebuilt acquirer is a second camera and a second writer to the stored rep count.
+    val restoring = FrontendState.Initial.copy(
+      user = UserState.Restoring("developer@example.com", "Developer"),
+      screen = Screen.Acquirer
+    )
+    val confirmed = restoring.copy(user = UserState.SignedIn("developer@example.com", "Developer"))
+
+    assertEquals(Shell.of(restoring), Shell.of(confirmed))
+    assertEquals(Shell.of(confirmed), Shell.SignedIn("Developer", Screen.Acquirer))
+
+  test("opening the About panel does not change the shell"):
+    val watching = FrontendState.Initial.copy(
+      user = UserState.SignedIn("developer@example.com", "Developer"),
+      screen = Screen.Acquirer
+    )
+
+    assertEquals(Shell.of(watching.copy(aboutState = AboutState.Loading)), Shell.of(watching))
+    assertEquals(Shell.of(watching.copy(logoutState = LogoutState.InProgress)), Shell.of(watching))
+    assertEquals(Shell.of(watching.copy(countingSessionId = Some("a3f1"))), Shell.of(watching))
+
+  test("changing screen does change the shell, since that is a different view"):
+    val onAcquirer = FrontendState.Initial.copy(
+      user = UserState.SignedIn("developer@example.com", "Developer"),
+      screen = Screen.Acquirer
+    )
+
+    assertNotEquals(Shell.of(onAcquirer.copy(screen = Screen.Selection)), Shell.of(onAcquirer))
+
+  test("losing the session changes the shell, so the acquirer is torn down"):
+    val onAcquirer = FrontendState.Initial.copy(
+      user = UserState.SignedIn("developer@example.com", "Developer"),
+      screen = Screen.Acquirer
+    )
+
+    assertEquals(Shell.of(onAcquirer.copy(user = UserState.Unauthenticated)), Shell.Login)
+    assertEquals(Shell.of(FrontendState.Initial), Shell.Blank)

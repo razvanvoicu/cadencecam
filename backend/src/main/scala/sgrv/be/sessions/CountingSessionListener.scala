@@ -6,13 +6,14 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.security.MessageDigest
 import java.time.Instant
 import scala.jdk.CollectionConverters.*
-import sgrv.api.CountingSession
+import sgrv.api.{CountingSession, SignalTrace}
 import sgrv.be.BackendCapabilities
 import sgrv.be.core.{CapabilitySet, CurrentUserContributor, LoginEvent, LogoutEvent, RequestContext, SessionListener}
 import sgrv.be.auth.Callback
 import sgrv.be.store.GoogleFuture
 import zio.http.Request
 import zio.{Task, ZIO}
+import zio.json.*
 import zio.json.ast.Json
 
 private[sessions] object CountingSessionSchema:
@@ -30,6 +31,18 @@ private[sessions] object CountingSessionSchema:
     */
   val reps = "reps"
   val repsAt = "repsAt"
+
+  /** Captured signal recordings, one document each, under the session that produced them.
+    *
+    * A subcollection rather than fields on the session: a trace is large next to the record it belongs to, there may be
+    * many of them, and nothing reading a session's progress should have to carry a minute of samples with it.
+    */
+  val traces = "traces"
+  val capturedAt = "capturedAt"
+  val sampleRateHz = "sampleRateHz"
+  val samples = "samples"
+  val lock = "lock"
+  val note = "note"
 
 /** The listener's private adapter over the host's generic `firestore` capability.
   *
@@ -65,6 +78,28 @@ private[sessions] final class CountingSessionStore(firestore: Firestore):
     */
   def recordProgress(id: String, reps: Int, at: Instant): Task[Unit] =
     GoogleFuture.fromApiFuture(document(id).update(progress(reps, at).asJava)).unit
+
+  /** Files one captured recording under its session.
+    *
+    * The samples are stored as their JSON text rather than as Firestore arrays. Twenty-four hundred numbers would
+    * otherwise be indexed element by element, for a document nothing will ever be queried by: the recording is read
+    * back whole or not at all.
+    */
+  def recordTrace(id: String, traceId: String, trace: SignalTrace, at: Instant): Task[Unit] =
+    GoogleFuture
+      .fromApiFuture(
+        document(id).collection(CountingSessionSchema.traces).document(traceId).create(fields(trace, at).asJava)
+      )
+      .unit
+
+  private def fields(trace: SignalTrace, at: Instant): Map[String, AnyRef] =
+    Map[String, AnyRef](
+      CountingSessionSchema.capturedAt -> stamp(at),
+      CountingSessionSchema.sampleRateHz -> java.lang.Double.valueOf(trace.sampleRateHz),
+      CountingSessionSchema.samples -> trace.samples.toJson,
+      CountingSessionSchema.reps -> java.lang.Long.valueOf(trace.reps.toLong),
+      CountingSessionSchema.lock -> trace.lock
+    ) ++ trace.note.map(CountingSessionSchema.note -> _)
 
   private def progress(reps: Int, at: Instant): Map[String, AnyRef] =
     Map[String, AnyRef](

@@ -15,6 +15,8 @@ import sgrv.fe.acquire.{
   RepCountStore,
   RepProgressReporter,
   RestPhase,
+  CaptureState,
+  TraceCapture,
   Quadrant,
   QuadrantSignals,
   Sample,
@@ -191,11 +193,16 @@ object Main:
       // and retained: the opening stillness scrolls out of the minute, but what it established stays true, and a
       // leader switch should show that leader's own offset rather than the previous one's.
       val restOffsets = Var(Map.empty[Quadrant, Double])
+      val capture = Var[CaptureState](CaptureState.Idle)
       val counter = RepCounter()
       val reporter = RepProgressReporter(http)
       var totalSamples = 0
       val signals = QuadrantSignals()
       val tick = Var(0)
+      // Opening a camera is asynchronous, and this view can be gone before it finishes. Without this the stream
+      // arrives to a dead view, starts a sampler nobody stops, and that sampler goes on writing the stored count
+      // from behind whatever the user is actually looking at.
+      var live = true
       var stream: Option[dom.MediaStream] = None
       var sampler: Option[FrameSampler] = None
 
@@ -272,6 +279,9 @@ object Main:
           Camera
             .start(deviceId)
             .onComplete:
+              case Success(opened) if !live =>
+                // Torn down while the camera was opening: release it rather than sample into nothing.
+                Camera.stop(opened)
               case Success(opened) =>
                 stream = Some(opened)
                 val element = video.ref
@@ -343,6 +353,7 @@ object Main:
           reporter.start(() => repCount.now())
         },
         onUnmountCallback { _ =>
+          live = false
           reporter.stop()
           release()
         },
@@ -447,6 +458,32 @@ object Main:
                       // before belongs to a different view of the world.
                       () => { release(); startCamera(Some(next.deviceId)) }
                     ),
+            // Kept in the menu rather than on the panel: capturing is for working on the detector, not for
+            // working out, and a control that stops a set is worth a deliberate tap.
+            child <-- capture.signal.map: state =>
+              val label = state match
+                case CaptureState.Idle            => "Capture signal trace"
+                case CaptureState.Sending         => "Capturing…"
+                case CaptureState.Captured(reps)  => s"Captured at $reps reps"
+                case CaptureState.Failed(message) => s"Capture failed: $message"
+              button(
+                cls := "menu-item",
+                typ := "button",
+                label,
+                disabled := state == CaptureState.Sending,
+                // Deliberately does not close the menu: the outcome is reported on this very item, and closing
+                // would hide the one thing the tap was for.
+                onClick --> { _ =>
+                  if TraceCapture.worthSending(signals) then
+                    TraceCapture.send(
+                      http,
+                      TraceCapture.of(signals, repCount.now(), lock.now(), None),
+                      capture.set
+                    )
+                  else capture.set(CaptureState.Failed("nothing recorded yet"))
+                }
+              )
+            ,
             menuItem("About", () => openAbout()),
             menuItem("Back", () => show(Screen.Selection)),
             menuItem("Logout", () => logout())
@@ -477,26 +514,29 @@ object Main:
       div(
         cls := "app",
         child <-- stateStore.signal
-          .map(state => (state.user, state.screen))
+          .map(Shell.of)
+          .distinct
           .map:
             // The acquirer keeps its own Back and Logout below the count, so the global bar would only duplicate it.
-            case (Present(_), Screen.Acquirer) => emptyNode
-            case (Present(_), _)               => userActions
-            case _                             => emptyNode,
+            case Shell.SignedIn(_, Screen.Acquirer) => emptyNode
+            case Shell.SignedIn(_, _)               => userActions
+            case _                                  => emptyNode,
         div(
           cls := "content",
+          // Distinct, and on the shell rather than the whole state: without it every write to FrontendState builds a
+          // new view, and on the acquirer that means a second camera, a second detector and a second writer to the
+          // stored count -- one of them invisible.
           child <-- stateStore.signal
-            .map(state => (state.user, state.screen))
+            .map(Shell.of)
+            .distinct
             .map:
-              case (Unknown, _)         => emptyNode
-              case (Unauthenticated, _) =>
+              case Shell.Blank => emptyNode
+              case Shell.Login =>
                 // Before authentication has been attempted, offer the only thing an anonymous visitor can do.
                 div(cls := "home", a(cls := "login-button", href := "/auth/login", "Login with Google"))
-              case (AuthenticationFailed(message), _) =>
+              case Shell.AuthenticationFailed(message) =>
                 div(cls := "home", p(cls := "error", s"Authentication failed: $message"))
-              // Confirmed and optimistically restored render identically; only the machinery around them differs.
-              case (SignedIn(_, displayName), screen)  => signedInView(displayName, screen)
-              case (Restoring(_, displayName), screen) => signedInView(displayName, screen)
+              case Shell.SignedIn(displayName, screen) => signedInView(displayName, screen)
         ),
         child <-- stateStore.signal
           .map(_.logoutState)

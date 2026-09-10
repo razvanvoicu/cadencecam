@@ -49,3 +49,26 @@ object RepProgress:
   /** Where the acquirer reports to. Shared so the route and the caller cannot drift apart. */
   val Path = "/countingSession/reps"
   given JsonCodec[RepProgress] = DeriveJsonCodec.gen[RepProgress]
+
+/** A minute of the acquirer's four quadrant signals, as they were when captured.
+  *
+  * The detector's thresholds were all chosen by reasoning about signals nobody had looked at, and every guess made that
+  * way so far has been wrong in a different direction. This is the raw material for settling them instead: a real
+  * recording, of real lighting and a real movement, that can be replayed offline as many times as a question needs
+  * asking.
+  *
+  * `samples` is keyed by quadrant name and ordered oldest first, at `sampleRateHz`. `note` is whatever the person
+  * capturing it wants to remember about what they were doing, which is the one thing the numbers cannot recover.
+  */
+@jsonNoExtraFields
+final case class SignalTrace(
+    sampleRateHz: Double,
+    samples: Map[String, Seq[Double]],
+    reps: Int,
+    lock: String,
+    note: Option[String] = None
+)
+
+object SignalTrace:
+  val Path = "/countingSession/trace"
+  given JsonCodec[SignalTrace] = DeriveJsonCodec.gen[SignalTrace]

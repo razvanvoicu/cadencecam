@@ -21,6 +21,30 @@ private[fe] enum UserState:
 private[fe] object UserState:
   given JsonCodec[UserState] = DeriveJsonCodec.gen[UserState]
 
+/** What the application shell is showing.
+  *
+  * Deliberately coarser than [[FrontendState]]: rebuilding the view is expensive and, on the acquirer, destructive — it
+  * tears down a running camera and the count it was keeping. Rendering from this rather than from the whole state means
+  * an unrelated change, an About panel opening or `/me` confirming a session already restored, leaves the view where it
+  * is instead of building a second one.
+  */
+private[fe] enum Shell:
+  case Blank
+  case Login
+  case AuthenticationFailed(message: String)
+  case SignedIn(displayName: String, screen: Screen)
+
+private[fe] object Shell:
+  /** Confirmed and optimistically restored render identically: only the machinery around them differs, so treating them
+    * as one shell is what stops `/me` answering from rebuilding the view underneath a running camera.
+    */
+  def of(state: FrontendState): Shell = state.user match
+    case UserState.Unknown                       => Blank
+    case UserState.Unauthenticated               => Login
+    case UserState.AuthenticationFailed(message) => AuthenticationFailed(message)
+    case UserState.Restoring(_, displayName)     => SignedIn(displayName, state.screen)
+    case UserState.SignedIn(_, displayName)      => SignedIn(displayName, state.screen)
+
 /** Matches the states that should render the application shell: confirmed, or optimistically restored. */
 private[fe] object Present:
   def unapply(state: UserState): Option[String] = state match

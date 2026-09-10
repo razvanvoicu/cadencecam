@@ -54,13 +54,15 @@ object CountingSessionProgress extends BackendPlugin:
     * route disagree about something, and quietly storing a zero would hide that.
     */
   private[sessions] def reps(body: String): Either[String, Int] =
-    body.fromJson[RepProgress].flatMap: progress =>
-      Either.cond(progress.reps >= 0, progress.reps, s"Negative rep count ${progress.reps}")
+    body
+      .fromJson[RepProgress]
+      .flatMap: progress =>
+        Either.cond(progress.reps >= 0, progress.reps, s"Negative rep count ${progress.reps}")
 
   private def failureResponse(failure: ProgressFailure): ZIO[Any, Nothing, Response] =
     failure match
-      case NoSession           => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
-      case Malformed(details)  =>
+      case NoSession          => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
+      case Malformed(details) =>
         ZIO.logWarning(s"Rejected a counting-session progress report: $details") *>
           ZIO.succeed(noStore(Response.status(Status.BadRequest)))
       case WriteFailed(error) =>

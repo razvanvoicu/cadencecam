@@ -1,6 +1,6 @@
 package sgrv.be.sessions
 
-import sgrv.api.{CountingSession, RepProgress}
+import sgrv.api.{CountingSession, RepProgress, SignalTrace}
 import sgrv.be.auth.SessionUser
 import sgrv.be.core.{CapabilityRegistry, CurrentUserContributors, PluginStatus, RequestContext, RouteDiscovery}
 import zio.*
@@ -80,3 +80,46 @@ class CountingSessionSuite extends munit.FunSuite:
       case PluginStatus.Skipped(CountingSessionProgress.id, _, missing) => missing.map(_.id).toSet
 
     assertEquals(skipped, Some(Set("firestore", "session-store")))
+
+  test("the trace route is discovered on the classpath too"):
+    // Same reason: a plugin can compile perfectly and still never be reached by the scan.
+    val statuses = run(RouteDiscovery.discover(CapabilityRegistry.empty))
+
+    val skipped = statuses.collectFirst:
+      case PluginStatus.Skipped(CountingSessionTrace.id, _, missing) => missing.map(_.id).toSet
+
+    assertEquals(skipped, Some(Set("firestore", "session-store")))
+
+  private def trace(channels: Int = 4, samples: Int = 600, rate: Double = 10.0) =
+    SignalTrace(rate, (1 to channels).map(i => s"Q$i" -> Seq.fill(samples)(120.0)).toMap, 30, "searching")
+
+  test("a recording is accepted whole"):
+    assertEquals(CountingSessionTrace.parse(trace().toJson).map(_.samples.size), Right(4))
+    assertEquals(CountingSessionTrace.parse(trace().toJson).map(_.reps), Right(30))
+
+  test("a recording of nothing is refused rather than filed"):
+    assertEquals(
+      CountingSessionTrace.parse(trace(channels = 0).toJson),
+      Left("A trace with no channels records nothing")
+    )
+
+  test("a recording longer than this app makes is refused before it reaches the database"):
+    val huge = trace(samples = CountingSessionTrace.maximumSamplesPerChannel + 1)
+
+    assert(CountingSessionTrace.parse(huge.toJson).isLeft)
+    // The buffer's own minute is comfortably inside the limit.
+    assert(CountingSessionTrace.parse(trace(samples = 600).toJson).isRight)
+
+  test("a nonsensical sample rate is refused, since a replay could not interpret it"):
+    assert(CountingSessionTrace.parse(trace(rate = 0.0).toJson).isLeft)
+    assert(CountingSessionTrace.parse(trace(rate = -10.0).toJson).isLeft)
+
+  test("anything that is not a recording is refused rather than guessed at"):
+    assert(CountingSessionTrace.parse("").isLeft)
+    assert(CountingSessionTrace.parse("""{"sampleRateHz":10}""").isLeft)
+
+  test("recording ids are opaque and unguessable, so one session's captures cannot be enumerated"):
+    val ids = Seq.fill(50)(CountingSessionTrace.traceId())
+
+    assertEquals(ids.distinct.size, 50)
+    assert(ids.forall(id => id.length == 24 && id.forall(c => c.isDigit || ('a' to 'f').contains(c))), ids.head)
