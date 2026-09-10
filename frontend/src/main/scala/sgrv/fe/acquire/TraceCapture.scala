@@ -38,6 +38,8 @@ private[fe] object TraceCapture:
       lock: LockState,
       note: Option[String],
       camera: Option[String] = None,
+      controls: Option[String] = None,
+      controlsAtSample: Option[Int] = None,
       // The rate belongs to the detector, so a recording is stamped with it from there rather than from the view.
       sampleRateHz: Double = DetectorSettings().sampleRateHz
   ): SignalTrace =
@@ -47,8 +49,16 @@ private[fe] object TraceCapture:
       reps = reps,
       lock = describe(lock),
       note = note.map(_.trim).filter(_.nonEmpty),
-      camera = camera
+      camera = camera,
+      controls = controls,
+      controlsAtSample = controlsAtSample
     )
+
+  /** One line describing what became of the camera's controls, for a trace to carry. */
+  private[fe] def describe(outcome: ControlOutcome): String =
+    val held = if outcome.held.isEmpty then "none" else outcome.held.mkString("+")
+    val skipped = if outcome.skipped.isEmpty then "" else s", left automatic: ${outcome.skipped.mkString("+")}"
+    s"${outcome.reason}; held: $held$skipped"
 
   private[acquire] def describe(lock: LockState): String = lock match
     case LockState.Acquiring(samples, needed)              => s"acquiring $samples/$needed"

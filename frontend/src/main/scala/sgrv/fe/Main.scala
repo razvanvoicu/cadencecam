@@ -205,6 +205,8 @@ object Main:
       var live = true
       // Captured when the camera opens, so a trace can say what this device's camera reported about itself.
       var cameraReport = Option.empty[String]
+      var controlNote = Option.empty[String]
+      var controlsAtSample = Option.empty[Int]
       var stream: Option[dom.MediaStream] = None
       var sampler: Option[FrameSampler] = None
 
@@ -283,7 +285,14 @@ object Main:
         if cameraState.now() != CameraState.Starting then
           cameraState.set(CameraState.Starting)
           Camera
-            .start(deviceId)
+            .start(
+              deviceId,
+              outcome =>
+                controlNote = Some(TraceCapture.describe(outcome))
+                // The sample count at the moment they settled: a trace can then be read for whether the picture
+                // changed here or somewhere else entirely.
+                controlsAtSample = Some(totalSamples)
+            )
             .onComplete:
               case Success(opened) if !live =>
                 // Torn down while the camera was opening: release it rather than sample into nothing.
@@ -484,7 +493,8 @@ object Main:
                   if TraceCapture.worthSending(signals) then
                     TraceCapture.send(
                       http,
-                      TraceCapture.of(signals, repCount.now(), lock.now(), None, cameraReport),
+                      TraceCapture
+                        .of(signals, repCount.now(), lock.now(), None, cameraReport, controlNote, controlsAtSample),
                       capture.set
                     )
                   else capture.set(CaptureState.Failed("nothing recorded yet"))

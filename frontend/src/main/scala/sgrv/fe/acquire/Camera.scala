@@ -18,6 +18,13 @@ private[fe] enum CameraState:
 /** A camera control that can be held still, paired with the setting that says where to hold it. */
 private[acquire] final case class ManualControl(mode: String, setting: String)
 
+/** What became of the attempt to hold a camera's controls still, and why. */
+private[fe] final case class ControlOutcome(
+    reason: String,
+    held: Seq[String] = Seq.empty,
+    skipped: Seq[String] = Seq.empty
+)
+
 private[fe] object Camera:
   /** How many pixels a frame may carry. A budget rather than a fixed size: the shape is left to the device.
     *
@@ -55,7 +62,13 @@ private[fe] object Camera:
   private[acquire] def supported: Boolean =
     !js.isUndefined(dom.window.navigator.asInstanceOf[js.Dynamic].mediaDevices)
 
-  def start(deviceId: Option[String] = None): Future[dom.MediaStream] =
+  def start(
+      deviceId: Option[String] = None,
+      // Called once the controls have settled, or once it is known they will not be touched. The caller can then
+      // note when that happened against its own sample count, which is what puts the answer and the signal that
+      // provoked the question in the same recording.
+      onControls: ControlOutcome => Unit = _ => ()
+  ): Future[dom.MediaStream] =
     if !supported then Future.failed(CameraUnsupported())
     else
       dom.window.navigator.mediaDevices
@@ -64,7 +77,7 @@ private[fe] object Camera:
         .flatMap: stream =>
           fitToDevice(stream).map: _ =>
             // Deliberately not awaited: the preview should appear at once, and the controls settle behind it.
-            holdControlsStill(stream)
+            holdControlsStill(stream).foreach(onControls)
             stream
 
   /** The camera controls that must not move while a session runs.
@@ -90,6 +103,16 @@ private[fe] object Camera:
     * often far too dark or too bright to see anything in. A moment of automatic first gives it something worth holding.
     */
   private[acquire] val settleBeforeLockMillis = 1500
+
+  /** Whether to hold the controls still at all. Off, pending evidence that it helps.
+    *
+    * It was added to stop the camera re-metering on the movement being counted, and a phone then began darkening badly
+    * a second or so after opening — which looked exactly like this feature misfiring. It was not: a captured trace
+    * showed the browser exposing neither `getCapabilities` nor `getSettings` on that device, so none of this ran, and
+    * the darkening happened anyway. Rather than reason further about a suspect that cannot act, it is switched off so
+    * the same test says plainly whether it was ever involved.
+    */
+  private[acquire] val holdControls = false
 
   /** Which of the wanted controls this camera says it can hold manually.
     *
@@ -131,26 +154,35 @@ private[fe] object Camera:
     stream
       .getVideoTracks()
       .headOption
-      .flatMap: track =>
+      .map: track =>
         val dynamic = track.asInstanceOf[js.Dynamic]
-        Option.when(!js.isUndefined(dynamic.getCapabilities) && !js.isUndefined(dynamic.getSettings)):
-          val described = js.Dynamic.literal(
-            capabilities = dynamic.getCapabilities(),
-            settings = dynamic.getSettings()
-          )
-          js.JSON.stringify(described)
+        val hasCapabilities = !js.isUndefined(dynamic.getCapabilities)
+        val hasSettings = !js.isUndefined(dynamic.getSettings)
+        val described = js.Dynamic.literal()
+        // Recorded whether or not they exist. An absent field used to mean either "old build" or "browser does not
+        // offer this", and being unable to tell those apart is what sent two diagnoses in the wrong direction.
+        described.updateDynamic("hasGetCapabilities")(hasCapabilities)
+        described.updateDynamic("hasGetSettings")(hasSettings)
+        if hasCapabilities then described.updateDynamic("capabilities")(dynamic.getCapabilities())
+        if hasSettings then described.updateDynamic("settings")(dynamic.getSettings())
+        try js.JSON.stringify(described)
+        catch case _: Throwable => s"""{"hasGetCapabilities":$hasCapabilities,"hasGetSettings":$hasSettings}"""
 
   /** Holds each supported control still, once the camera has had a moment to meter.
     *
     * Best effort throughout, and one control at a time: a camera willing to hold exposure but not focus should still
     * hold exposure, and a browser supporting none of this keeps working exactly as it did.
     */
-  private def holdControlsStill(stream: dom.MediaStream): Future[Seq[String]] =
+  private def holdControlsStill(stream: dom.MediaStream): Future[ControlOutcome] =
     stream.getVideoTracks().headOption match
-      case None        => Future.successful(Seq.empty)
-      case Some(track) =>
+      case None               => Future.successful(ControlOutcome("no video track"))
+      case _ if !holdControls => Future.successful(ControlOutcome("switched off"))
+      case Some(track)        =>
         val dynamic = track.asInstanceOf[js.Dynamic]
-        if js.isUndefined(dynamic.getCapabilities) then Future.successful(Seq.empty)
+        if js.isUndefined(dynamic.getCapabilities) then
+          Future.successful(ControlOutcome("this browser does not report camera capabilities"))
+        else if js.isUndefined(dynamic.getSettings) then
+          Future.successful(ControlOutcome("this browser does not report camera settings"))
         else
           after(settleBeforeLockMillis).flatMap: _ =>
             // Read after the settle, not before: what gets pinned should be what automatic metering arrived at.
@@ -172,11 +204,9 @@ private[fe] object Camera:
                     .map(_ => locked :+ mode)
                     .recover { case _ => locked }
               .map: locked =>
-                // Reported because the difference is visible on the traces: with the controls held, the quadrants
-                // the movement never enters should go quiet.
                 if locked.isEmpty then dom.console.info("The camera holds none of its controls still")
                 else dom.console.info(s"Camera controls held still: ${locked.mkString(", ")}")
-                locked
+                ControlOutcome("attempted", locked, skipped)
 
   private def after(millis: Int): Future[Unit] =
     val settled = scala.concurrent.Promise[Unit]()

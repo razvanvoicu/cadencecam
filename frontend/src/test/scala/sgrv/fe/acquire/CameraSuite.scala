@@ -151,3 +151,9 @@ class CameraSuite extends FunSuite:
         "focusMode" -> "focusDistance"
       )
     )
+
+  test("holding the controls still is switched off, pending evidence that it helps"):
+    // It was suspected of darkening a phone's picture and cleared by measurement: that device exposed neither
+    // getCapabilities nor getSettings, so none of this could run, and the darkening happened anyway. Off until a
+    // trace shows it was ever involved.
+    assert(!Camera.holdControls)

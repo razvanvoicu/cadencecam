@@ -48,3 +48,31 @@ class TraceCaptureSuite extends FunSuite:
     val trace = TraceCapture.of(filled(20), 7, LockState.Locked(Quadrant.Q1, Quadrant.Q3, 1.25), Some("test"))
 
     assertEquals(trace.toJson.fromJson[SignalTrace], Right(trace))
+
+  test("a trace says what became of the camera's controls, in words"):
+    assertEquals(TraceCapture.describe(ControlOutcome("switched off")), "switched off; held: none")
+    assertEquals(
+      TraceCapture.describe(ControlOutcome("this browser does not report camera capabilities")),
+      "this browser does not report camera capabilities; held: none"
+    )
+    assertEquals(
+      TraceCapture.describe(ControlOutcome("attempted", Seq("exposureMode"), Seq("focusMode"))),
+      "attempted; held: exposureMode, left automatic: focusMode"
+    )
+
+  test("a trace records the sample at which the controls settled"):
+    // In the same record as the signal, so the picture changing and the controls settling can be read against each
+    // other rather than against two clocks.
+    val trace = TraceCapture.of(
+      filled(40),
+      reps = 0,
+      LockState.Searching,
+      note = None,
+      camera = Some("""{"hasGetCapabilities":false}"""),
+      controls = Some("switched off; held: none"),
+      controlsAtSample = Some(15)
+    )
+
+    assertEquals(trace.controlsAtSample, Some(15))
+    assertEquals(trace.controls, Some("switched off; held: none"))
+    assertEquals(trace.camera, Some("""{"hasGetCapabilities":false}"""))

@@ -72,7 +72,14 @@ final case class SignalTrace(
       * Carried because these differ by device in ways that decide whether the controls can be held still at all, and
       * there is no other way to read them off a phone.
       */
-    camera: Option[String] = None
+    camera: Option[String] = None,
+    /** What became of the attempt to hold the camera's controls still, and at which sample it was settled.
+      *
+      * In the same record as the signal it may have disturbed, so the two can be read against each other instead of
+      * against a wall-clock timestamp and a hopeful memory of when the picture changed.
+      */
+    controls: Option[String] = None,
+    controlsAtSample: Option[Int] = None
 )
 
 object SignalTrace:
