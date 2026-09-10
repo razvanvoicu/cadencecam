@@ -121,23 +121,26 @@ class CameraSuite extends FunSuite:
     assert(Camera.settleBeforeLockMillis >= 500 && Camera.settleBeforeLockMillis <= 3000)
 
   test("holding a control still carries the value it settled on, not only the mode"):
-    // Without the value, "manual" tells the camera to stop deciding without saying what to do instead, and what it
-    // then picks is nothing in particular -- which is how a correct exposure turns dark a second after opening.
     val settled = js.Dynamic.literal("exposureTime" -> 312.5, "colorTemperature" -> 4200)
 
-    val exposure = Camera.pinning(ManualControl("exposureMode", "exposureTime"), settled)
+    val exposure = Camera.pinning(ManualControl("exposureMode", "exposureTime"), settled).get
 
     assertEquals(exposure.exposureMode.asInstanceOf[String], "manual")
     assertEquals(exposure.exposureTime.asInstanceOf[Double], 312.5)
 
-  test("a control the camera reports no value for is asked only for the mode"):
-    // Better to hand over a mode alone than to invent a number for a setting this camera never mentioned.
+  test("a control the camera reports no value for is left automatic rather than pinned to nothing"):
+    // Cameras advertise a manual mode while reporting no current value for it, and asking for the mode alone tells
+    // the camera to stop deciding without saying what to do instead. What it then picks is nothing in particular:
+    // this is the case that turned a correct exposure dark a second after opening.
     val settled = js.Dynamic.literal("exposureTime" -> 312.5)
 
-    val focus = Camera.pinning(ManualControl("focusMode", "focusDistance"), settled)
+    assertEquals(Camera.pinning(ManualControl("focusMode", "focusDistance"), settled), None)
+    assertEquals(Camera.pinning(ManualControl("whiteBalanceMode", "colorTemperature"), settled), None)
 
-    assertEquals(focus.focusMode.asInstanceOf[String], "manual")
-    assert(js.isUndefined(focus.focusDistance), "a value was invented for a setting the camera never reported")
+  test("a camera reporting no settings at all is left entirely alone"):
+    val nothing = js.Dynamic.literal()
+
+    assert(Camera.manualControls.forall(control => Camera.pinning(control, nothing).isEmpty))
 
   test("each control is pinned by its own setting"):
     assertEquals(

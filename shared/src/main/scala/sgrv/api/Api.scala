@@ -66,7 +66,13 @@ final case class SignalTrace(
     samples: Map[String, Seq[Double]],
     reps: Int,
     lock: String,
-    note: Option[String] = None
+    note: Option[String] = None,
+    /** What the camera said it could do and where it sat, as JSON. Absent when the browser reports neither.
+      *
+      * Carried because these differ by device in ways that decide whether the controls can be held still at all, and
+      * there is no other way to read them off a phone.
+      */
+    camera: Option[String] = None
 )
 
 object SignalTrace:

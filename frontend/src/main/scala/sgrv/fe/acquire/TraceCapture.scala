@@ -37,6 +37,7 @@ private[fe] object TraceCapture:
       reps: Int,
       lock: LockState,
       note: Option[String],
+      camera: Option[String] = None,
       // The rate belongs to the detector, so a recording is stamped with it from there rather than from the view.
       sampleRateHz: Double = DetectorSettings().sampleRateHz
   ): SignalTrace =
@@ -45,7 +46,8 @@ private[fe] object TraceCapture:
       samples = signals.window(signals.capacity).map((quadrant, values) => quadrant.toString -> values),
       reps = reps,
       lock = describe(lock),
-      note = note.map(_.trim).filter(_.nonEmpty)
+      note = note.map(_.trim).filter(_.nonEmpty),
+      camera = camera
     )
 
   private[acquire] def describe(lock: LockState): String = lock match

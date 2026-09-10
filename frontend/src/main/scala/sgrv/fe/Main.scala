@@ -203,6 +203,8 @@ object Main:
       // arrives to a dead view, starts a sampler nobody stops, and that sampler goes on writing the stored count
       // from behind whatever the user is actually looking at.
       var live = true
+      // Captured when the camera opens, so a trace can say what this device's camera reported about itself.
+      var cameraReport = Option.empty[String]
       var stream: Option[dom.MediaStream] = None
       var sampler: Option[FrameSampler] = None
 
@@ -288,6 +290,7 @@ object Main:
                 Camera.stop(opened)
               case Success(opened) =>
                 stream = Some(opened)
+                cameraReport = Camera.report(opened)
                 val element = video.ref
                 prepare(element)
                 element.asInstanceOf[js.Dynamic].srcObject = opened.asInstanceOf[js.Any]
@@ -481,7 +484,7 @@ object Main:
                   if TraceCapture.worthSending(signals) then
                     TraceCapture.send(
                       http,
-                      TraceCapture.of(signals, repCount.now(), lock.now(), None),
+                      TraceCapture.of(signals, repCount.now(), lock.now(), None, cameraReport),
                       capture.set
                     )
                   else capture.set(CaptureState.Failed("nothing recorded yet"))

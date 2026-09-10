@@ -104,19 +104,41 @@ private[fe] object Camera:
       js.Dynamic.global.Array.isArray(modes).asInstanceOf[Boolean] &&
       modes.asInstanceOf[js.Array[Any]].exists(_ == "manual")
 
-  /** What to send to hold one control where it currently sits.
+  /** What to send to hold one control where it currently sits, or nothing when it cannot be held there.
     *
-    * The mode alone is not enough. "Manual" means the camera stops deciding and uses the value it is given, so a
-    * request carrying no value leaves it to choose one, and what it chooses is nothing in particular — which is how a
-    * correctly exposed picture turns dark a second after opening. Reading the settled automatic value and sending it
-    * back alongside the mode is what makes "manual" mean "stay as you are".
+    * The mode alone is worse than useless. "Manual" tells the camera to stop deciding, and a request carrying no value
+    * does not say what to do instead, so the camera chooses — and what it chooses is nothing in particular. That is how
+    * a correctly exposed picture turns dark a second after opening.
+    *
+    * Cameras commonly advertise a manual mode in their capabilities while reporting no current value for it in their
+    * settings, which is exactly the case that goes wrong. So a control whose value cannot be read is left alone: an
+    * automatic exposure that drifts is a nuisance, an exposure pinned to a number nobody chose is unusable.
     */
-  private[acquire] def pinning(control: ManualControl, settings: js.Dynamic): js.Dynamic =
-    val wanted = js.Dynamic.literal()
-    wanted.updateDynamic(control.mode)("manual")
+  private[acquire] def pinning(control: ManualControl, settings: js.Dynamic): Option[js.Dynamic] =
     val current = settings.selectDynamic(control.setting)
-    if !js.isUndefined(current) && current != null then wanted.updateDynamic(control.setting)(current)
-    wanted
+    Option.when(!js.isUndefined(current) && current != null):
+      val wanted = js.Dynamic.literal()
+      wanted.updateDynamic(control.mode)("manual")
+      wanted.updateDynamic(control.setting)(current)
+      wanted
+
+  /** What this camera says it can do and where it currently sits, as JSON.
+    *
+    * Carried on a captured trace, because these differ by device in ways that decide whether holding the controls still
+    * works at all, and reading them off a phone any other way is guesswork.
+    */
+  private[fe] def report(stream: dom.MediaStream): Option[String] =
+    stream
+      .getVideoTracks()
+      .headOption
+      .flatMap: track =>
+        val dynamic = track.asInstanceOf[js.Dynamic]
+        Option.when(!js.isUndefined(dynamic.getCapabilities) && !js.isUndefined(dynamic.getSettings)):
+          val described = js.Dynamic.literal(
+            capabilities = dynamic.getCapabilities(),
+            settings = dynamic.getSettings()
+          )
+          js.JSON.stringify(described)
 
   /** Holds each supported control still, once the camera has had a moment to meter.
     *
@@ -133,17 +155,21 @@ private[fe] object Camera:
           after(settleBeforeLockMillis).flatMap: _ =>
             // Read after the settle, not before: what gets pinned should be what automatic metering arrived at.
             val settled = dynamic.getSettings()
-            manualCapable(dynamic.getCapabilities())
-              .foldLeft(Future.successful(Seq.empty[String])): (earlier, control) =>
+            val capable = manualCapable(dynamic.getCapabilities())
+            val skipped = capable.filter(control => pinning(control, settled).isEmpty).map(_.mode)
+            if skipped.nonEmpty then
+              dom.console.info(s"Left automatic, having no value to hold them at: ${skipped.mkString(", ")}")
+            capable
+              .flatMap(control => pinning(control, settled).map(control.mode -> _))
+              .foldLeft(Future.successful(Seq.empty[String])): (earlier, pinned) =>
+                val (mode, wanted) = pinned
                 earlier.flatMap: locked =>
                   track
                     .applyConstraints(
-                      js.Dynamic
-                        .literal(advanced = js.Array(pinning(control, settled)))
-                        .asInstanceOf[dom.MediaTrackConstraints]
+                      js.Dynamic.literal(advanced = js.Array(wanted)).asInstanceOf[dom.MediaTrackConstraints]
                     )
                     .toFuture
-                    .map(_ => locked :+ control.mode)
+                    .map(_ => locked :+ mode)
                     .recover { case _ => locked }
               .map: locked =>
                 // Reported because the difference is visible on the traces: with the controls held, the quadrants
