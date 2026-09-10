@@ -22,8 +22,8 @@ private[fe] object Palette:
   val WhiteOnBlack = Palette("white on black", "#ffffff", "#000000")
   val BlackOnWhite = Palette("black on white", "#000000", "#ffffff")
 
-  /** Only the two extremes for now. The greys, which are where contrast starts to matter, come once these have been
-    * run and there is something to compare them against.
+  /** Only the two extremes for now. The greys, which are where contrast starts to matter, come once these have been run
+    * and there is something to compare them against.
     */
   val All = Seq(WhiteOnBlack, BlackOnWhite)
 
@@ -41,18 +41,30 @@ private[fe] object TestPlan:
 
   /** How far the counter may lag or lead before it is worth recording, in seconds of movement.
     *
-    * In seconds rather than in reps because the same shortfall means different things at different cadences: one
-    * rep behind at half a hertz is two seconds, and at two hertz it is half of one.
+    * In seconds rather than in reps because the same shortfall means different things at different cadences: one rep
+    * behind at half a hertz is two seconds, and at two hertz it is half of one.
     */
   val ToleranceSeconds = 2.0
 
-  val DefaultReps = 30
-  val DefaultCadence: Cadence = Cadence(hz = 1.0, swingHz = 0.2, swingEveryHz = 0.05)
+  /** Long enough for a stall to happen, be noticed, and recover inside a single test.
+    *
+    * Thirty reps often ended before the interesting part: about half of them failed, and which half varied between
+    * runs, which is the signature of something intermittent rather than of a figure the detector cannot see. A hundred
+    * gives the intermittent thing room to show itself more than once per test.
+    */
+  val DefaultReps = 100
+
+  /** A little slower than before, and still comfortably inside the band the detector passes.
+    *
+    * The swing takes the instantaneous frequency down to 0.6Hz, against a low corner of 0.5Hz -- close enough that
+    * lowering the average further would start attenuating the movement rather than testing the counter.
+    */
+  val DefaultCadence: Cadence = Cadence(hz = 0.8, swingHz = 0.2, swingEveryHz = 0.05)
 
   /** The suite: every figure in every palette, at one cadence.
     *
-    * Deliberately small. The point of the first run is to find out which combinations the detector struggles with,
-    * and a suite large enough to be informative about everything would take longer to run than anyone will watch.
+    * Deliberately small. The point of the first run is to find out which combinations the detector struggles with, and
+    * a suite large enough to be informative about everything would take longer to run than anyone will watch.
     */
   def standard(reps: Int = DefaultReps, cadence: Cadence = DefaultCadence): Seq[TestCase] =
     for

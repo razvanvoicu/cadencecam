@@ -5,9 +5,9 @@ import scala.scalajs.js
 
 /** Where a suite has got to.
   *
-  * `Pausing` is not idleness. The detector confirms a rep from samples that follow it and reports over a socket, so
-  * the last reps of a set arrive after the movement has stopped; a test scored the instant the animation ends would
-  * mark those as missing. The pause is part of the measurement.
+  * `Pausing` is not idleness. The detector confirms a rep from samples that follow it and reports over a socket, so the
+  * last reps of a set arrive after the movement has stopped; a test scored the instant the animation ends would mark
+  * those as missing. The pause is part of the measurement.
   */
 private[fe] enum Stage:
   case Idle
@@ -17,9 +17,9 @@ private[fe] enum Stage:
   /** Between one test being scored and the next beginning.
     *
     * A state of its own rather than a gap. Scoring happens on the frame that finds the pause over, and the next test
-    * does not begin for another second and a half; without somewhere else to be, every frame in between would find
-    * the pause over again and score the same test repeatedly -- which it did, ninety times, along with ninety resets
-    * sent to the other device.
+    * does not begin for another second and a half; without somewhere else to be, every frame in between would find the
+    * pause over again and score the same test repeatedly -- which it did, ninety times, along with ninety resets sent
+    * to the other device.
     */
   case Settling(justFinished: Int)
   case Finished
@@ -28,21 +28,21 @@ private[fe] object Stage:
   /** The stage a frame at `now` leaves behind, and the test this frame scores, if any.
     *
     * Pure, and separated from the view, because this is where both of the bench's bugs have been. Scoring only
-    * schedules the next test -- a second and a half later, so the reset can reach the other device -- and a stage
-    * that stayed on `Pausing` in the meantime would find the pause over on every frame and score the same test
-    * again, sixty times a second. Leaving immediately is the whole point, and it is asserted rather than assumed.
+    * schedules the next test -- a second and a half later, so the reset can reach the other device -- and a stage that
+    * stayed on `Pausing` in the meantime would find the pause over on every frame and score the same test again, sixty
+    * times a second. Leaving immediately is the whole point, and it is asserted rather than assumed.
     */
   def onFrame(stage: Stage, now: Double): (Stage, Option[(Int, Int)]) = stage match
     case Pausing(index, until, expected) if now >= until => (Settling(index), Some(index -> expected))
-    case other                                          => (other, None)
+    case other                                           => (other, None)
 
 private[fe] final case class Outcome(test: String, reference: Int, acquired: Int, passed: Boolean)
 
 /** Draws the moving figure of a test onto a canvas.
   *
-  * Everything is in fractions of the canvas, so what the camera sees depends on how the screen is framed rather than
-  * on the pixel size of any element -- and the quadrants the trajectories are described in are the quadrants the
-  * detector will divide its own view into, provided the camera frames this canvas and not the whole page.
+  * Everything is in fractions of the canvas, so what the camera sees depends on how the screen is framed rather than on
+  * the pixel size of any element -- and the quadrants the trajectories are described in are the quadrants the detector
+  * will divide its own view into, provided the camera frames this canvas and not the whole page.
   */
 private[fe] object Painter:
   def draw(canvas: dom.HTMLCanvasElement, test: TestCase, phase: Double): Unit =

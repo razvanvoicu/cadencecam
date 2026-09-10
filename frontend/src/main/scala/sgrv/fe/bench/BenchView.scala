@@ -14,11 +14,11 @@ import scala.scalajs.js
   *
   * The point is a known truth. Everything measured so far has been measured against a synthetic signal invented to
   * match a theory, or against a mechanical counter held in a hand; both have been wrong. This shows a movement whose
-  * rep count is exact by construction, and compares the detector's answer against it continuously rather than only
-  * at the end.
+  * rep count is exact by construction, and compares the detector's answer against it continuously rather than only at
+  * the end.
   *
-  * To the backend it is an ordinary dashboard: it watches the same readings and sends the same commands. It runs on
-  * a desktop screen with the acquiring device on a tripod pointed at the canvas.
+  * To the backend it is an ordinary dashboard: it watches the same readings and sends the same commands. It runs on a
+  * desktop screen with the acquiring device on a tripod pointed at the canvas.
   */
 private[fe] object BenchView:
 
@@ -125,18 +125,20 @@ private[fe] object BenchView:
           lastComparison = comparison
           reference.set(comparison.reference)
           withinTolerance.set(comparison.withinTolerance)
-          stall.observe(comparison, elapsed).foreach:
-            case StallWatch.Stalled(behind) =>
-              report("stalled", elapsed, Some(f"counter stopped while $behind%.1fs behind"))
-            case StallWatch.Recovered(seconds, during, credited, shortfall) =>
-              report(
-                "recovered",
-                elapsed,
-                Some(
-                  f"stalled ${seconds}%.1fs; $during reps happened, $credited credited, " +
-                    (if shortfall == 0 then "none lost" else s"$shortfall lost")
+          stall
+            .observe(comparison, elapsed)
+            .foreach:
+              case StallWatch.Stalled(behind) =>
+                report("stalled", elapsed, Some(f"counter stopped while $behind%.1fs behind"))
+              case StallWatch.Recovered(seconds, during, credited, shortfall) =>
+                report(
+                  "recovered",
+                  elapsed,
+                  Some(
+                    f"stalled ${seconds}%.1fs; $during reps happened, $credited credited, " +
+                      (if shortfall == 0 then "none lost" else s"$shortfall lost")
+                  )
                 )
-              )
           // Reported on the edge rather than every frame: sixty identical lines a second would bury the moment it
           // went wrong, which is the thing being looked for.
           if comparison.withinTolerance != wasWithin then
@@ -176,9 +178,9 @@ private[fe] object BenchView:
 
     /** The five figures, each against its own label.
       *
-      * Laid out rather than run together in a sentence: "18 reps shown, 1 completed, 1 passed" invites the last
-      * three to be read as reps, which is the wrong unit for all of them. Completed, passed and failed count whole
-      * tests; only one line here counts reps, and it says so.
+      * Laid out rather than run together in a sentence: "18 reps shown, 1 completed, 1 passed" invites the last three
+      * to be read as reps, which is the wrong unit for all of them. Completed, passed and failed count whole tests;
+      * only one line here counts reps, and it says so.
       */
     val stats = outcomes.signal
       .combineWith(stage.signal, reference.signal)

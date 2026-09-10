@@ -9,9 +9,9 @@ private[fe] object Discrepancy:
 
   /** Compares the two counts in seconds rather than in reps.
     *
-    * A shortfall of one rep means something different at every cadence -- two seconds at half a hertz, half a second
-    * at two -- so a tolerance expressed in reps would be strict in slow tests and lax in fast ones. Measuring how
-    * long the counter has been wrong makes one threshold mean the same thing everywhere.
+    * A shortfall of one rep means something different at every cadence -- two seconds at half a hertz, half a second at
+    * two -- so a tolerance expressed in reps would be strict in slow tests and lax in fast ones. Measuring how long the
+    * counter has been wrong makes one threshold mean the same thing everywhere.
     *
     * Positive lag is behind: the reference passed this count some seconds ago and the counter has not caught up.
     * Negative is ahead: the counter has claimed a rep that will not finish for some seconds yet.

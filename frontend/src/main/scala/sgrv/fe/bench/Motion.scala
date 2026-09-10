@@ -16,8 +16,8 @@ private[fe] final case class Cadence(hz: Double, swingHz: Double = 0.2, swingEve
   /** Cycles completed by a given moment, as a real number.
     *
     * The integral of the instantaneous frequency rather than `hz * t`: with a varying frequency those differ, and
-    * taking the easy one would put the reference count out of step with what is actually on screen — which would
-    * then be reported as the detector's error rather than the harness's.
+    * taking the easy one would put the reference count out of step with what is actually on screen — which would then
+    * be reported as the detector's error rather than the harness's.
     */
   def cyclesBy(seconds: Double): Double =
     // Floored at the start of the movement. Nothing before it has happened yet, and a negative elapsed time -- which
@@ -37,8 +37,8 @@ private[fe] final case class Cadence(hz: Double, swingHz: Double = 0.2, swingEve
   /** When the nth cycle finishes, found by bisection.
     *
     * `cyclesBy` is monotonic because the swing is required to stay below the cadence, so a bisection converges and
-    * there is no closed form to prefer. Used to say how far behind the counter is in seconds rather than in reps,
-    * which is the unit a tolerance about lag belongs in.
+    * there is no closed form to prefer. Used to say how far behind the counter is in seconds rather than in reps, which
+    * is the unit a tolerance about lag belongs in.
     */
   def timeOfRep(n: Int): Double =
     if n <= 0 then 0.0
@@ -54,9 +54,9 @@ private[fe] final case class Cadence(hz: Double, swingHz: Double = 0.2, swingEve
 
 /** Where the moving shape is at a given phase, in fractions of the drawing area.
   *
-  * Coordinates run 0 to 1 with the origin at the top left, matching a canvas rather than the mathematical quadrants
-  * the detector names. The quadrant centres below are stated in those terms so the trajectories can be described the
-  * way the exercises they stand in for are.
+  * Coordinates run 0 to 1 with the origin at the top left, matching a canvas rather than the mathematical quadrants the
+  * detector names. The quadrant centres below are stated in those terms so the trajectories can be described the way
+  * the exercises they stand in for are.
   */
 private[fe] object Trajectory:
   /** Centres of the four quadrants as the detector numbers them: Q2 Q1 across the top, Q3 Q4 across the bottom. */
@@ -76,8 +76,8 @@ private[fe] object Trajectory:
     *
     * A quarter arc rather than a straight line between the two. Q4 and Q2 are each the same distance from Q3, so
     * sweeping the angle keeps the bar the same length throughout -- which is what a limb does. Interpolating between
-    * the endpoints instead would trace the chord, and the bar would shorten to seven tenths of its length at
-    * mid-swing and grow back: a change in size where the exercise has none, and one the detector would see.
+    * the endpoints instead would trace the chord, and the bar would shorten to seven tenths of its length at mid-swing
+    * and grow back: a change in size where the exercise has none, and one the detector would see.
     *
     * A cycle is out and back, so the end is at Q4 at phase zero, at Q2 halfway, and back at Q4 by the end.
     */

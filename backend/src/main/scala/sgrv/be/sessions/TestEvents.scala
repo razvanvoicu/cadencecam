@@ -34,7 +34,9 @@ private[sessions] object TestEventSchema:
 private[sessions] final class TestEventStore(firestore: Firestore):
   def record(event: TestEvent, email: String, at: Instant): zio.Task[Unit] =
     GoogleFuture
-      .fromApiFuture(firestore.collection(TestEventSchema.collection).document().create(fields(event, email, at).asJava))
+      .fromApiFuture(
+        firestore.collection(TestEventSchema.collection).document().create(fields(event, email, at).asJava)
+      )
       .unit
 
   private def fields(event: TestEvent, email: String, at: Instant): Map[String, AnyRef] =

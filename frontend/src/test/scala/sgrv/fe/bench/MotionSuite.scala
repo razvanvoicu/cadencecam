@@ -101,3 +101,24 @@ class MotionSuite extends FunSuite:
     assertEqualsDouble(steady.cyclesBy(-5.0), 0.0, 1e-9)
     assert(steady.repsBy(-1.7e12) >= 0, "a count must never be negative")
 
+  test("the movement stays inside the band the detector passes, at every point of its swing"):
+    // The harness must test the counter, not the filter. If the cadence dipped below the band-pass's low corner the
+    // movement would be attenuated on the way in, and a miss would say nothing about counting.
+    val detector = sgrv.fe.acquire.DetectorSettings()
+    val cadence = TestPlan.DefaultCadence
+    val extremes = (0 to 2000).map(step => cadence.instantaneousHz(step / 10.0))
+
+    assert(extremes.min > detector.lowHz, s"the movement slows to ${extremes.min}Hz, below ${detector.lowHz}Hz")
+    assert(extremes.max < detector.highHz, s"the movement reaches ${extremes.max}Hz, above ${detector.highHz}Hz")
+
+  test("a test is long enough for something intermittent to show itself"):
+    // Half the tests failed at thirty reps, and a different half each run: that is intermittency, and it needs room
+    // to happen more than once within a single test.
+    assert(TestPlan.DefaultReps >= 100, s"${TestPlan.DefaultReps} reps is too short to catch a stall and a recovery")
+
+  test("a suite is long, and the arithmetic says so plainly"):
+    val perTest = TestPlan.DefaultReps / TestPlan.DefaultCadence.hz + TestPlan.PauseSeconds
+    val whole = perTest * TestPlan.standard().size
+
+    assertEqualsDouble(perTest, 145.0, 1.0)
+    assert(whole > 800, "a suite that short would not be the one described")
