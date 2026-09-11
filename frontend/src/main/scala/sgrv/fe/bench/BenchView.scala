@@ -26,6 +26,9 @@ private[fe] object BenchView:
     val plan = TestPlan.standard()
     val runId = f"${js.Date.now().toLong}%d-${(js.Math.random() * 4096).toInt}%03x"
 
+    /** Written onto the recording, so it names the run that produced it rather than only the moment it arrived. */
+    val suiteDescription = plan.map(_.name).mkString(" then ")
+
     val stage = Var[Stage](Stage.Idle)
     val acquired = Var(0)
     val reference = Var(0)
@@ -86,7 +89,9 @@ private[fe] object BenchView:
         // The recording is the point of the run, so it is taken without anyone having to remember to. The buffer
         // holds six minutes and a suite takes a little over five, so this one capture carries both tests and the
         // break between them -- the signal that counted and the signal that did not, under the same conditions.
-        val _ = relay.send(LiveCommand.CaptureTrace.toJson)
+        // Ascribed, or the encoder resolves for the single case rather than for the command as a whole.
+        val capture: LiveCommand = LiveCommand.CaptureTrace(Some(s"bench $runId: $suiteDescription"))
+        val _ = relay.send(capture.toJson)
         report("trace-requested", 0.0, Some(f"suite ran ${TestPlan.durationSeconds(plan)}%.0fs"))
       else
         acquired.set(0)

@@ -33,7 +33,14 @@ object LiveState:
   */
 enum LiveCommand:
   case Reset
-  case CaptureTrace
+
+  /** `note` says who asked and why, and ends up on the recording itself.
+    *
+    * Without it a capture is identifiable only by the moment it arrived, which is enough to tell one account's runs
+    * from another's but not one run from the next -- and a recording that cannot be tied to the events logged beside it
+    * is half the evidence.
+    */
+  case CaptureTrace(note: Option[String] = None)
 
 object LiveCommand:
   given JsonCodec[LiveCommand] = DeriveJsonCodec.gen[LiveCommand]

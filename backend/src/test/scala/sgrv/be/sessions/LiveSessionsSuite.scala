@@ -112,7 +112,7 @@ class LiveSessionsSuite extends munit.FunSuite:
     assertEquals(acquirer.texts, List(LiveCommand.Reset.toJson))
 
   test("a command with no acquirer to receive it says so rather than pretending"):
-    val delivered = run(LiveSessions.command(account("alone"), LiveCommand.CaptureTrace))
+    val delivered = run(LiveSessions.command(account("alone"), LiveCommand.CaptureTrace()))
 
     assert(!delivered)
 

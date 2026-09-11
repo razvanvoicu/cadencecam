@@ -256,7 +256,7 @@ object Main:
           div(
             cls := "acquirer-actions",
             cls("open") <-- menuOpen.signal,
-            menuItem("Capture signal trace", () => ask(LiveCommand.CaptureTrace)),
+            menuItem("Capture signal trace", () => ask(LiveCommand.CaptureTrace())),
             menuItem("About", () => openAbout()),
             menuItem("Back", () => show(Screen.Selection)),
             menuItem("Logout", () => logout())
@@ -397,11 +397,11 @@ object Main:
         repCountStore.clear()
         repCount.set(counter.reading.count)
 
-      def captureTrace(): Unit =
+      def captureTrace(note: Option[String] = None): Unit =
         if TraceCapture.worthSending(signals) then
           TraceCapture.send(
             http,
-            TraceCapture.of(signals, repCount.now(), lock.now(), None, cameraReport, controlNote, controlsAtSample),
+            TraceCapture.of(signals, repCount.now(), lock.now(), note, cameraReport, controlNote, controlsAtSample),
             capture.set
           )
         else capture.set(CaptureState.Failed("nothing recorded yet"))
@@ -415,9 +415,9 @@ object Main:
         Live.AcquirerPath,
         text =>
           text.fromJson[LiveCommand] match
-            case Right(LiveCommand.Reset)        => resetCount()
-            case Right(LiveCommand.CaptureTrace) => captureTrace()
-            case Left(details)                   => dom.console.warn(s"Ignoring an unreadable command: $details")
+            case Right(LiveCommand.Reset)              => resetCount()
+            case Right(LiveCommand.CaptureTrace(note)) => captureTrace(note)
+            case Left(details)                         => dom.console.warn(s"Ignoring an unreadable command: $details")
       )
 
       def release(): Unit =
