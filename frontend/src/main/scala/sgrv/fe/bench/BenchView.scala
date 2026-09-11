@@ -160,17 +160,18 @@ private[fe] object BenchView:
           if comparison.reference >= test.reps then
             report("movement-finished", elapsed, Some(s"${test.reps} reps shown"))
             stage.set(Stage.Pausing(index, now + TestPlan.PauseSeconds * 1000, comparison.reference))
-        case Stage.Pausing(index, _, _) =>
-          // Held still, so nothing on screen can be counted while the last reports arrive.
-          Painter.draw(canvas.ref, plan(index), 0.0)
+        case current @ Stage.Pausing(index, _, _) =>
+          // The figure is gone, not merely stopped: a set ends with the weight being put down, and the object
+          // leaving the frame is what gives the last rep the trough that every other rep had.
+          Stage.restingPalette(current, plan).foreach(Painter.clear(canvas.ref, _))
           lastComparison = lastComparison.copy(acquired = acquired.now())
           // The stage moves on first, so this is the only frame that scores this test.
           val (next, scored) = Stage.onFrame(stage.now(), now)
           stage.set(next)
           scored.foreach((finished, expected) => finish(finished, expected))
-        case Stage.Settling(justFinished) =>
-          // Still nothing moving: the reset is travelling to the other device and the next test has not begun.
-          Painter.draw(canvas.ref, plan(justFinished), 0.0)
+        case current @ Stage.Settling(_) =>
+          // Still nothing there: the reset is travelling to the other device and the next test has not begun.
+          Stage.restingPalette(current, plan).foreach(Painter.clear(canvas.ref, _))
         case _ => ()
 
     var running = true

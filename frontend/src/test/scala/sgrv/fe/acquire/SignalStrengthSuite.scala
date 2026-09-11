@@ -60,9 +60,9 @@ class SignalStrengthSuite extends FunSuite:
     val loud = Seq.tabulate(400)(i => 120.0 + 12.0 * math.sin(2 * math.Pi * i / 12.5))
 
     val analysis = RepAnalysis.analyse(loud, Quadrant.Q4, settings)
-    val proms = analysis.peaks.map(i => PeakDetector.prominence(analysis.filtered.drop(settings.settlingSamples),
-      i - settings.settlingSamples)).sorted
+    val proms = analysis.peaks
+      .map(i => PeakDetector.prominence(analysis.filtered.drop(settings.settlingSamples), i - settings.settlingSamples))
+      .sorted
     val expected = proms(proms.size / 2) / settings.prominenceFloor
 
     assertEqualsDouble(analysis.margin.get, expected, 0.01)
-

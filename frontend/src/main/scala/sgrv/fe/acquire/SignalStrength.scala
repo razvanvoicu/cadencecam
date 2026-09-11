@@ -26,9 +26,9 @@ private[fe] object SignalStrength:
   /** Deliberately not called confidence or quality.
     *
     * It says whether the movement is strong enough to be counted, and nothing about whether what is being counted is
-    * exercise. On two of four phones, a camera shaken by typing on the same desk scored above four here while
-    * counting nothing real -- as high as a movement that counted perfectly. Telling those apart needs the quadrants
-    * to be compared with each other, which this does not do, so a word implying trustworthiness would mislead
-    * exactly when it mattered most.
+    * exercise. On two of four phones, a camera shaken by typing on the same desk scored above four here while counting
+    * nothing real -- as high as a movement that counted perfectly. Telling those apart needs the quadrants to be
+    * compared with each other, which this does not do, so a word implying trustworthiness would mislead exactly when it
+    * mattered most.
     */
   val Description = "how far the movement stands above the background"

@@ -36,6 +36,20 @@ private[fe] object Stage:
     case Pausing(index, until, expected) if now >= until => (Settling(index), Some(index -> expected))
     case other                                           => (other, None)
 
+  /** The background to hold once the movement is over, with the figure gone.
+    *
+    * A set ends with the weight being put down, so the object leaves the frame -- and that is what gives the last rep
+    * the trough after it that every other rep had. Holding the figure on screen instead left that peak one-sided, worth
+    * half the prominence of its neighbours, and it went uncounted until the threshold decayed enough to admit it:
+    * twenty seconds on one test and thirty on another, measured from real recordings.
+    *
+    * `None` while the movement is running, when the figure belongs on screen, and before a suite has begun.
+    */
+  def restingPalette(stage: Stage, plan: Seq[TestCase]): Option[Palette] = stage match
+    case Pausing(index, _, _) => plan.lift(index).map(_.palette)
+    case Settling(index)      => plan.lift(index).map(_.palette)
+    case _                    => None
+
 private[fe] final case class Outcome(test: String, reference: Int, acquired: Int, passed: Boolean)
 
 /** Draws the moving figure of a test onto a canvas.
@@ -45,6 +59,20 @@ private[fe] final case class Outcome(test: String, reference: Int, acquired: Int
   * will divide its own view into, provided the camera frames this canvas and not the whole page.
   */
 private[fe] object Painter:
+
+  /** The background alone, with the moving figure gone.
+    *
+    * What a set actually ends with. The exerciser puts the weight down before reaching for the phone, and the object
+    * leaves the frame -- which gives the last rep's peak the trough after it that every other peak has. Holding the
+    * figure on screen instead left that final peak one-sided, worth half the prominence of its neighbours, and it went
+    * uncounted until the threshold decayed enough to admit it: twenty seconds on one test and thirty on another,
+    * measured.
+    */
+  def clear(canvas: dom.HTMLCanvasElement, palette: Palette): Unit =
+    val context = canvas.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D]
+    context.fillStyle = palette.ground
+    context.fillRect(0, 0, canvas.width.toDouble, canvas.height.toDouble)
+
   def draw(canvas: dom.HTMLCanvasElement, test: TestCase, phase: Double): Unit =
     val context = canvas.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D]
     val width = canvas.width.toDouble

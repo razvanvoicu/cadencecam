@@ -38,3 +38,20 @@ class StageSuite extends FunSuite:
 
     others.foreach: stage =>
       assertEquals(Stage.onFrame(stage, 10_000.0), (stage, None), s"$stage scored something")
+
+  private val plan = TestPlan.standard()
+
+  test("once the movement is over the figure leaves the frame"):
+    // A set ends with the weight being put down. Without that, the last rep's peak has no trough after it, is worth
+    // half the prominence of its neighbours, and goes uncounted until the threshold decays enough to admit it --
+    // twenty seconds on one test and thirty on another, measured from real recordings.
+    assertEquals(Stage.restingPalette(Stage.Pausing(0, 1000.0, 100), plan), Some(plan(0).palette))
+    assertEquals(Stage.restingPalette(Stage.Settling(1), plan), Some(plan(1).palette))
+
+  test("while the movement runs the figure belongs on screen"):
+    assertEquals(Stage.restingPalette(Stage.Running(0, 0.0), plan), None)
+    assertEquals(Stage.restingPalette(Stage.Idle, plan), None)
+    assertEquals(Stage.restingPalette(Stage.Finished, plan), None)
+
+  test("a stage naming a test the plan does not have asks for nothing"):
+    assertEquals(Stage.restingPalette(Stage.Settling(plan.size), plan), None)
