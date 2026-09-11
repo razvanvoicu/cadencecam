@@ -11,21 +11,53 @@ private[fe] enum Figure:
   /** A square shuttling between the centres of Q4 and Q1. */
   case Square
 
-/** A foreground against a background.
+/** Which way round the contrast runs: a light object on a dark ground, or a dark object on a light one. */
+private[fe] enum Theme:
+  case Darker
+  case Lighter
+
+/** The two bands the greys are drawn from.
+  *
+  * Black on white was never the thing being tested. It is the easiest signal a camera can be given, and every test run
+  * in it said more about the screen than about the detector; the case that matters is a person in a room, where the
+  * brightest thing in frame is rarely paper-white and the darkest is rarely ink. These two bands sit a quarter of the
+  * scale apart rather than the whole of it, so a test asks whether the movement can be found at ordinary contrast.
+  *
+  * Sixty-four levels each, drawn uniformly, so no single pairing can be tuned for and a suite that passes has passed
+  * across the band rather than at one convenient point in it.
+  */
+private[fe] object Grey:
+  val Dark: Range = 32 to 95
+  val Light: Range = 128 to 191
+
+  /** The level a uniform draw in [0, 1) selects, every level in the range equally likely. */
+  def level(range: Range, draw: Double): Int =
+    require(draw >= 0.0 && draw < 1.0, s"a uniform draw belongs in [0, 1), not $draw")
+    range.start + math.min(range.length - 1, (draw * range.length).toInt)
+
+  /** As CSS, which wants each channel twice over: a grey has all three the same. */
+  def css(level: Int): String = f"#$level%02x$level%02x$level%02x"
+
+/** A foreground against a background, as levels of grey.
   *
   * Contrast is the one thing counting has been observed to depend on, so it is a property of a test rather than a
-  * detail of the page: a suite that only ever ran white on black would say nothing about the case that fails.
+  * detail of the page. The levels are carried alongside the colours because they are what the result has to be read
+  * against: "counted 98" means nothing without knowing it was 141 on 44.
   */
-private[fe] final case class Palette(name: String, ink: String, ground: String)
+private[fe] final case class Palette(inkLevel: Int, groundLevel: Int):
+  def ink: String = Grey.css(inkLevel)
+  def ground: String = Grey.css(groundLevel)
+  def name: String = s"$inkLevel on $groundLevel"
+  def theme: Theme = if inkLevel > groundLevel then Theme.Darker else Theme.Lighter
 
 private[fe] object Palette:
-  val WhiteOnBlack = Palette("white on black", "#ffffff", "#000000")
-  val BlackOnWhite = Palette("black on white", "#000000", "#ffffff")
-
-  /** Only the two extremes for now. The greys, which are where contrast starts to matter, come once these have been run
-    * and there is something to compare them against.
-    */
-  val All = Seq(WhiteOnBlack, BlackOnWhite)
+  /** One palette of the given theme, its two levels drawn independently from their bands. */
+  def drawn(theme: Theme, draw: () => Double): Palette =
+    val dark = Grey.level(Grey.Dark, draw())
+    val light = Grey.level(Grey.Light, draw())
+    theme match
+      case Theme.Darker  => Palette(inkLevel = light, groundLevel = dark)
+      case Theme.Lighter => Palette(inkLevel = dark, groundLevel = light)
 
 /** One test: a figure moving at a cadence, in a palette, for a fixed number of reps. */
 private[fe] final case class TestCase(figure: Figure, palette: Palette, cadence: Cadence, reps: Int):
@@ -61,24 +93,28 @@ private[fe] object TestPlan:
     */
   val DefaultCadence: Cadence = Cadence(hz = 0.8, swingHz = 0.2, swingEveryHz = 0.05)
 
-  /** Two tests: one expected to pass, one expected to fail.
+  /** Every figure in both themes: three darker tests and three lighter ones.
     *
-    * Running every figure in every palette produced failures in about half of them, differing between runs, which says
-    * the trouble is intermittent but not where it lives. Two cases chosen for contrast are worth more: a disc on a
-    * circle in white on black is the arrangement that has counted reliably, and a bar crunching in black on white is
-    * the one predicted to break -- either losing the cadence or counting something quite different.
+    * Back to all six after a spell running only two. The pair was chosen when black on white was failing and white on
+    * black was not, to put the two side by side in one trace; with the contrast now drawn from ordinary greys there is
+    * no known-good and known-bad pairing to narrow down to, and the question is which figures survive which theme.
     *
-    * Together in one suite they land in a single captured trace, so the signal that worked and the signal that did not
-    * can be read side by side out of the same recording, under the same lighting and the same framing. That is what
-    * makes it material for a realistic unit test rather than another anecdote.
+    * Alternating rather than grouped, so the two runs of the same figure sit next to each other and differ only in
+    * which way the contrast points.
     */
-  def standard(reps: Int = DefaultReps, cadence: Cadence = DefaultCadence): Seq[TestCase] =
-    Seq(
-      TestCase(Figure.Disc, Palette.WhiteOnBlack, cadence, reps),
-      TestCase(Figure.Bar, Palette.BlackOnWhite, cadence, reps)
-    )
+  def standard(
+      reps: Int = DefaultReps,
+      cadence: Cadence = DefaultCadence,
+      draw: () => Double = () => scala.util.Random.nextDouble()
+  ): Seq[TestCase] =
+    for
+      figure <- Figure.values.toSeq
+      theme <- Seq(Theme.Darker, Theme.Lighter)
+    yield TestCase(figure, Palette.drawn(theme, draw), cadence, reps)
+
+  /** How long one test runs: its movement and the pause that follows, which is what a single capture has to cover. */
+  def testSeconds(test: TestCase): Double = test.reps / test.cadence.hz + PauseSeconds
 
   /** How long a whole suite runs, including the pause after each test and the settle between them. */
-  def durationSeconds(plan: Seq[TestCase] = standard()): Double =
-    plan.map(test => test.reps / test.cadence.hz + PauseSeconds).sum +
-      (plan.size - 1) * Bench.SettleAfterResetMillis / 1000.0
+  def durationSeconds(plan: Seq[TestCase]): Double =
+    plan.map(testSeconds).sum + (plan.size - 1) * Bench.SettleAfterResetMillis / 1000.0

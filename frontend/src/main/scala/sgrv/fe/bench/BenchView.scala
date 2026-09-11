@@ -172,6 +172,10 @@ private[fe] object BenchView:
         case current @ Stage.Settling(_) =>
           // Still nothing there: the reset is travelling to the other device and the next test has not begun.
           Stage.restingPalette(current, plan).foreach(Painter.clear(canvas.ref, _))
+        case Stage.Idle =>
+          // Something to aim at. The camera is framed before the suite begins, which is exactly when the canvas used
+          // to be blank, and a blank canvas gives nothing to line the quadrants up against.
+          Painter.idle(canvas.ref)
         case _ => ()
 
     var running = true
@@ -239,7 +243,10 @@ private[fe] object BenchView:
           case Stage.Idle =>
             div(
               cls := "bench-overlay",
-              p("Point the acquiring device at this panel, start it counting, then begin."),
+              p(
+                "Line the camera up with the four green crosses, start it counting, then begin. " +
+                  f"${plan.size} tests, about ${TestPlan.durationSeconds(plan) / 60}%.0f minutes."
+              ),
               button(
                 cls := "mode-button",
                 typ := "button",

@@ -458,6 +458,8 @@ button,
   border-radius: 8px;
 }
 
+/* Centred over the canvas but not covering it: the canvas now carries the framing crosses, and a scrim across the
+   whole stage would dim the one thing the camera is being aimed at. The text takes its own plate instead. */
 .bench-overlay {
   position: absolute;
   inset: 0;
@@ -468,10 +470,15 @@ button,
   gap: 1rem;
   padding: 2rem;
   box-sizing: border-box;
-  border-radius: 8px;
-  background: rgb(0 0 0 / 65%);
-  color: #ffffff;
   text-align: center;
+}
+
+.bench-overlay p {
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 80%);
+  color: #ffffff;
 }
 
 .bench-readouts {

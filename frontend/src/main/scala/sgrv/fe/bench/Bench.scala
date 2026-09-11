@@ -72,6 +72,67 @@ private[fe] object Painter:
     val context = canvas.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D]
     context.fillStyle = palette.ground
     context.fillRect(0, 0, canvas.width.toDouble, canvas.height.toDouble)
+    crosses(context, canvas.width.toDouble, canvas.height.toDouble)
+
+  /** Mid grey and the crosses, for aiming the camera before a suite begins.
+    *
+    * Deliberately between the two bands a test draws from, so nothing on screen while framing suggests the theme of the
+    * test that will follow.
+    */
+  def idle(canvas: dom.HTMLCanvasElement): Unit =
+    val context = canvas.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D]
+    context.fillStyle = Grey.css(IdleLevel)
+    context.fillRect(0, 0, canvas.width.toDouble, canvas.height.toDouble)
+    crosses(context, canvas.width.toDouble, canvas.height.toDouble)
+
+  /** The grey shown before a suite starts: between the dark band and the light one, belonging to neither. */
+  val IdleLevel: Int = (Grey.Dark.end + Grey.Light.start) / 2
+
+  /** The colour of the framing crosses. Green because nothing else on this canvas is ever coloured, so they cannot be
+    * mistaken for part of a test -- and a mid green rather than a bright one, so they are easy to see without being the
+    * brightest thing in frame and skewing the exposure the camera settles on.
+    */
+  val CrossColour = "rgb(0, 128, 0)"
+
+  /** A small cross at the centre of each quadrant, to aim the camera by.
+    *
+    * Framing is done by eye and has been the least reliable part of running a suite: the trajectories are described in
+    * quadrants, and they only mean anything if the camera's quadrants are the canvas's. Four marks at the exact centres
+    * make that alignment something to check rather than to judge.
+    *
+    * Static, so they contribute nothing to a band-passed signal; small, so the moving figure passing over one -- which
+    * the bar and the square both do, their endpoints being those very centres -- changes little.
+    */
+  private def crosses(context: dom.CanvasRenderingContext2D, width: Double, height: Double): Unit =
+    val arm = math.min(width, height) * CrossArm
+    context.strokeStyle = CrossColour
+    context.lineWidth = math.max(1.0, math.min(width, height) * 0.008)
+    context.lineCap = "butt"
+    for (centreX, centreY) <- crossCentres(width, height) do
+      context.beginPath()
+      context.moveTo(centreX - arm, centreY)
+      context.lineTo(centreX + arm, centreY)
+      context.moveTo(centreX, centreY - arm)
+      context.lineTo(centreX, centreY + arm)
+      context.stroke()
+
+  /** Half the length of a cross's arms, as a fraction of the field: small enough that the figure passing over one
+    * changes little, large enough to pick out through a camera across a room.
+    */
+  val CrossArm = 0.03
+
+  /** Where the four crosses go, in canvas pixels.
+    *
+    * Separated out because a mark that is not exactly at a quadrant's centre is worse than no mark: it would be
+    * trusted, and the camera would be lined up a little wrong every time. Same centred square field the trajectories
+    * use, so a cross sits where the figure's own endpoints do -- which is what makes the alignment checkable by eye.
+    */
+  private[bench] def crossCentres(width: Double, height: Double): Seq[(Double, Double)] =
+    val field = math.min(width, height)
+    val left = (width - field) / 2
+    val top = (height - field) / 2
+    Seq(Trajectory.Q1, Trajectory.Q2, Trajectory.Q3, Trajectory.Q4).map: (x, y) =>
+      (left + x * field, top + y * field)
 
   def draw(canvas: dom.HTMLCanvasElement, test: TestCase, phase: Double): Unit =
     val context = canvas.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D]
@@ -79,6 +140,8 @@ private[fe] object Painter:
     val height = canvas.height.toDouble
     context.fillStyle = test.palette.ground
     context.fillRect(0, 0, width, height)
+    // Under the figure, so the bar and the square cover the marks they reach rather than being drawn over by them.
+    crosses(context, width, height)
     context.fillStyle = test.palette.ink
     context.strokeStyle = test.palette.ink
 

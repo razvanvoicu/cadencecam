@@ -72,10 +72,11 @@ private[fe] object QuadrantSignals:
     */
   val DetectionWindow = 150
 
-  /** How much is kept, so a captured trace can show a whole test session rather than its last minute.
+  /** How much is kept, so a captured trace can show a whole test session rather than its last few seconds.
     *
-    * Six minutes at ten hertz. Sized from what a bench suite takes -- two hundred-rep tests at 0.8Hz with a pause after
-    * each -- which comes to a little over five, so five minutes of buffer would lose the opening of the first test.
-    * Keeping more costs memory and nothing else, since the detector's window is separate.
+    * Six minutes at ten hertz. Sized from what one bench test takes -- a hundred reps at 0.8Hz and the pause after it,
+    * a little over two and a half minutes -- because a suite now captures and then resets after each test, so a
+    * recording covers one test rather than the whole run. Keeping more costs memory and nothing else, since the
+    * detector's window is separate and much shorter.
     */
   val Recorded = 3600

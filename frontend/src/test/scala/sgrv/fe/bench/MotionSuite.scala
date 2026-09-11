@@ -84,16 +84,58 @@ class MotionSuite extends FunSuite:
     assertEquals(Trajectory.shuttle(0.0), Trajectory.Q4)
     assertEquals(Trajectory.shuttle(math.Pi), Trajectory.Q1)
 
-  test("the suite pairs the arrangement that works with the one expected to fail"):
-    // Chosen for contrast rather than coverage: both land in one captured trace, so the signal that counted and the
-    // signal that did not can be read side by side, under the same lighting and framing.
-    val plan = TestPlan.standard()
+  test("the suite runs every figure in both themes"):
+    val plan = TestPlan.standard(draw = () => 0.5)
 
-    assertEquals(plan.size, 2)
-    assertEquals(plan.head.figure, Figure.Disc)
-    assertEquals(plan.head.palette, Palette.WhiteOnBlack)
-    assertEquals(plan.last.figure, Figure.Bar)
-    assertEquals(plan.last.palette, Palette.BlackOnWhite)
+    assertEquals(plan.size, 6)
+    assertEquals(plan.map(_.figure).distinct.toSet, Figure.values.toSet)
+    assertEquals(plan.count(_.palette.theme == Theme.Darker), 3)
+    assertEquals(plan.count(_.palette.theme == Theme.Lighter), 3)
+    // Alternating, so the two runs of one figure sit next to each other and differ only in which way contrast points.
+    assertEquals(plan.map(_.figure), plan.map(_.figure).grouped(2).flatMap(pair => pair).toSeq)
+    plan.grouped(2).foreach(pair => assertEquals(pair.map(_.figure).distinct.size, 1))
+
+  test("every grey a test can draw comes from its band"):
+    // Not black on white. That was the easiest signal a camera can be given, and passing it said little; these bands
+    // sit a quarter of the scale apart, which is nearer to what a room offers.
+    assertEquals(Grey.Dark, 32 to 95)
+    assertEquals(Grey.Light, 128 to 191)
+    assert(Grey.Dark.end < Grey.Light.start, "the two bands must not overlap")
+
+    val draws = (0 until 1000).map(_ / 1000.0)
+    assert(draws.map(Grey.level(Grey.Dark, _)).forall(Grey.Dark.contains))
+    assert(draws.map(Grey.level(Grey.Light, _)).forall(Grey.Light.contains))
+
+  test("each level in a band is drawn as often as every other"):
+    // Uniform in the sense that matters: sweeping the draw across [0, 1) must visit all sixty-four levels of a band
+    // the same number of times. A draw that rounded rather than floored would visit the two ends half as often, and
+    // the suite would quietly under-test the very edges of the contrast range it exists to cover.
+    for band <- Seq(Grey.Dark, Grey.Light) do
+      val samples = 64 * 100
+      val counts = (0 until samples).map(step => Grey.level(band, step.toDouble / samples)).groupBy(identity)
+      assertEquals(counts.keySet, band.toSet)
+      assertEquals(counts.values.map(_.size).toSet, Set(samples / band.length))
+
+  test("a palette puts the lighter grey where its theme says"):
+    val darker = Palette.drawn(Theme.Darker, draws(0.0, 0.999))
+    assertEquals(darker.inkLevel, Grey.Light.end)
+    assertEquals(darker.groundLevel, Grey.Dark.start)
+    assertEquals(darker.theme, Theme.Darker)
+    assertEquals(darker.ink, "#bfbfbf")
+    assertEquals(darker.ground, "#202020")
+
+    val lighter = Palette.drawn(Theme.Lighter, draws(0.0, 0.999))
+    assertEquals(lighter.inkLevel, Grey.Dark.start)
+    assertEquals(lighter.groundLevel, Grey.Light.end)
+    assertEquals(lighter.theme, Theme.Lighter)
+
+  /** Hands out the given draws in order, so a palette can be pinned down exactly. */
+  private def draws(values: Double*): () => Double =
+    var remaining = values.toList
+    () =>
+      val next = remaining.head
+      remaining = remaining.tail
+      next
 
   test("time before the movement began counts as nothing, not as a large negative number"):
     // Two clocks were mixed once -- an epoch timestamp against the animation frame's milliseconds-since-load -- and
@@ -120,20 +162,23 @@ class MotionSuite extends FunSuite:
     // to happen more than once within a single test.
     assert(TestPlan.DefaultReps >= 100, s"${TestPlan.DefaultReps} reps is too short to catch a stall and a recovery")
 
-  test("the buffer is long enough to hold an entire suite"):
-    // The capture is taken when the suite ends, so anything the buffer has already dropped is lost. A five-minute
-    // buffer would have been twelve seconds short of the whole run -- the final pause is easy to leave out of the
-    // arithmetic, and the opening of the first test is what would have gone.
+  test("the buffer is long enough to hold the test a capture covers"):
+    // One recording per test, asked for during the pause and before the reset that wipes the buffer, so what has to
+    // fit is a single test and its pause rather than the whole run. It was the whole run when a suite filed one
+    // capture at the end, and a suite of six would no longer come close to fitting.
     val recordedSeconds =
       sgrv.fe.acquire.QuadrantSignals.Recorded * sgrv.fe.acquire.FrameSampler.DefaultIntervalMillis / 1000.0
+    val longest = TestPlan.standard(draw = () => 0.5).map(TestPlan.testSeconds).max
 
     assert(
-      recordedSeconds > TestPlan.durationSeconds(),
-      f"a suite runs ${TestPlan.durationSeconds()}%.0fs but only ${recordedSeconds}%.0fs is kept"
+      recordedSeconds > longest,
+      f"a test runs $longest%.0fs but only ${recordedSeconds}%.0fs is kept"
     )
 
-  test("a suite takes about five minutes, and the arithmetic says so plainly"):
-    assertEqualsDouble(TestPlan.durationSeconds(), 311.5, 1.0)
+  test("a suite takes about a quarter of an hour, and the arithmetic says so plainly"):
+    // Six tests rather than two, and worth stating outright: whoever starts a run should know they are committing to
+    // it rather than discovering the length halfway through.
+    assertEqualsDouble(TestPlan.durationSeconds(TestPlan.standard(draw = () => 0.5)), 937.5, 1.0)
 
   test("a capture is asked for before the reset that would wipe what it records"):
     // The reset now clears the signal buffer, so the order is load-bearing rather than incidental: capturing after
@@ -154,3 +199,28 @@ class MotionSuite extends FunSuite:
       sgrv.fe.acquire.QuadrantSignals.Recorded * sgrv.fe.acquire.FrameSampler.DefaultIntervalMillis / 1000.0
 
     assert(recorded > perTest, f"a test runs ${perTest}%.0fs but only ${recorded}%.0fs is kept")
+
+  test("the framing crosses sit exactly at the quadrant centres the figures reach"):
+    // A mark that is nearly right is worse than none: it gets trusted, and the camera is lined up a little wrong
+    // every run. On a square canvas the crosses must land on the same points the bar's tip and the square's stops do.
+    val square = Painter.crossCentres(400, 400)
+
+    assertEquals(square.toSet, Set((300.0, 100.0), (100.0, 100.0), (100.0, 300.0), (300.0, 300.0)))
+    assertEquals(square.size, 4)
+
+  test("the crosses follow the field when the canvas is not square"):
+    // The trajectories live on a centred square field, so the crosses must too. Scaling them by width and height
+    // independently would put them where the figure never goes -- the same mistake that once drew the circle as an
+    // ellipse.
+    val wide = Painter.crossCentres(600, 400)
+
+    // A 400-wide field, centred, so its left edge is at 100.
+    assertEquals(wide.toSet, Set((400.0, 100.0), (200.0, 100.0), (200.0, 300.0), (400.0, 300.0)))
+    val tall = Painter.crossCentres(400, 600)
+    assertEquals(tall.toSet, Set((300.0, 200.0), (100.0, 200.0), (100.0, 400.0), (300.0, 400.0)))
+
+  test("the crosses are green, and small enough not to be the picture"):
+    assertEquals(Painter.CrossColour, "rgb(0, 128, 0)")
+    assert(Painter.CrossArm < 0.05, "a cross this large would be a moving part of the scene, not a mark on it")
+    // Between the bands, so nothing shown while framing hints at the theme of the test about to run.
+    assert(Painter.IdleLevel > Grey.Dark.end && Painter.IdleLevel < Grey.Light.start)
