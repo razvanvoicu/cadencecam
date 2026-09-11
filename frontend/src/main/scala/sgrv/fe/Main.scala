@@ -397,9 +397,8 @@ object Main:
         *
         * A full wipe rather than a zeroed tally. The button exists to discard what accrued while the user was getting
         * into position, and leaving the buffer would keep that movement working against them twice over -- its peaks
-        * can still be counted, and its strength still sets the threshold that the real exercise has to clear. A minute
-        * of vigorous setting-up was measured suppressing the exercise that followed for a full minute afterwards, which
-        * is the length of the detector's window.
+        * can still be counted, and its strength still sets the threshold that the real exercise has to clear. Vigorous
+        * setting-up was measured suppressing the exercise that followed for as long as the detector's window holds it.
         *
         * The cost is the fifteen seconds the detector needs before it can lock again, and it is not a loss: the reps
         * performed in the meantime are in the buffer, and the first lock counts the run it finds there.

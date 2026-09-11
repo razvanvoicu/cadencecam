@@ -4,12 +4,27 @@ import munit.FunSuite
 
 class SampleQueueSuite extends FunSuite:
 
-  test("holds a minute of ten-hertz samples"):
-    assertEquals(QuadrantSignals.DetectionWindow, 600)
-    assertEquals(QuadrantSignals.DetectionWindow * FrameSampler.DefaultIntervalMillis, 60_000)
+  test("analyses fifteen seconds and keeps six minutes"):
+    assertEquals(QuadrantSignals.DetectionWindow, 150)
+    assertEquals(QuadrantSignals.DetectionWindow * FrameSampler.DefaultIntervalMillis, 15_000)
     // Six minutes kept, so a captured trace covers a whole bench suite rather than its closing minute.
     assertEquals(QuadrantSignals.Recorded * FrameSampler.DefaultIntervalMillis, 360_000)
     assert(QuadrantSignals.Recorded > QuadrantSignals.DetectionWindow, "keeping less than is analysed makes no sense")
+
+  test("the window still holds enough slow reps to be counted"):
+    // The window was shortened so the prominence bar stops carrying stale history. The limit on how far it can go is
+    // the sustained-movement rule: after the filter's settling samples are dropped, what is left must still hold the
+    // peaks that rule demands, at the slowest cadence the band-pass admits. Asserted rather than assumed, so the two
+    // cannot be tuned apart.
+    val settings = DetectorSettings()
+    val analysed = QuadrantSignals.DetectionWindow - settings.settlingSamples
+    val slowestPeriodSamples = settings.sampleRateHz / settings.lowHz
+    assert(
+      analysed >= settings.minimumSustainedPeaks * slowestPeriodSamples,
+      s"$analysed samples cannot hold ${settings.minimumSustainedPeaks} peaks at ${settings.lowHz}Hz"
+    )
+    // And a lock cannot need more signal than there is signal to lock onto.
+    assert(settings.minimumSamplesForLock <= QuadrantSignals.DetectionWindow)
 
   test("returns samples oldest first while filling"):
     val queue = SampleQueue(5)

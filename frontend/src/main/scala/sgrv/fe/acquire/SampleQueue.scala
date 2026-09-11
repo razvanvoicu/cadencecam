@@ -54,14 +54,23 @@ private[fe] final class QuadrantSignals(val capacity: Int = QuadrantSignals.Reco
   def clear(): Unit = queues.values.foreach(_.clear())
 
 private[fe] object QuadrantSignals:
-  /** One minute at the 10 Hz sampling rate. */
-  /** How much of the signal the detector reasons over.
+  /** How much of the signal the detector reasons over: fifteen seconds at the 10 Hz sampling rate.
     *
-    * A minute, unchanged. It is not the same quantity as how much is kept: the whole buffer is re-filtered and
-    * re-scanned for peaks on every sample, so widening this multiplies the work done ten times a second on a phone. A
-    * detector that cannot keep up stops sampling evenly, and that looks exactly like a counting fault.
+    * This window sets the bar as well as finding the peaks. The prominence threshold scales with the window's own
+    * activity, so a minute-long window carried a whole minute of history into that bar: the last rep of a set went
+    * uncounted for twenty to thirty seconds, waiting for the movement that preceded it to age out, and a test that
+    * followed a stronger one spent its first half-minute failing to clear a threshold set by the previous test.
+    * Measured against real recordings, fifteen seconds brought that delay down to seven and eleven seconds with the
+    * counts unchanged at exactly a hundred.
+    *
+    * The floor under it is the sustained-movement rule: five peaks are needed before anything counts, and after the
+    * filter's settling samples are dropped this window holds about six cycles of the slowest cadence the band admits.
+    * Shortening it further would start rejecting slow exercise rather than stale history.
+    *
+    * Not the same quantity as how much is kept: the whole window is re-filtered and re-scanned for peaks on every
+    * sample, so this also bounds the work done ten times a second on a phone.
     */
-  val DetectionWindow = 600
+  val DetectionWindow = 150
 
   /** How much is kept, so a captured trace can show a whole test session rather than its last minute.
     *
