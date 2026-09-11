@@ -221,12 +221,20 @@ button,
 /* The frame carries the stream's own aspect ratio (set from the track), so the video fills it exactly with no
    letterboxing. That is what lets the quadrant lines below sit at a true 50% of what the camera actually sees.
    max-height shrinks the whole box, width included, rather than cropping it. */
+/* The box takes the camera's own shape, whatever that is: the aspect ratio is set from the live stream, and both
+   limits are maxima rather than a fixed width. Pinning the width and capping the height made the box wider than the
+   frame it held, and `cover` then cropped the picture to fit -- so the quadrant lines drawn over it marked
+   quadrants that were not the ones being sampled, on a phone standing portrait especially. */
 .camera-frame {
   position: relative;
-  width: 100%;
-  max-height: 30vh;
+  /* Sized by whichever limit binds first -- the column's width or the height allowance -- with the aspect ratio
+     held either way. A plain `max-height` cannot do this: it clips the box without narrowing it, leaving the frame
+     wider than the picture it holds. The live stream's shape arrives as --frame-aspect. */
+  --frame-aspect: 1.7778;
+  width: min(100%, calc(30vh * var(--frame-aspect)));
+  height: auto;
+  aspect-ratio: var(--frame-aspect);
   margin: 0 auto;
-  aspect-ratio: 16 / 9;
   background: #000;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -237,7 +245,9 @@ button,
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  /* Contained, never cropped. The box already carries the frame's proportions, so there is nothing to letterbox in
+     practice -- but if the two ever disagree, the honest failure is a visible margin rather than a hidden crop. */
+  object-fit: contain;
 }
 
 /* Only the picture is flipped. The quadrant lines are drawn by a sibling, so they do not move, and the sampler
@@ -705,7 +715,9 @@ button,
 
 @media (max-height: 720px) {
   .camera-frame {
-    max-height: 26vh;
+    /* The same shape, given a little less room. Expressed as a width because that is what sizes this box now;
+       a `max-height` here would clip the frame rather than narrow it. */
+    width: min(100%, calc(26vh * var(--frame-aspect)));
   }
 
   .rep-count-value {

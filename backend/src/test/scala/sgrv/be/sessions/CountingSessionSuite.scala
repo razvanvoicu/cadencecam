@@ -133,3 +133,21 @@ class CountingSessionSuite extends munit.FunSuite:
 
     assertEquals(ids.distinct.size, 50)
     assert(ids.forall(id => id.length == 24 && id.forall(c => c.isDigit || ('a' to 'f').contains(c))), ids.head)
+
+  test("everything a recording carries is written, not only the parts the store happened to know about"):
+    // Every optional field was added to the shared type and to the devices, and three of them were never added
+    // here -- so the phones sent them and this dropped them. An absence then read as "the device does not support
+    // it", which sent a diagnosis the wrong way for two rounds of testing.
+    val carried = classOf[SignalTrace].getDeclaredFields.map(_.getName).toSet
+    val stored = Set(
+      CountingSessionSchema.sampleRateHz,
+      CountingSessionSchema.samples,
+      CountingSessionSchema.reps,
+      CountingSessionSchema.lock,
+      CountingSessionSchema.note,
+      CountingSessionSchema.camera,
+      CountingSessionSchema.controls,
+      CountingSessionSchema.controlsAtSample
+    )
+
+    assertEquals(carried -- stored, Set.empty[String], "a recording carries fields this store does not write")

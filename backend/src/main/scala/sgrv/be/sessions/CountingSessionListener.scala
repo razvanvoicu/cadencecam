@@ -44,6 +44,16 @@ private[sessions] object CountingSessionSchema:
   val lock = "lock"
   val note = "note"
 
+  /** What the camera said about itself, and what became of its controls.
+    *
+    * Stored because they were not: the phones have been sending these since the field existed and every one was dropped
+    * here, which turned a question about a device into an absence, and an absence into a wrong conclusion about why a
+    * picture was darkening.
+    */
+  val camera = "camera"
+  val controls = "controls"
+  val controlsAtSample = "controlsAtSample"
+
 /** The listener's private adapter over the host's generic `firestore` capability.
   *
   * A counting session is one login's workout: the record opened when the user signs in, and the place the acquirer's
@@ -100,6 +110,9 @@ private[sessions] final class CountingSessionStore(firestore: Firestore):
       CountingSessionSchema.reps -> java.lang.Long.valueOf(trace.reps.toLong),
       CountingSessionSchema.lock -> trace.lock
     ) ++ trace.note.map(CountingSessionSchema.note -> _)
+      ++ trace.camera.map(CountingSessionSchema.camera -> _)
+      ++ trace.controls.map(CountingSessionSchema.controls -> _)
+      ++ trace.controlsAtSample.map(at => CountingSessionSchema.controlsAtSample -> java.lang.Long.valueOf(at.toLong))
 
   private def progress(reps: Int, at: Instant): Map[String, AnyRef] =
     Map[String, AnyRef](

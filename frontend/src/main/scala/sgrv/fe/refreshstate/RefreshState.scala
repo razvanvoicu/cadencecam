@@ -48,7 +48,7 @@ private[fe] object RefreshStateStore:
       Option(storage.getItem(StorageKey))
         .flatMap: encoded =>
           encoded.fromJson[RefreshState] match
-            case Right(state) => Some(state)
+            case Right(state)  => Some(state)
             case Left(details) =>
               dom.console.warn(s"Ignoring invalid persisted refresh state: $details")
               None

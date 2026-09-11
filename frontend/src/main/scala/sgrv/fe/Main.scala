@@ -486,7 +486,10 @@ object Main:
                 element.asInstanceOf[js.Dynamic].srcObject = opened.asInstanceOf[js.Any]
                 val _ = element.play()
                 val (width, height) = Camera.resolution(opened).getOrElse((0, 0))
-                if width > 0 && height > 0 then frame.ref.style.setProperty("aspect-ratio", s"$width / $height")
+                // The stream's own shape, so the preview box is exactly the frame being sampled and the quadrant
+                // lines drawn over it mark the quadrants the detector actually divides.
+                if width > 0 && height > 0 then
+                  frame.ref.style.setProperty("--frame-aspect", (width.toDouble / height).toString)
                 mirrored.set(Camera.mirrors(Camera.facing(opened)))
                 currentDevice.set(Camera.deviceIdOf(opened))
                 // Labels stay blank until permission is granted, so the list is only worth reading now.

@@ -157,3 +157,35 @@ class CameraSuite extends FunSuite:
     // getCapabilities nor getSettings, so none of this could run, and the darkening happened anyway. Off until a
     // trace shows it was ever involved.
     assert(!Camera.holdControls)
+
+  test("the camera's own proportions are kept exactly, portrait or landscape"):
+    // A phone standing portrait delivers a portrait frame, and that is the whole field of view its sensor offers in
+    // that orientation. Asking for landscape can only be satisfied by throwing some of it away.
+    val (portraitW, portraitH) = Camera.bestSize(3024, 4032, 4032, 4032, Camera.PixelBudget)
+    val (landscapeW, landscapeH) = Camera.bestSize(4032, 3024, 4032, 4032, Camera.PixelBudget)
+
+    assertEqualsDouble(portraitW.toDouble / portraitH, 3024.0 / 4032.0, 0.01)
+    assertEqualsDouble(landscapeW.toDouble / landscapeH, 4032.0 / 3024.0, 0.01)
+    assert(portraitH > portraitW, s"a portrait frame must stay portrait, got ${portraitW}x$portraitH")
+    assert(landscapeW > landscapeH, s"a landscape frame must stay landscape, got ${landscapeW}x$landscapeH")
+
+  test("the frame is the largest that fits the budget at the camera's own shape"):
+    val (width, height) = Camera.bestSize(4032, 3024, 4032, 4032, Camera.PixelBudget)
+
+    assert(width * height <= Camera.PixelBudget, s"${width}x$height exceeds the budget")
+    // And not wastefully small: within a few percent of the budget.
+    assert(width * height > Camera.PixelBudget * 0.9, s"${width}x$height wastes most of the budget")
+
+  test("the camera's own limits bound the request without reshaping it"):
+    // The two maxima are separate numbers and need not belong to one supported mode, so they are used as bounds.
+    val (width, height) = Camera.bestSize(3024, 4032, 720, 1280, Camera.PixelBudget)
+
+    assert(width <= 720 && height <= 1280, s"${width}x$height exceeds what the camera reported")
+    assertEqualsDouble(width.toDouble / height, 3024.0 / 4032.0, 0.01)
+
+  test("dimensions stay even, so the quadrant split is exact"):
+    val sizes = Seq((3024, 4032), (4032, 3024), (1080, 1920), (640, 480), (1233, 999))
+    sizes.foreach: (w, h) =>
+      val (width, height) = Camera.bestSize(w, h, 8000, 8000, Camera.PixelBudget)
+      assertEquals(width % 2, 0, s"width $width from ${w}x$h is odd")
+      assertEquals(height % 2, 0, s"height $height from ${w}x$h is odd")

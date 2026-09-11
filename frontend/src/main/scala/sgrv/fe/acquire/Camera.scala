@@ -222,10 +222,11 @@ private[fe] object Camera:
     stream.getVideoTracks().headOption match
       case None        => Future.successful(())
       case Some(track) =>
-        deviceMaximum(track) match
-          case None                              => Future.successful(())
-          case Some((deviceWidth, deviceHeight)) =>
-            val (width, height) = budgetedSize(deviceWidth, deviceHeight, PixelBudget)
+        deliveredSize(track) match
+          case None                                    => Future.successful(())
+          case Some((deliveredWidth, deliveredHeight)) =>
+            val (maxWidth, maxHeight) = deviceMaximum(track).getOrElse((Int.MaxValue, Int.MaxValue))
+            val (width, height) = bestSize(deliveredWidth, deliveredHeight, maxWidth, maxHeight, PixelBudget)
             val wanted = js.Dynamic
               .literal(
                 width = js.Dynamic.literal(ideal = width),
@@ -238,7 +239,46 @@ private[fe] object Camera:
               .map(_ => ())
               .recover { case _ => () }
 
-  /** The largest frame the device says it can produce, which carries its native proportions. */
+  /** The shape the camera is actually delivering, which is the one to keep.
+    *
+    * Taken from the track's own settings rather than from its capabilities. A capability reports the largest width and
+    * the largest height the camera can manage, and those are two separate numbers: on a phone they describe the sensor
+    * laid out landscape, and they need not even belong to the same supported mode. Building a request out of them asked
+    * a portrait camera for a landscape frame, which it can only satisfy by throwing away field of view. What it is
+    * already sending has the proportions the device actually wants.
+    */
+  private def deliveredSize(track: dom.MediaStreamTrack): Option[(Int, Int)] =
+    val dynamic = track.asInstanceOf[js.Dynamic]
+    if js.isUndefined(dynamic.getSettings) then None
+    else
+      val settings = dynamic.getSettings()
+      for
+        width <- Option(settings.width).filterNot(js.isUndefined).map(_.asInstanceOf[Int]).filter(_ > 0)
+        height <- Option(settings.height).filterNot(js.isUndefined).map(_.asInstanceOf[Int]).filter(_ > 0)
+      yield (width, height)
+
+  /** The largest frame that keeps the camera's own proportions, within the pixel budget and the camera's own limits.
+    *
+    * The proportions come from what is being delivered and are never altered, so the whole field of view survives: only
+    * the number of pixels it is described with changes. The camera's maxima are used as bounds rather than as a shape,
+    * which is all they can honestly be.
+    */
+  private[acquire] def bestSize(
+      deliveredWidth: Int,
+      deliveredHeight: Int,
+      maxWidth: Int,
+      maxHeight: Int,
+      budget: Int
+  ): (Int, Int) =
+    require(deliveredWidth > 0 && deliveredHeight > 0, "a camera must report a positive size")
+    val aspect = deliveredWidth.toDouble / deliveredHeight
+    val fromBudget = math.sqrt(budget * aspect)
+    val width = math.min(fromBudget, math.min(maxWidth.toDouble, maxHeight.toDouble * aspect))
+    // Rounded down and kept even, so the quadrant split is exact and the frame cannot creep back over the budget.
+    def even(value: Double): Int = math.max(2, (math.floor(value / 2) * 2).toInt)
+    (even(width), even(width / aspect))
+
+  /** The largest frame the device says it can produce. Two independent maxima, so useful only as bounds. */
   private def deviceMaximum(track: dom.MediaStreamTrack): Option[(Int, Int)] =
     val dynamic = track.asInstanceOf[js.Dynamic]
     if js.isUndefined(dynamic.getCapabilities) then None
