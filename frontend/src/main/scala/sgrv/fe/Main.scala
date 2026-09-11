@@ -283,6 +283,9 @@ object Main:
       var baseline = repCountStore.restore(js.Date.now())
       val repCount = Var(baseline)
       val lock = Var[LockState](LockState.Acquiring(0, 0))
+      // How far the movement stands above the background, kept whether or not a cadence has been found: a movement
+      // too faint to count looks from the outside exactly like no movement at all.
+      val signalMargin = Var(Option.empty[Double])
       // Derived from the camera itself rather than chosen: one on the same side as the screen is shown mirrored,
       // one facing away is not. Not persisted, since it belongs to the hardware rather than to the user.
       val mirrored = Var(false)
@@ -377,6 +380,7 @@ object Main:
         if total != repCount.now() then repCountStore.save(total, sample.atMillis)
         repCount.set(total)
         lock.set(reading.lock)
+        signalMargin.set(reading.margin)
         publish()
         tick.update(_ + 1)
         sampleCount += 1
@@ -407,6 +411,7 @@ object Main:
         totalSamples = 0
         restOffsets.set(Map.empty)
         lock.set(LockState.Acquiring(0, 0))
+        signalMargin.set(None)
         // Cleared rather than saved as zero: a reload should find nothing to resume, rather than a zero that goes on
         // being resumed for the rest of the retention window.
         repCountStore.clear()
@@ -594,7 +599,7 @@ object Main:
                 )
           ),
           Readouts.reading(repCount.signal.map(_.toString), "reps"),
-          Readouts.controls(statusText, () => resetCount()),
+          Readouts.controls(statusText, () => resetCount(), signalMargin.signal),
           div(
             cls := "acquirer-actions",
             cls("open") <-- menuOpen.signal,

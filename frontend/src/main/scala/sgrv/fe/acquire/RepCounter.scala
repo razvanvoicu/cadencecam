@@ -71,10 +71,16 @@ private[fe] final case class ChannelAnalysis(
     filtered: Seq[Double],
     power: Double,
     peaks: Seq[Int],
-    periodSamples: Option[Double]
+    periodSamples: Option[Double],
+    /** How far a typical peak here stood above the bar it had to clear, as a multiple of that bar.
+      *
+      * One is a movement only just distinguishable from the background; measured runs that counted correctly sat above
+      * three, and one that lost reps sat under two. `None` when there were no peaks to judge.
+      */
+    margin: Option[Double]
 )
 
-private[fe] final case class RepReading(count: Int, lock: LockState)
+private[fe] final case class RepReading(count: Int, lock: LockState, margin: Option[Double] = None)
 
 private[fe] object RepAnalysis:
 
@@ -122,10 +128,16 @@ private[fe] object RepAnalysis:
     val power = rootMeanSquare(settled)
     val threshold = math.max(settings.prominenceFloor, settings.prominenceFactor * power)
     // Peaks are reported against the whole window, so the caller's index arithmetic stays unaffected by the skip.
-    val peaks = PeakDetector
-      .peaks(settled, settings.minimumDistanceSamples, threshold)
-      .map(_ + settings.settlingSamples)
-    ChannelAnalysis(quadrant, filtered, power, peaks, periodOf(peaks))
+    val measured = PeakDetector.measured(settled, settings.minimumDistanceSamples, threshold)
+    val peaks = measured.map(_._1 + settings.settlingSamples)
+    val prominences = measured.map(_._2).sorted
+    // Against the fixed floor rather than the adaptive threshold. The threshold rises with the scene's own
+    // activity, so dividing by it flatters a quiet scene: measured against real recordings, a camera shaken by
+    // typing scored higher that way than a movement that counted perfectly. The floor is the bar a movement
+    // actually has to clear, and it does not move.
+    val margin = Option.when(prominences.nonEmpty && settings.prominenceFloor > 0):
+      prominences(prominences.size / 2) / settings.prominenceFloor
+    ChannelAnalysis(quadrant, filtered, power, peaks, periodOf(peaks), margin)
 
   private[acquire] def agree(first: ChannelAnalysis, second: ChannelAnalysis, tolerance: Double): Boolean =
     (first.periodSamples, second.periodSamples) match
@@ -177,7 +189,14 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
   private var authoritative: Option[Quadrant] = None
   private var state: LockState = LockState.Acquiring(0, settings.minimumSamplesForLock)
 
-  def reading: RepReading = RepReading(counted, state)
+  /** How far the strongest channel's peaks stood above their threshold, whether or not a cadence was found.
+    *
+    * Kept even while searching, because that is when it is most worth knowing: a movement too faint to count looks from
+    * the outside exactly like no movement at all, and this tells the two apart.
+    */
+  private var currentMargin: Option[Double] = None
+
+  def reading: RepReading = RepReading(counted, state, currentMargin)
 
   /** The pace of the last few reps, in reps per minute, or zero when too few have been seen to say.
     *
@@ -211,6 +230,9 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
       state = LockState.Acquiring(windowLength, settings.minimumSamplesForLock)
     else
       val channels = window.toSeq.map((quadrant, samples) => RepAnalysis.analyse(samples, quadrant, settings))
+      // From whichever channel is carrying the most, which is the best case the movement offers rather than an
+      // average dragged down by the quadrants nothing happens in.
+      currentMargin = channels.flatMap(_.margin).maxOption
       // Stay with the channel already being counted for as long as it still agrees with another. The quadrants
       // carry the same period at different phases, so a leader that changed between updates would interleave two
       // phases of the same movement and count each cycle more than once.

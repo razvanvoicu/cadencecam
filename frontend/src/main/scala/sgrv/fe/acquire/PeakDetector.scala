@@ -48,12 +48,24 @@ private[fe] object PeakDetector:
     * prominence rather than by position keeps the choice independent of which end the series is scanned from.
     */
   def peaks(samples: Seq[Double], minimumDistance: Int, minimumProminence: Double): Seq[Int] =
+    measured(samples, minimumDistance, minimumProminence).map(_._1)
+
+  /** Accepted peaks with how far each stood out, which the selection has already worked out.
+    *
+    * Returned rather than recomputed: how far a movement stands above the bar it has to clear is worth reporting to the
+    * user, and asking for it again would mean walking the series once more for every peak.
+    */
+  def measured(
+      samples: Seq[Double],
+      minimumDistance: Int,
+      minimumProminence: Double
+  ): Seq[(Int, Double)] =
     val candidates = localMaxima(samples)
       .map(index => index -> prominence(samples, index))
       .filter((_, prominence) => prominence >= minimumProminence)
       .sortBy((index, prominence) => (-prominence, index))
 
-    val accepted = candidates.foldLeft(Vector.empty[Int]): (kept, candidate) =>
+    val accepted = candidates.foldLeft(Vector.empty[(Int, Double)]): (kept, candidate) =>
       val (index, _) = candidate
-      if kept.exists(other => math.abs(other - index) < minimumDistance) then kept else kept :+ index
-    accepted.sorted
+      if kept.exists((other, _) => math.abs(other - index) < minimumDistance) then kept else kept :+ candidate
+    accepted.sortBy(_._1)

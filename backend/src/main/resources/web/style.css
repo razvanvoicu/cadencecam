@@ -293,6 +293,34 @@ button,
   margin-bottom: 0;
 }
 
+/* Occupies the counterweight's place, so showing it cannot shift the reading off centre. Colour carries the band
+   and the number carries the value, so neither alone has to be relied on. */
+.signal-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: transparent;
+}
+
+.signal-badge.strong {
+  background: rgb(53 196 106 / 18%);
+  color: #35c46a;
+}
+
+.signal-badge.adequate {
+  background: rgb(245 158 11 / 18%);
+  color: #f59e0b;
+}
+
+.signal-badge.weak {
+  background: rgb(239 68 68 / 18%);
+  color: #ef4444;
+}
+
 /* The spacer mirrors the button's footprint exactly, which is what keeps the reading centred on the panel. */
 .reset-button,
 .footer-spacer {

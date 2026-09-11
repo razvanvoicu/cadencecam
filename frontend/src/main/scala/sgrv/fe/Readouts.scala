@@ -1,6 +1,7 @@
 package sgrv.fe
 
 import com.raquo.laminar.api.L.*
+import sgrv.fe.acquire.SignalStrength
 
 /** The rows the acquirer and the dashboard both show.
   *
@@ -32,7 +33,12 @@ private[fe] object Readouts:
     * The spacer matches the control's footprint exactly. Without it the line would centre on the space left over beside
     * the button, which is not the middle of anything the eye can see.
     */
-  def controls(status: Signal[String], onReset: () => Unit): HtmlElement =
+  def controls(
+      status: Signal[String],
+      onReset: () => Unit,
+      // Absent on a watching screen, which has no camera of its own to judge.
+      margin: Signal[Option[Double]] = Val(None)
+  ): HtmlElement =
     div(
       cls := "control-row",
       button(
@@ -47,8 +53,17 @@ private[fe] object Readouts:
       ),
       // Says which of the three it is doing rather than letting a stalled count look like a steady one.
       p(cls := "lock-state", child.text <-- status),
-      // Balances the reset control on the other side. Hidden from assistive technology: it carries nothing to say.
-      div(cls := "footer-spacer", aria.hidden := true)
+      // In the counterweight's place, so the reading stays centred on the panel: the badge is exactly the reset
+      // control's footprint. Empty and invisible when there is nothing to report, which is what the spacer was.
+      div(
+        cls := "footer-spacer signal-badge",
+        cls("strong") <-- margin.map(_.exists(SignalStrength.of(_) == SignalStrength.Strong)),
+        cls("adequate") <-- margin.map(_.exists(SignalStrength.of(_) == SignalStrength.Adequate)),
+        cls("weak") <-- margin.map(_.exists(SignalStrength.of(_) == SignalStrength.Weak)),
+        child.text <-- margin.map(_.fold("")(SignalStrength.label)),
+        title <-- margin.map(_.fold("")(m => s"${SignalStrength.label(m)}: ${SignalStrength.Description}")),
+        aria.label <-- margin.map(_.fold("")(m => s"Signal ${SignalStrength.label(m)}, ${SignalStrength.Description}"))
+      )
     )
 
   /** A pace, in whole reps or calories per minute.
