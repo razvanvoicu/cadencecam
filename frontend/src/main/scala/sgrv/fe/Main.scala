@@ -685,10 +685,16 @@ object Main:
             case LogoutState.Failed(message) => p(cls := "error logout-error", s"Logout failed: $message")
             case _                           => emptyNode,
         child <-- stateStore.signal
-          .map(_.aboutState)
+          // The account travels with the panel: a display name does not say which of several accounts this device
+          // is signed into, and on a bench with four phones that is the thing one actually needs to know.
+          .map(state => (state.aboutState, state.user))
           .map:
-            case AboutState.Closed => emptyNode
-            case state             =>
+            case (AboutState.Closed, _) => emptyNode
+            case (state, user)          =>
+              val account = user match
+                case SignedIn(email, _)  => Some(email)
+                case Restoring(email, _) => Some(email)
+                case _                   => None
               val content = state match
                 case AboutState.Loading             => p(cls := "about-status", "Loading build information…")
                 case AboutState.Failed(message)     => p(cls := "error about-status", message)
@@ -726,6 +732,10 @@ object Main:
                       "×"
                     )
                   ),
+                  // Shown at once rather than with the build information, which is fetched: the account is known
+                  // locally, and waiting on a request to say who is signed in would be backwards.
+                  account
+                    .fold(emptyNode)(email => dl(cls := "about-details about-account", dt("Signed in as"), dd(email))),
                   content
                 )
               )

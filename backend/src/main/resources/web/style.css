@@ -755,6 +755,14 @@ button,
   cursor: pointer;
 }
 
+/* The account sits above the build information and is separated from it: they answer different questions, and
+   one of them is available immediately while the other is fetched. */
+.about-account {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
 .about-details {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
