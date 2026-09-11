@@ -35,7 +35,7 @@ private[fe] final class SampleQueue(val capacity: Int):
     next = 0
 
 /** One ring per quadrant: the four parallel time series the detector will choose between. */
-private[fe] final class QuadrantSignals(val capacity: Int = QuadrantSignals.OneMinute):
+private[fe] final class QuadrantSignals(val capacity: Int = QuadrantSignals.Recorded):
   private val queues = Quadrant.All.map(quadrant => quadrant -> SampleQueue(capacity)).toMap
 
   def record(sample: Sample): Unit =
@@ -55,4 +55,18 @@ private[fe] final class QuadrantSignals(val capacity: Int = QuadrantSignals.OneM
 
 private[fe] object QuadrantSignals:
   /** One minute at the 10 Hz sampling rate. */
-  val OneMinute = 600
+  /** How much of the signal the detector reasons over.
+    *
+    * A minute, unchanged. It is not the same quantity as how much is kept: the whole buffer is re-filtered and
+    * re-scanned for peaks on every sample, so widening this multiplies the work done ten times a second on a phone. A
+    * detector that cannot keep up stops sampling evenly, and that looks exactly like a counting fault.
+    */
+  val DetectionWindow = 600
+
+  /** How much is kept, so a captured trace can show a whole test session rather than its last minute.
+    *
+    * Six minutes at ten hertz. Sized from what a bench suite takes -- two hundred-rep tests at 0.8Hz with a pause after
+    * each -- which comes to a little over five, so five minutes of buffer would lose the opening of the first test.
+    * Keeping more costs memory and nothing else, since the detector's window is separate.
+    */
+  val Recorded = 3600

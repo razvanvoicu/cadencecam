@@ -109,8 +109,22 @@ object Main extends ZIOAppDefault:
   private[be] def bindAddress(environmentValue: Option[String]): String =
     environmentValue.map(_.trim).filter(_.nonEmpty).getOrElse(defaultBindAddress)
 
+  /** The largest request body the server will accept.
+    *
+    * The default is a hundred kilobytes, which a captured signal trace exceeds: six minutes of four channels at ten
+    * hertz is about two hundred and eighty. Under the default those uploads were refused with a 413 after the run that
+    * produced them had already finished -- the expensive way to discover a limit.
+    *
+    * A megabyte is the ceiling that actually matters, since Firestore will not store a larger document, so anything
+    * this lets through can still be filed.
+    */
+  private[be] val maximumRequestBody: Int = 1024 * 1024
+
   private[be] def serverConfig(host: String, port: Int): Server.Config =
-    Server.Config.default.binding(host, port).gracefulShutdownTimeout(serverShutdownTimeout)
+    Server.Config.default
+      .binding(host, port)
+      .disableRequestStreaming(maximumRequestBody)
+      .gracefulShutdownTimeout(serverShutdownTimeout)
 
   // Nothing here reaches Firestore's admin API: the app assumes its database already exists and that the
   // Access.expiresAt TTL policy was configured once, out of band. Startup therefore costs no admin gRPC

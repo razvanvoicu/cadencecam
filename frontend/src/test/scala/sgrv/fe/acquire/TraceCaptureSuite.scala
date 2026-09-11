@@ -27,9 +27,9 @@ class TraceCaptureSuite extends FunSuite:
     assertEquals(trace.sampleRateHz, DetectorSettings().sampleRateHz)
 
   test("the buffer is taken whole, since what matters usually happened before the button was reached for"):
-    val trace = TraceCapture.of(filled(QuadrantSignals.OneMinute + 200), 5, LockState.Searching, None)
+    val trace = TraceCapture.of(filled(QuadrantSignals.Recorded + 200), 5, LockState.Searching, None)
 
-    assertEquals(trace.samples("Q1").size, QuadrantSignals.OneMinute)
+    assertEquals(trace.samples("Q1").size, QuadrantSignals.Recorded)
 
   test("the lock is recorded in words, so a replay knows what the detector believed at the time"):
     assertEquals(TraceCapture.describe(LockState.Searching), "searching")

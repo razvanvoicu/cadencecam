@@ -362,7 +362,9 @@ object Main:
       def onSample(sample: Sample): Unit =
         signals.record(sample)
         totalSamples += 1
-        val window = signals.window(signals.capacity)
+        // The detector's own window, not the whole buffer. The buffer is now six minutes so a trace can carry a
+        // whole session, and re-filtering all of it on every sample would be five times the work at ten hertz.
+        val window = signals.window(QuadrantSignals.DetectionWindow)
         val reading = counter.update(window, totalSamples)
         reading.lock match
           case LockState.Locked(channel, _, _) =>

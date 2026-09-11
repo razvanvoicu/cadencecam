@@ -37,7 +37,7 @@ private[fe] object TestPlan:
     * The detector confirms a peak from samples that follow it, and reports over a socket, so the last rep of a set
     * arrives after the set has ended. Ending a test the moment the animation stops would score that as a miss.
     */
-  val PauseSeconds = 20
+  val PauseSeconds = 30
 
   /** How far the counter may lag or lead before it is worth recording, in seconds of movement.
     *
@@ -61,13 +61,24 @@ private[fe] object TestPlan:
     */
   val DefaultCadence: Cadence = Cadence(hz = 0.8, swingHz = 0.2, swingEveryHz = 0.05)
 
-  /** The suite: every figure in every palette, at one cadence.
+  /** Two tests: one expected to pass, one expected to fail.
     *
-    * Deliberately small. The point of the first run is to find out which combinations the detector struggles with, and
-    * a suite large enough to be informative about everything would take longer to run than anyone will watch.
+    * Running every figure in every palette produced failures in about half of them, differing between runs, which says
+    * the trouble is intermittent but not where it lives. Two cases chosen for contrast are worth more: a disc on a
+    * circle in white on black is the arrangement that has counted reliably, and a bar crunching in black on white is
+    * the one predicted to break -- either losing the cadence or counting something quite different.
+    *
+    * Together in one suite they land in a single captured trace, so the signal that worked and the signal that did not
+    * can be read side by side out of the same recording, under the same lighting and the same framing. That is what
+    * makes it material for a realistic unit test rather than another anecdote.
     */
   def standard(reps: Int = DefaultReps, cadence: Cadence = DefaultCadence): Seq[TestCase] =
-    for
-      palette <- Palette.All
-      figure <- Figure.values.toSeq
-    yield TestCase(figure, palette, cadence, reps)
+    Seq(
+      TestCase(Figure.Disc, Palette.WhiteOnBlack, cadence, reps),
+      TestCase(Figure.Bar, Palette.BlackOnWhite, cadence, reps)
+    )
+
+  /** How long a whole suite runs, including the pause after each test and the settle between them. */
+  def durationSeconds(plan: Seq[TestCase] = standard()): Double =
+    plan.map(test => test.reps / test.cadence.hz + PauseSeconds).sum +
+      (plan.size - 1) * Bench.SettleAfterResetMillis / 1000.0

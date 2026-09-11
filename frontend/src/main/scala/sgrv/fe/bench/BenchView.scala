@@ -83,6 +83,11 @@ private[fe] object BenchView:
       if index >= plan.size then
         stage.set(Stage.Finished)
         report("suite-finished", 0.0)
+        // The recording is the point of the run, so it is taken without anyone having to remember to. The buffer
+        // holds six minutes and a suite takes a little over five, so this one capture carries both tests and the
+        // break between them -- the signal that counted and the signal that did not, under the same conditions.
+        val _ = relay.send(LiveCommand.CaptureTrace.toJson)
+        report("trace-requested", 0.0, Some(f"suite ran ${TestPlan.durationSeconds(plan)}%.0fs"))
       else
         acquired.set(0)
         reference.set(0)

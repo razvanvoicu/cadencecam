@@ -217,3 +217,19 @@ class MainSuite extends munit.FunSuite:
       assertEquals(response.headers.get(Header.CacheControl), Some(testStaticCacheControl))
       assertEquals(served.toSeq, packaged.toSeq)
     }
+
+  test("the server accepts a body large enough for a captured signal trace"):
+    // Six minutes of four channels at ten hertz is about 280KB of JSON. The default limit is 100KB, and under it
+    // the automatic capture was refused with a 413 once the run that produced it was already over.
+    val sixMinuteTrace = 280 * 1024
+
+    assert(
+      Main.maximumRequestBody > sixMinuteTrace,
+      s"${Main.maximumRequestBody} bytes will not carry a $sixMinuteTrace byte trace"
+    )
+    // And no larger than what can then be stored, so nothing is accepted that cannot be kept.
+    assertEquals(Main.maximumRequestBody, 1024 * 1024)
+
+    Main.serverConfig("127.0.0.1", 8888).requestStreaming match
+      case zio.http.Server.RequestStreaming.Disabled(limit) => assertEquals(limit, Main.maximumRequestBody)
+      case other                                            => fail(s"expected a bounded, aggregated body, got $other")

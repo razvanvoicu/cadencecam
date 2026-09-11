@@ -84,12 +84,16 @@ class MotionSuite extends FunSuite:
     assertEquals(Trajectory.shuttle(0.0), Trajectory.Q4)
     assertEquals(Trajectory.shuttle(math.Pi), Trajectory.Q1)
 
-  test("the suite covers every figure in every palette"):
+  test("the suite pairs the arrangement that works with the one expected to fail"):
+    // Chosen for contrast rather than coverage: both land in one captured trace, so the signal that counted and the
+    // signal that did not can be read side by side, under the same lighting and framing.
     val plan = TestPlan.standard()
 
-    assertEquals(plan.size, Figure.values.length * Palette.All.size)
-    assertEquals(plan.map(_.figure).toSet, Figure.values.toSet)
-    assertEquals(plan.map(_.palette).toSet, Palette.All.toSet)
+    assertEquals(plan.size, 2)
+    assertEquals(plan.head.figure, Figure.Disc)
+    assertEquals(plan.head.palette, Palette.WhiteOnBlack)
+    assertEquals(plan.last.figure, Figure.Bar)
+    assertEquals(plan.last.palette, Palette.BlackOnWhite)
 
   test("time before the movement began counts as nothing, not as a large negative number"):
     // Two clocks were mixed once -- an epoch timestamp against the animation frame's milliseconds-since-load -- and
@@ -116,9 +120,17 @@ class MotionSuite extends FunSuite:
     // to happen more than once within a single test.
     assert(TestPlan.DefaultReps >= 100, s"${TestPlan.DefaultReps} reps is too short to catch a stall and a recovery")
 
-  test("a suite is long, and the arithmetic says so plainly"):
-    val perTest = TestPlan.DefaultReps / TestPlan.DefaultCadence.hz + TestPlan.PauseSeconds
-    val whole = perTest * TestPlan.standard().size
+  test("the buffer is long enough to hold an entire suite"):
+    // The capture is taken when the suite ends, so anything the buffer has already dropped is lost. A five-minute
+    // buffer would have been twelve seconds short of the whole run -- the final pause is easy to leave out of the
+    // arithmetic, and the opening of the first test is what would have gone.
+    val recordedSeconds =
+      sgrv.fe.acquire.QuadrantSignals.Recorded * sgrv.fe.acquire.FrameSampler.DefaultIntervalMillis / 1000.0
 
-    assertEqualsDouble(perTest, 145.0, 1.0)
-    assert(whole > 800, "a suite that short would not be the one described")
+    assert(
+      recordedSeconds > TestPlan.durationSeconds(),
+      f"a suite runs ${TestPlan.durationSeconds()}%.0fs but only ${recordedSeconds}%.0fs is kept"
+    )
+
+  test("a suite takes about five minutes, and the arithmetic says so plainly"):
+    assertEqualsDouble(TestPlan.durationSeconds(), 311.5, 1.0)

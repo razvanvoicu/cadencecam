@@ -89,7 +89,7 @@ class RepCounterSuite extends FunSuite:
 
     // Ninety seconds is longer than the one-minute buffer, so this also covers the ring wrapping.
     for taken <- 1 to length do
-      val window = channels.view.mapValues(_.take(taken).takeRight(QuadrantSignals.OneMinute)).toMap
+      val window = channels.view.mapValues(_.take(taken).takeRight(QuadrantSignals.DetectionWindow)).toMap
       val count = counter.update(window, taken).count
       assert(count >= previous, s"count fell from $previous to $count at sample $taken")
       previous = count

@@ -5,8 +5,11 @@ import munit.FunSuite
 class SampleQueueSuite extends FunSuite:
 
   test("holds a minute of ten-hertz samples"):
-    assertEquals(QuadrantSignals.OneMinute, 600)
-    assertEquals(QuadrantSignals.OneMinute * FrameSampler.DefaultIntervalMillis, 60_000)
+    assertEquals(QuadrantSignals.DetectionWindow, 600)
+    assertEquals(QuadrantSignals.DetectionWindow * FrameSampler.DefaultIntervalMillis, 60_000)
+    // Six minutes kept, so a captured trace covers a whole bench suite rather than its closing minute.
+    assertEquals(QuadrantSignals.Recorded * FrameSampler.DefaultIntervalMillis, 360_000)
+    assert(QuadrantSignals.Recorded > QuadrantSignals.DetectionWindow, "keeping less than is analysed makes no sense")
 
   test("returns samples oldest first while filling"):
     val queue = SampleQueue(5)
