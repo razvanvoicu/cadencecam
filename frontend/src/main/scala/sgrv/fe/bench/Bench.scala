@@ -89,3 +89,11 @@ private[fe] object Bench:
     * first reps of a new test to the tail of the last one.
     */
   val SettleAfterResetMillis = 1500
+
+  /** How long to let a capture reach the backend before the buffer that produced it is wiped.
+    *
+    * The reset now clears the signal, so a capture asked for afterwards would record nothing. The acquirer reads its
+    * buffer and posts a couple of hundred kilobytes over whatever connection a phone has, so this waits rather than
+    * assuming: a lost recording costs the whole test that produced it.
+    */
+  val CaptureBeforeResetMillis = 3000

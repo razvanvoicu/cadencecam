@@ -389,13 +389,28 @@ object Main:
       /** Zeroes the tally without disturbing the detection behind it. Reached from this device's own control and from a
         * watching one, which must mean the same thing on both.
         */
+      /** Starts counting over from nothing: the tally, the detector, and the signal behind them.
+        *
+        * A full wipe rather than a zeroed tally. The button exists to discard what accrued while the user was getting
+        * into position, and leaving the buffer would keep that movement working against them twice over -- its peaks
+        * can still be counted, and its strength still sets the threshold that the real exercise has to clear. A minute
+        * of vigorous setting-up was measured suppressing the exercise that followed for a full minute afterwards, which
+        * is the length of the detector's window.
+        *
+        * The cost is the fifteen seconds the detector needs before it can lock again, and it is not a loss: the reps
+        * performed in the meantime are in the buffer, and the first lock counts the run it finds there.
+        */
       def resetCount(): Unit =
         baseline = 0
-        counter.zeroCount()
+        signals.clear()
+        counter.reset()
+        totalSamples = 0
+        restOffsets.set(Map.empty)
+        lock.set(LockState.Acquiring(0, 0))
         // Cleared rather than saved as zero: a reload should find nothing to resume, rather than a zero that goes on
         // being resumed for the rest of the retention window.
         repCountStore.clear()
-        repCount.set(counter.reading.count)
+        repCount.set(0)
 
       def captureTrace(note: Option[String] = None): Unit =
         if TraceCapture.worthSending(signals) then

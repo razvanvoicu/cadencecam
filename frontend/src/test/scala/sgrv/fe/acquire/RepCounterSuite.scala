@@ -136,34 +136,38 @@ class RepCounterSuite extends FunSuite:
         assert(Set(leader, partner) == Set(Quadrant.Q1, Quadrant.Q2), s"locked onto $leader with $partner")
       case other => fail(s"expected a lock on the two moving quadrants, got $other")
 
-  test("zeroing the count leaves the detection running underneath it"):
+  test("resetting starts over completely: the tally, the detector, and the signal behind them"):
+    // The button exists to discard what accrued while the user was getting into position. Leaving the buffer would
+    // keep that movement working against them twice: its peaks stay countable, and its strength still sets the
+    // threshold the real exercise has to clear.
     val counter = RepCounter()
     val channels = rotating(1.0, 60.0, amplitude = 6.0)
-    val length = channels.values.map(_.size).min
     def feed(upTo: Int): RepReading =
       var reading = counter.reading
       for taken <- 1 to upTo do reading = counter.update(channels.view.mapValues(_.take(taken)).toMap, taken)
       reading
 
     val before = feed(400)
-    assert(before.count > 20, s"expected a running count before zeroing, got ${before.count}")
-    val lockBefore = before.lock
+    assert(before.count > 20, s"expected a running count before resetting, got ${before.count}")
+    assert(before.lock.isInstanceOf[LockState.Locked], s"expected a lock before resetting, got ${before.lock}")
 
-    counter.zeroCount()
+    counter.reset()
 
     assertEquals(counter.reading.count, 0)
-    // The lock is untouched, so a set in progress keeps being counted rather than re-acquiring.
-    assertEquals(counter.reading.lock, lockBefore)
+    // Acquiring again from nothing, rather than carrying the previous lock forward.
+    assertEquals(counter.reading.lock, LockState.Acquiring(0, DetectorSettings().minimumSamplesForLock))
 
-    val after = feed(length)
-    // Only the reps since zeroing: the position of the last counted peak stood, so the buffer was not recounted.
-    assert(after.count > 0, "counting must continue after zeroing")
-    assert(
-      after.count < before.count,
-      s"zeroing must not rediscover the buffer: counted ${after.count} against ${before.count} before"
-    )
-    assert(after.lock.isInstanceOf[LockState.Locked], s"the lock must survive zeroing, got ${after.lock}")
+  test("after a reset the detector has to see a cadence again before it counts"):
+    // The cost of a full wipe, stated: a fresh buffer means no lock until enough samples have arrived. Nothing is
+    // lost by it, because the first lock counts the run it finds in the buffer by then.
+    val counter = RepCounter()
+    val channels = rotating(1.0, 60.0, amplitude = 6.0)
+    for taken <- 1 to 400 do counter.update(channels.view.mapValues(_.take(taken)).toMap, taken)
+    counter.reset()
 
+    val tooSoon = counter.update(channels.view.mapValues(_.take(100)).toMap, 100)
+    assertEquals(tooSoon.count, 0)
+    assert(tooSoon.lock.isInstanceOf[LockState.Acquiring], s"expected to be acquiring, got ${tooSoon.lock}")
   private def sustained(peaks: Seq[Int]) =
     RepAnalysis.sustained(peaks, DetectorSettings().minimumSustainedPeaks, DetectorSettings().maximumGapSamples)
 

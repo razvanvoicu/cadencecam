@@ -26,9 +26,6 @@ private[fe] object BenchView:
     val plan = TestPlan.standard()
     val runId = f"${js.Date.now().toLong}%d-${(js.Math.random() * 4096).toInt}%03x"
 
-    /** Written onto the recording, so it names the run that produced it rather than only the moment it arrived. */
-    val suiteDescription = plan.map(_.name).mkString(" then ")
-
     val stage = Var[Stage](Stage.Idle)
     val acquired = Var(0)
     val reference = Var(0)
@@ -86,13 +83,6 @@ private[fe] object BenchView:
       if index >= plan.size then
         stage.set(Stage.Finished)
         report("suite-finished", 0.0)
-        // The recording is the point of the run, so it is taken without anyone having to remember to. The buffer
-        // holds six minutes and a suite takes a little over five, so this one capture carries both tests and the
-        // break between them -- the signal that counted and the signal that did not, under the same conditions.
-        // Ascribed, or the encoder resolves for the single case rather than for the command as a whole.
-        val capture: LiveCommand = LiveCommand.CaptureTrace(Some(s"bench $runId: $suiteDescription"))
-        val _ = relay.send(capture.toJson)
-        report("trace-requested", 0.0, Some(f"suite ran ${TestPlan.durationSeconds(plan)}%.0fs"))
       else
         acquired.set(0)
         reference.set(0)
@@ -108,11 +98,24 @@ private[fe] object BenchView:
     /** Clears the counter on the other device, then waits before moving again.
       *
       * The wait matters: the command has to travel and take effect, and movement that begins before it has would be
-      * credited to the test that just ended.
+      * credited to the test that just ended. The reset now also wipes the signal buffer, so each test is measured
+      * against its own noise floor rather than against whatever the previous one left behind.
       */
     def resetThen(index: Int): Unit =
       val _ = relay.send(LiveCommand.Reset.toJson)
       val _ = dom.window.setTimeout(() => beginAt(index), Bench.SettleAfterResetMillis.toDouble)
+
+    /** Asks for the recording of the test just finished, then resets once it has had time to arrive.
+      *
+      * The order is the whole point. A reset wipes the buffer the recording is made from, so capturing afterwards would
+      * file an empty one -- and one trace per test is now what a suite produces, each holding only its own movement
+      * rather than everything since the run began.
+      */
+    def captureThenReset(index: Int): Unit =
+      val capture: LiveCommand = LiveCommand.CaptureTrace(Some(s"bench $runId, test ${index + 1}: ${plan(index).name}"))
+      val _ = relay.send(capture.toJson)
+      report("trace-requested", TestPlan.PauseSeconds.toDouble, Some(plan(index).name))
+      val _ = dom.window.setTimeout(() => resetThen(index + 1), Bench.CaptureBeforeResetMillis.toDouble)
 
     def finish(index: Int, expected: Int): Unit =
       val counted = acquired.now()
@@ -123,7 +126,7 @@ private[fe] object BenchView:
         TestPlan.PauseSeconds.toDouble,
         Some(s"reference $expected, acquired $counted")
       )
-      resetThen(index + 1)
+      captureThenReset(index)
 
     def onFrame(now: Double): Unit =
       stage.now() match

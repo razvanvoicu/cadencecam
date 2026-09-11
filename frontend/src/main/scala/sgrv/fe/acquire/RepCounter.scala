@@ -191,14 +191,6 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
       val span = (recent.last - recent.head).toDouble
       if span <= 0 then 0.0 else 60.0 * settings.sampleRateHz * (recent.size - 1) / span
 
-  /** Sets the tally back to nothing without disturbing the detection behind it.
-    *
-    * Deliberately not a reset: the lock, the channel being counted from and the position of the last counted peak all
-    * stand, so a set already in progress keeps being counted and simply starts from zero.
-    */
-  def zeroCount(): Unit =
-    counted = 0
-
   def reset(): Unit =
     counted = 0
     recent = Vector.empty

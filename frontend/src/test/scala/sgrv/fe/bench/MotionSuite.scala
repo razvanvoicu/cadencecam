@@ -134,3 +134,23 @@ class MotionSuite extends FunSuite:
 
   test("a suite takes about five minutes, and the arithmetic says so plainly"):
     assertEqualsDouble(TestPlan.durationSeconds(), 311.5, 1.0)
+
+  test("a capture is asked for before the reset that would wipe what it records"):
+    // The reset now clears the signal buffer, so the order is load-bearing rather than incidental: capturing after
+    // it would file an empty recording and lose the test that produced it.
+    assert(
+      Bench.CaptureBeforeResetMillis > 0,
+      "there must be time between asking for a recording and wiping the buffer it comes from"
+    )
+    assert(
+      Bench.CaptureBeforeResetMillis >= Bench.SettleAfterResetMillis,
+      "sending a few hundred kilobytes from a phone deserves at least as long as a reset takes to land"
+    )
+
+  test("a per-test recording is well inside what the buffer holds"):
+    // One trace per test now, each holding only its own movement and pause, so the six minutes kept is ample.
+    val perTest = TestPlan.DefaultReps / TestPlan.DefaultCadence.hz + TestPlan.PauseSeconds
+    val recorded =
+      sgrv.fe.acquire.QuadrantSignals.Recorded * sgrv.fe.acquire.FrameSampler.DefaultIntervalMillis / 1000.0
+
+    assert(recorded > perTest, f"a test runs ${perTest}%.0fs but only ${recorded}%.0fs is kept")
