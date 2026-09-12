@@ -1,6 +1,7 @@
 package sgrv.fe.bench
 
 import munit.FunSuite
+import sgrv.fe.acquire.DetectorSettings
 
 class StageSuite extends FunSuite:
 
@@ -79,6 +80,18 @@ class StageSuite extends FunSuite:
     assertEquals(Stage.secondsRemaining(Some(10_000.0), 10_000.0), Some(0))
     assertEquals(Stage.secondsRemaining(Some(10_000.0), 12_000.0), Some(0), "a countdown must not run backwards")
     assertEquals(Stage.secondsRemaining(None, 0.0), None, "nothing pending, nothing to show")
+
+  test("the figure stands still for longer than the movement's own period"):
+    // The arrival is a step and its transient reaches forward. A still moment shorter than a rep leaves the first
+    // crossing inside that transient, where it is lost -- and it is lost in whichever quadrant happens to fall
+    // closest, which then leads the count one short. Asserted against the slowest cadence the band admits, so
+    // shortening either of them cannot quietly reintroduce it.
+    val slowestPeriodMillis = 1000.0 / DetectorSettings().lowHz
+
+    assert(
+      TestPlan.StillBeforeMovingMillis >= slowestPeriodMillis,
+      s"${TestPlan.StillBeforeMovingMillis}ms is shorter than the ${slowestPeriodMillis}ms a rep can take"
+    )
 
   test("the break lasts long enough for everything that has to happen in it"):
     // A capture has to reach the backend before the reset wipes the buffer it was made from, and the reset has to

@@ -82,8 +82,14 @@ private[fe] object TestPlan:
     * This gives the first peak the same footing the last one has, now that a test ends with the object put down.
     *
     * None of it is counted. The reference clock starts when the movement does.
+    *
+    * Three seconds rather than one. A second was not enough separation: the figure's arrival is a step, and measured on
+    * real recordings its transient still covered the first crossing of whichever quadrant happened to fall closest to
+    * it -- sixteen samples out was swallowed, nineteen survived, and which quadrant that is depends only on phase. The
+    * quadrant that lost its opening then led the count and the suite came in one short. Three seconds puts the first
+    * crossing some thirty samples clear, and costs twelve seconds across a whole suite.
     */
-  val StillBeforeMovingMillis = 1000
+  val StillBeforeMovingMillis = 3000
 
   /** How long from the end of one test's movement to the start of the next one's.
     *
