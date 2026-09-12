@@ -340,3 +340,27 @@ class RepCounterSuite extends FunSuite:
     // rep, and at most two. The margin is what separates that from a channel watching something else entirely.
     assert(DetectorSettings().quadrantDisagreement >= 1, "a quadrant must be allowed the rep another one missed")
     assert(DetectorSettings().quadrantDisagreement <= 3, "a wider margin admits a channel reading its own noise")
+
+  test("the wait for a rep to come back follows the cadence being kept"):
+    // This wait is the count's standing delay behind the movement: a peak cannot be judged until there is signal
+    // after it. Taking it from the slowest cadence the band admits made it two seconds at every pace, which at
+    // 0.8Hz is most of two reps -- and a dashboard two reps behind looks broken while being correct.
+    val settings = DetectorSettings()
+    val brisk = Seq(0, 6, 12, 18, 24)
+    val slower = Seq(0, 25, 50, 75, 100)
+
+    assertEquals(RepAnalysis.returnWindow(brisk, settings), 6, "a brisk cadence should not wait a slow one's period")
+    assertEquals(RepAnalysis.returnWindow(slower, settings), settings.maximumGapSamples, "capped at the old wait")
+
+  test("with nothing to judge by, the wait is the one the band implies"):
+    val settings = DetectorSettings()
+
+    assertEquals(RepAnalysis.returnWindow(Seq.empty, settings), settings.maximumGapSamples)
+    assertEquals(RepAnalysis.returnWindow(Seq(4), settings), settings.maximumGapSamples)
+
+  test("the wait never falls below the closest two peaks may be"):
+    // A period estimate can collapse when a channel is reading noise; the wait must not collapse with it, or a peak
+    // would be judged on a sample or two of signal and the return test would mean nothing.
+    val settings = DetectorSettings()
+
+    assertEquals(RepAnalysis.returnWindow(Seq(0, 1, 2, 3, 4), settings), settings.minimumDistanceSamples)
