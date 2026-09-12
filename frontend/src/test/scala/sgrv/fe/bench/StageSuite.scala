@@ -34,7 +34,8 @@ class StageSuite extends FunSuite:
     assertEquals(Stage.onFrame(pausing, 1000.0), (Stage.Settling(1), Some(1 -> 12)))
 
   test("no other stage scores anything"):
-    val others = Seq(Stage.Idle, Stage.Running(0, 0.0), Stage.Settling(0), Stage.Finished)
+    val others =
+      Seq(Stage.Idle, Stage.Running(0, 0.0), Stage.Settling(0), Stage.Finished, Stage.Poised(0, 10_000_000.0))
 
     others.foreach: stage =>
       assertEquals(Stage.onFrame(stage, 10_000.0), (stage, None), s"$stage scored something")
@@ -52,6 +53,42 @@ class StageSuite extends FunSuite:
     assertEquals(Stage.restingPalette(Stage.Running(0, 0.0), plan), None)
     assertEquals(Stage.restingPalette(Stage.Idle, plan), None)
     assertEquals(Stage.restingPalette(Stage.Finished, plan), None)
+    // And before it runs: the figure is held still there, not absent.
+    assertEquals(Stage.restingPalette(Stage.Poised(0, 1000.0), plan), None)
+
+  test("the figure is held still, then starts moving at the moment it is due"):
+    // The mirror of the pause at the end. A set begins with the weight picked up and held; starting from an empty
+    // frame made the figure's arrival a step change in whichever quadrants it landed in, with nothing before it to
+    // be measured against.
+    val poised = Stage.Poised(index = 3, until = 1000.0)
+
+    assertEquals(Stage.onFrame(poised, 999.0), (poised, None), "it moved early")
+    assertEquals(Stage.onFrame(poised, 1000.0), (Stage.Running(3, 1000.0), None))
+
+  test("the still moment is not counted: the reference clock starts when the movement does"):
+    // Timing the reps from the figure's arrival would have the harness expecting a rep the animation has not shown,
+    // and scoring the counter as behind for a second it was given nothing to count.
+    val (started, _) = Stage.onFrame(Stage.Poised(0, 1000.0), 1400.0)
+
+    assertEquals(started, Stage.Running(0, 1400.0), "the clock must start now, not when the figure appeared")
+
+  test("a countdown reaches zero when the wait is over, and never goes below it"):
+    // Rounded up, so a second still to run reads as one rather than as none.
+    assertEquals(Stage.secondsRemaining(Some(10_000.0), 0.0), Some(10))
+    assertEquals(Stage.secondsRemaining(Some(10_000.0), 9_001.0), Some(1))
+    assertEquals(Stage.secondsRemaining(Some(10_000.0), 10_000.0), Some(0))
+    assertEquals(Stage.secondsRemaining(Some(10_000.0), 12_000.0), Some(0), "a countdown must not run backwards")
+    assertEquals(Stage.secondsRemaining(None, 0.0), None, "nothing pending, nothing to show")
+
+  test("the break lasts long enough for everything that has to happen in it"):
+    // A capture has to reach the backend before the reset wipes the buffer it was made from, and the reset has to
+    // reach the other device before the next test's movement is credited to it.
+    assertEquals(TestPlan.PauseSeconds, 15)
+    assertEquals(
+      TestPlan.BreakMillis,
+      TestPlan.PauseSeconds * 1000 + Bench.CaptureBeforeResetMillis + Bench.SettleAfterResetMillis
+    )
+    assert(TestPlan.BreakMillis > TestPlan.PauseSeconds * 1000, "the break outlasts the pause inside it")
 
   test("a stage naming a test the plan does not have asks for nothing"):
     assertEquals(Stage.restingPalette(Stage.Settling(plan.size), plan), None)

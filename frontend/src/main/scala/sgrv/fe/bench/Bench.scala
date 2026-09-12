@@ -11,6 +11,15 @@ import scala.scalajs.js
   */
 private[fe] enum Stage:
   case Idle
+
+  /** The figure on screen and motionless, before its test's movement begins.
+    *
+    * The mirror of `Pausing`. A set ends with the weight put down, which gives the last peak its trough; a set begins
+    * with the weight picked up and held, which gives the first peak one. Without it the figure's arrival was itself a
+    * step change in whichever quadrants it landed in, arriving with nothing before it to be measured against.
+    */
+  case Poised(index: Int, until: Double)
+
   case Running(index: Int, startedAt: Double)
   case Pausing(index: Int, until: Double, reference: Int)
 
@@ -33,8 +42,19 @@ private[fe] object Stage:
     * times a second. Leaving immediately is the whole point, and it is asserted rather than assumed.
     */
   def onFrame(stage: Stage, now: Double): (Stage, Option[(Int, Int)]) = stage match
+    // The reference clock starts here rather than when the figure appeared: the still moment is not counted, and
+    // timing it from the arrival would have the harness expecting a rep the animation has not shown yet.
+    case Poised(index, until) if now >= until            => (Running(index, now), None)
     case Pausing(index, until, expected) if now >= until => (Settling(index), Some(index -> expected))
     case other                                           => (other, None)
+
+  /** The seconds still to wait, rounded up, or nothing when nothing is pending.
+    *
+    * Rounded up rather than down so a countdown reaches zero when the wait is over rather than a second before it, and
+    * floored at zero so an overrun reads as "now" instead of counting backwards.
+    */
+  private[bench] def secondsRemaining(target: Option[Double], now: Double): Option[Int] =
+    target.map(at => math.max(0, math.ceil((at - now) / 1000.0).toInt))
 
   /** The background to hold once the movement is over, with the figure gone.
     *

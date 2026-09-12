@@ -37,6 +37,10 @@ private[fe] object BenchView:
     var stall = StallWatch()
     var wasWithin = true
     var lastComparison = Comparison(0, 0, 0.0, withinTolerance = true)
+    // When the next test's figure appears, while a break is running. A plain var, read every frame; only the whole
+    // second derived from it reaches the view, so the readout changes once a second rather than sixty times.
+    var nextTestAt = Option.empty[Double]
+    val breakRemaining = Var(Option.empty[Int])
 
     val canvas = canvasTag(cls := "bench-canvas")
 
@@ -61,6 +65,7 @@ private[fe] object BenchView:
       val event = TestEvent(
         runId = runId,
         testName = stage.now() match
+          case Stage.Poised(index, _)     => plan(index).name
           case Stage.Running(index, _)    => plan(index).name
           case Stage.Pausing(index, _, _) => plan(index).name
           case Stage.Settling(index)      => plan(index).name
@@ -90,9 +95,12 @@ private[fe] object BenchView:
         wasWithin = true
         stall = StallWatch()
         lastComparison = Comparison(0, 0, 0.0, withinTolerance = true)
+        nextTestAt = None
+        breakRemaining.set(None)
         // The same clock the animation frame reports, which is milliseconds since the page loaded rather than
         // since 1970. Mixing the two put the elapsed time at minus fifty years and overflowed the count.
-        stage.set(Stage.Running(index, dom.window.performance.now()))
+        // The figure stands still first; the reference clock starts when it begins to move.
+        stage.set(Stage.Poised(index, dom.window.performance.now() + TestPlan.StillBeforeMovingMillis))
         report("started", 0.0, Some(plan(index).name))
 
     /** Clears the counter on the other device, then waits before moving again.
@@ -129,7 +137,14 @@ private[fe] object BenchView:
       captureThenReset(index)
 
     def onFrame(now: Double): Unit =
+      val remaining = Stage.secondsRemaining(nextTestAt, now)
+      if remaining != breakRemaining.now() then breakRemaining.set(remaining)
       stage.now() match
+        case Stage.Poised(index, _) =>
+          // On screen and motionless. Drawn at the phase the movement will start from, so nothing jumps when it does.
+          Painter.draw(canvas.ref, plan(index), 0.0)
+          val (next, _) = Stage.onFrame(stage.now(), now)
+          stage.set(next)
         case Stage.Running(index, startedAt) =>
           val test = plan(index)
           val elapsed = (now - startedAt) / 1000.0
@@ -160,6 +175,8 @@ private[fe] object BenchView:
           if comparison.reference >= test.reps then
             report("movement-finished", elapsed, Some(s"${test.reps} reps shown"))
             stage.set(Stage.Pausing(index, now + TestPlan.PauseSeconds * 1000, comparison.reference))
+            // Only when something follows. After the last test the wait leads to a summary, not to another test.
+            if index + 1 < plan.size then nextTestAt = Some(now + TestPlan.BreakMillis)
         case current @ Stage.Pausing(index, _, _) =>
           // The figure is gone, not merely stopped: a set ends with the weight being put down, and the object
           // leaving the frame is what gives the last rep the trough that every other rep had.
@@ -201,9 +218,10 @@ private[fe] object BenchView:
       * only one line here counts reps, and it says so.
       */
     val stats = outcomes.signal
-      .combineWith(stage.signal, reference.signal)
-      .map: (done, current, shown) =>
+      .combineWith(stage.signal, reference.signal, breakRemaining.signal)
+      .map: (done, current, shown, waiting) =>
         val index = current match
+          case Stage.Poised(i, _)     => i + 1
           case Stage.Running(i, _)    => i + 1
           case Stage.Pausing(i, _, _) => i + 1
           // Between two tests: the one just scored is behind us, so the next is the one to name.
@@ -211,9 +229,14 @@ private[fe] object BenchView:
           case Stage.Finished    => plan.size
           case Stage.Idle        => 0
         val passed = done.count(_.passed)
+        // One row, two jobs: while a test runs it counts the reps shown, and during the break it says how long is
+        // left of it. Nothing is being shown then, so the reps figure is a stale number holding a useful line.
+        val progress = waiting match
+          case Some(seconds) => "next test in" -> s"${seconds}s"
+          case None          => "reps in this test" -> shown.toString
         Seq(
           "current test" -> (if index == 0 then s"none of ${plan.size}" else s"$index of ${plan.size}"),
-          "reps in this test" -> shown.toString,
+          progress,
           "tests completed" -> s"${done.size} of ${plan.size}",
           "tests passed" -> passed.toString,
           "tests failed" -> (done.size - passed).toString

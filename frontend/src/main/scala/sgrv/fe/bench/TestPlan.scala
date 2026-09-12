@@ -62,8 +62,29 @@ private[fe] object TestPlan:
     *
     * The detector confirms a peak from samples that follow it, and reports over a socket, so the last rep of a set
     * arrives after the set has ended. Ending a test the moment the animation stops would score that as a miss.
+    *
+    * Fifteen, down from thirty. The window the prominence bar is drawn from is fifteen seconds now, so a peak that has
+    * not been admitted within that has not been held back by the set that preceded it; it is not coming.
     */
-  val PauseSeconds = 30
+  val PauseSeconds = 15
+
+  /** How long the figure stands on screen before it starts moving, at the start of each test.
+    *
+    * A set does not begin with the weight already swinging: it is picked up, held, and then moved. Beginning from an
+    * empty frame made the figure's own arrival a step change in every quadrant it landed in -- at the input, that is
+    * indistinguishable from the first half of a rep, and it arrived with no trough before it to be measured against.
+    * This gives the first peak the same footing the last one has, now that a test ends with the object put down.
+    *
+    * None of it is counted. The reference clock starts when the movement does.
+    */
+  val StillBeforeMovingMillis = 1000
+
+  /** How long from the end of one test's movement to the start of the next one's.
+    *
+    * The pause the detector is given to finish reporting, then the time a capture needs to reach the backend before the
+    * reset wipes what it was made from, then the settle that lets the reset take effect on the other device.
+    */
+  val BreakMillis: Int = PauseSeconds * 1000 + Bench.CaptureBeforeResetMillis + Bench.SettleAfterResetMillis
 
   /** How far the counter may lag or lead before it is worth recording, in seconds of movement.
     *
@@ -102,9 +123,11 @@ private[fe] object TestPlan:
       theme <- Seq(Theme.Darker, Theme.Lighter)
     yield TestCase(figure, Palette.of(theme), cadence, reps)
 
-  /** How long one test runs: its movement and the pause that follows, which is what a single capture has to cover. */
-  def testSeconds(test: TestCase): Double = test.reps / test.cadence.hz + PauseSeconds
+  /** How long one test runs: the still moment, the movement, and the pause after it. What a capture has to cover. */
+  def testSeconds(test: TestCase): Double =
+    StillBeforeMovingMillis / 1000.0 + test.reps / test.cadence.hz + PauseSeconds
 
-  /** How long a whole suite runs, including the pause after each test and the settle between them. */
+  /** How long a whole suite runs, including what happens between one test and the next. */
   def durationSeconds(plan: Seq[TestCase]): Double =
-    plan.map(testSeconds).sum + (plan.size - 1) * Bench.SettleAfterResetMillis / 1000.0
+    plan.map(testSeconds).sum +
+      (plan.size - 1) * (Bench.CaptureBeforeResetMillis + Bench.SettleAfterResetMillis) / 1000.0
