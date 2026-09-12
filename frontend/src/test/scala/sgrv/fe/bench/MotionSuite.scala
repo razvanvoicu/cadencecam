@@ -85,57 +85,55 @@ class MotionSuite extends FunSuite:
     assertEquals(Trajectory.shuttle(math.Pi), Trajectory.Q1)
 
   test("the suite runs every figure in both themes"):
-    val plan = TestPlan.standard(draw = () => 0.5)
+    val plan = TestPlan.standard()
 
     assertEquals(plan.size, 6)
     assertEquals(plan.map(_.figure).distinct.toSet, Figure.values.toSet)
-    assertEquals(plan.count(_.palette.theme == Theme.Darker), 3)
-    assertEquals(plan.count(_.palette.theme == Theme.Lighter), 3)
+    assertEquals(plan.count(_.palette.theme == Theme.Darker), 3, "three darker tests")
+    assertEquals(plan.count(_.palette.theme == Theme.Lighter), 3, "three lighter tests")
     // Alternating, so the two runs of one figure sit next to each other and differ only in which way contrast points.
-    assertEquals(plan.map(_.figure), plan.map(_.figure).grouped(2).flatMap(pair => pair).toSeq)
     plan.grouped(2).foreach(pair => assertEquals(pair.map(_.figure).distinct.size, 1))
 
-  test("every grey a test can draw comes from its band"):
+  test("the two bands are the ones asked for, and do not meet"):
     // Not black on white. That was the easiest signal a camera can be given, and passing it said little; these bands
     // sit a quarter of the scale apart, which is nearer to what a room offers.
     assertEquals(Grey.Dark, 32 to 95)
     assertEquals(Grey.Light, 128 to 191)
     assert(Grey.Dark.end < Grey.Light.start, "the two bands must not overlap")
 
-    val draws = (0 until 1000).map(_ / 1000.0)
-    assert(draws.map(Grey.level(Grey.Dark, _)).forall(Grey.Dark.contains))
-    assert(draws.map(Grey.level(Grey.Light, _)).forall(Grey.Light.contains))
+  test("a palette puts the lighter band where its theme says"):
+    val darker = Palette.of(Theme.Darker)
+    assertEquals(darker.ink, Grey.Light)
+    assertEquals(darker.ground, Grey.Dark)
+    assertEquals(darker.name, "grey 128-191 on 32-95")
 
-  test("each level in a band is drawn as often as every other"):
-    // Uniform in the sense that matters: sweeping the draw across [0, 1) must visit all sixty-four levels of a band
-    // the same number of times. A draw that rounded rather than floored would visit the two ends half as often, and
-    // the suite would quietly under-test the very edges of the contrast range it exists to cover.
+    val lighter = Palette.of(Theme.Lighter)
+    assertEquals(lighter.ink, Grey.Dark)
+    assertEquals(lighter.ground, Grey.Light)
+
+  test("a region holds every level of its band, exactly as often as every other"):
+    // Not sixty-five thousand independent draws: that leaves the histogram visibly ragged, some levels a few percent
+    // over and others under. Naming a band is a claim that the test covers it evenly, so the levels are dealt out and
+    // then shuffled, which makes the claim exactly true rather than true on average over enough runs.
     for band <- Seq(Grey.Dark, Grey.Light) do
-      val samples = 64 * 100
-      val counts = (0 until samples).map(step => Grey.level(band, step.toDouble / samples)).groupBy(identity)
-      assertEquals(counts.keySet, band.toSet)
-      assertEquals(counts.values.map(_.size).toSet, Set(samples / band.length))
+      val pixels = Texture.TileEdge * Texture.TileEdge
+      val counts = Texture.levels(band, pixels, () => scala.util.Random.nextDouble()).groupBy(identity)
 
-  test("a palette puts the lighter grey where its theme says"):
-    val darker = Palette.drawn(Theme.Darker, draws(0.0, 0.999))
-    assertEquals(darker.inkLevel, Grey.Light.end)
-    assertEquals(darker.groundLevel, Grey.Dark.start)
-    assertEquals(darker.theme, Theme.Darker)
-    assertEquals(darker.ink, "#bfbfbf")
-    assertEquals(darker.ground, "#202020")
+      assertEquals(counts.keySet, band.toSet, "every level of the band must appear")
+      assertEquals(counts.values.map(_.length).toSet, Set(pixels / band.length), "and all of them equally often")
 
-    val lighter = Palette.drawn(Theme.Lighter, draws(0.0, 0.999))
-    assertEquals(lighter.inkLevel, Grey.Dark.start)
-    assertEquals(lighter.groundLevel, Grey.Light.end)
-    assertEquals(lighter.theme, Theme.Lighter)
+  test("a region is speckled, not flat"):
+    // The mistake this replaces: one level drawn per test and painted flat across the whole region. A camera sees
+    // texture, and a scene with none asks nothing of its denoising, its metering or its compression.
+    val speckle = Texture.levels(Grey.Dark, 640, () => scala.util.Random.nextDouble())
 
-  /** Hands out the given draws in order, so a palette can be pinned down exactly. */
-  private def draws(values: Double*): () => Double =
-    var remaining = values.toList
-    () =>
-      val next = remaining.head
-      remaining = remaining.tail
-      next
+    assert(speckle.distinct.length > 1, "a region of one level is the flat fill this exists to replace")
+    assert(speckle.toSeq != speckle.sorted.toSeq, "dealt but never shuffled would band the region instead")
+
+  test("a tile can be divided evenly by either band"):
+    assertEquals(Texture.TileEdge * Texture.TileEdge % Grey.Dark.length, 0)
+    assertEquals(Texture.TileEdge * Texture.TileEdge % Grey.Light.length, 0)
+    intercept[IllegalArgumentException](Texture.levels(Grey.Dark, 100, () => 0.5))
 
   test("time before the movement began counts as nothing, not as a large negative number"):
     // Two clocks were mixed once -- an epoch timestamp against the animation frame's milliseconds-since-load -- and
@@ -168,7 +166,7 @@ class MotionSuite extends FunSuite:
     // capture at the end, and a suite of six would no longer come close to fitting.
     val recordedSeconds =
       sgrv.fe.acquire.QuadrantSignals.Recorded * sgrv.fe.acquire.FrameSampler.DefaultIntervalMillis / 1000.0
-    val longest = TestPlan.standard(draw = () => 0.5).map(TestPlan.testSeconds).max
+    val longest = TestPlan.standard().map(TestPlan.testSeconds).max
 
     assert(
       recordedSeconds > longest,
@@ -178,7 +176,7 @@ class MotionSuite extends FunSuite:
   test("a suite takes about a quarter of an hour, and the arithmetic says so plainly"):
     // Six tests rather than two, and worth stating outright: whoever starts a run should know they are committing to
     // it rather than discovering the length halfway through.
-    assertEqualsDouble(TestPlan.durationSeconds(TestPlan.standard(draw = () => 0.5)), 937.5, 1.0)
+    assertEqualsDouble(TestPlan.durationSeconds(TestPlan.standard()), 937.5, 1.0)
 
   test("a capture is asked for before the reset that would wipe what it records"):
     // The reset now clears the signal buffer, so the order is load-bearing rather than incidental: capturing after

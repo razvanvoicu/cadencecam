@@ -70,7 +70,7 @@ private[fe] object Painter:
     */
   def clear(canvas: dom.HTMLCanvasElement, palette: Palette): Unit =
     val context = canvas.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D]
-    context.fillStyle = palette.ground
+    context.fillStyle = Texture.paint(context, palette.ground)
     context.fillRect(0, 0, canvas.width.toDouble, canvas.height.toDouble)
     crosses(context, canvas.width.toDouble, canvas.height.toDouble)
 
@@ -138,12 +138,15 @@ private[fe] object Painter:
     val context = canvas.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D]
     val width = canvas.width.toDouble
     val height = canvas.height.toDouble
-    context.fillStyle = test.palette.ground
+    context.fillStyle = Texture.paint(context, test.palette.ground)
     context.fillRect(0, 0, width, height)
     // Under the figure, so the bar and the square cover the marks they reach rather than being drawn over by them.
     crosses(context, width, height)
-    context.fillStyle = test.palette.ink
-    context.strokeStyle = test.palette.ink
+    // The figure is speckled too, from its own band. What moves across the frame is a textured object against a
+    // textured ground, which is the thing a camera in a room is ever asked to see.
+    val ink = Texture.paint(context, test.palette.ink)
+    context.fillStyle = ink
+    context.strokeStyle = ink
 
     // The trajectories live on a square field, centred in whatever the canvas turns out to be. Scaling x by the
     // width and y by the height independently would turn the circle into an ellipse the moment the canvas was not

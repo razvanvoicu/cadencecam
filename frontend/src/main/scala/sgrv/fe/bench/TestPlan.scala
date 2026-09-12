@@ -30,34 +30,28 @@ private[fe] object Grey:
   val Dark: Range = 32 to 95
   val Light: Range = 128 to 191
 
-  /** The level a uniform draw in [0, 1) selects, every level in the range equally likely. */
-  def level(range: Range, draw: Double): Int =
-    require(draw >= 0.0 && draw < 1.0, s"a uniform draw belongs in [0, 1), not $draw")
-    range.start + math.min(range.length - 1, (draw * range.length).toInt)
-
   /** As CSS, which wants each channel twice over: a grey has all three the same. */
   def css(level: Int): String = f"#$level%02x$level%02x$level%02x"
 
-/** A foreground against a background, as levels of grey.
+/** A foreground band against a background band.
+  *
+  * Bands rather than levels. Each region is speckled with every grey its band holds, equally often, so the moving
+  * object and the ground behind it each have texture of their own -- which is what a camera is actually ever pointed
+  * at. Two flat tones would be the easiest scene there is, and a detector that only ever passed that would have been
+  * told nothing about a room.
   *
   * Contrast is the one thing counting has been observed to depend on, so it is a property of a test rather than a
-  * detail of the page. The levels are carried alongside the colours because they are what the result has to be read
-  * against: "counted 98" means nothing without knowing it was 141 on 44.
+  * detail of the page.
   */
-private[fe] final case class Palette(inkLevel: Int, groundLevel: Int):
-  def ink: String = Grey.css(inkLevel)
-  def ground: String = Grey.css(groundLevel)
-  def name: String = s"$inkLevel on $groundLevel"
-  def theme: Theme = if inkLevel > groundLevel then Theme.Darker else Theme.Lighter
+private[fe] final case class Palette(ink: Range, ground: Range):
+  def name: String = s"grey ${ink.start}-${ink.end} on ${ground.start}-${ground.end}"
+  def theme: Theme = if ink.start > ground.start then Theme.Darker else Theme.Lighter
 
 private[fe] object Palette:
-  /** One palette of the given theme, its two levels drawn independently from their bands. */
-  def drawn(theme: Theme, draw: () => Double): Palette =
-    val dark = Grey.level(Grey.Dark, draw())
-    val light = Grey.level(Grey.Light, draw())
-    theme match
-      case Theme.Darker  => Palette(inkLevel = light, groundLevel = dark)
-      case Theme.Lighter => Palette(inkLevel = dark, groundLevel = light)
+  /** Which band goes where, which is all a theme is. */
+  def of(theme: Theme): Palette = theme match
+    case Theme.Darker  => Palette(ink = Grey.Light, ground = Grey.Dark)
+    case Theme.Lighter => Palette(ink = Grey.Dark, ground = Grey.Light)
 
 /** One test: a figure moving at a cadence, in a palette, for a fixed number of reps. */
 private[fe] final case class TestCase(figure: Figure, palette: Palette, cadence: Cadence, reps: Int):
@@ -102,15 +96,11 @@ private[fe] object TestPlan:
     * Alternating rather than grouped, so the two runs of the same figure sit next to each other and differ only in
     * which way the contrast points.
     */
-  def standard(
-      reps: Int = DefaultReps,
-      cadence: Cadence = DefaultCadence,
-      draw: () => Double = () => scala.util.Random.nextDouble()
-  ): Seq[TestCase] =
+  def standard(reps: Int = DefaultReps, cadence: Cadence = DefaultCadence): Seq[TestCase] =
     for
       figure <- Figure.values.toSeq
       theme <- Seq(Theme.Darker, Theme.Lighter)
-    yield TestCase(figure, Palette.drawn(theme, draw), cadence, reps)
+    yield TestCase(figure, Palette.of(theme), cadence, reps)
 
   /** How long one test runs: its movement and the pause that follows, which is what a single capture has to cover. */
   def testSeconds(test: TestCase): Double = test.reps / test.cadence.hz + PauseSeconds
