@@ -242,6 +242,18 @@ private[fe] object BenchView:
           "tests failed" -> (done.size - passed).toString
         )
 
+    /** Every test of the plan against what it scored, filled in as the suite goes.
+      *
+      * The whole plan from the start rather than a list that grows: a suite takes a quarter of an hour, and which tests
+      * are still to come is as much a part of reading the screen as which have finished. A test that has not run yet
+      * holds its place with dashes.
+      *
+      * This is what a failure has to be read from. The final tally says two of six failed; only the rows say it was
+      * both bars, or everything lighter, or one figure in both themes -- and those are different diagnoses.
+      */
+    val results = outcomes.signal.map: done =>
+      plan.zipWithIndex.map((test, index) => test.shortName -> done.lift(index))
+
     /** One line for the end of the suite, where the detail above has stopped changing. */
     val summary = outcomes.signal.map: done =>
       val passed = done.count(_.passed)
@@ -309,5 +321,35 @@ private[fe] object BenchView:
               div(cls := "bench-stat", span(cls := "bench-stat-label", label), span(cls := "bench-stat-value", value))
         ),
         button(cls := "back-button bench-back", typ := "button", "Back", onClick --> (_ => onBack()))
+      ),
+      div(
+        cls := "bench-results",
+        div(
+          cls := "bench-results-table",
+          div(
+            cls := "bench-result heading",
+            span(cls := "bench-result-name", "test"),
+            span(cls := "bench-result-number", "shown"),
+            span(cls := "bench-result-number", "counted"),
+            span(cls := "bench-result-number", "off")
+          ),
+          children <-- results.map: rows =>
+            rows.map: (name, outcome) =>
+              div(
+                cls := "bench-result",
+                cls("passed") := outcome.exists(_.passed),
+                cls("failed") := outcome.exists(!_.passed),
+                cls("pending") := outcome.isEmpty,
+                span(cls := "bench-result-name", name),
+                span(cls := "bench-result-number", outcome.map(_.reference.toString).getOrElse("—")),
+                span(cls := "bench-result-number", outcome.map(_.acquired.toString).getOrElse("—")),
+                // Signed, and explicitly so: "4" leaves it to be worked out whether four reps were missed or
+                // invented, and those are opposite faults.
+                span(
+                  cls := "bench-result-number",
+                  outcome.map(scored => f"${scored.acquired - scored.reference}%+d").getOrElse("—")
+                )
+              )
+        )
       )
     )

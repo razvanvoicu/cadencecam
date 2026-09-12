@@ -222,3 +222,12 @@ class MotionSuite extends FunSuite:
     assert(Painter.CrossArm < 0.05, "a cross this large would be a moving part of the scene, not a mark on it")
     // Between the bands, so nothing shown while framing hints at the theme of the test about to run.
     assert(Painter.IdleLevel > Grey.Dark.end && Painter.IdleLevel < Grey.Light.start)
+
+  test("a result row names the two things that differ between tests"):
+    // Everything else is the same in all six -- the bands, the cadence, the rep count -- so a row repeating them
+    // would bury the part that says which test it was. A failure is read by what the failing rows share.
+    val plan = TestPlan.standard()
+
+    assertEquals(plan.map(_.shortName).distinct.size, plan.size, "two rows reading the same is a table of nothing")
+    assertEquals(plan.head.shortName, "disc, darker")
+    assertEquals(plan.last.shortName, "square, lighter")

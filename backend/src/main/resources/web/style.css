@@ -438,15 +438,20 @@ button,
   box-sizing: border-box;
 }
 
-/* Square so the operator has an unambiguous target to frame. The trajectories are stated as fractions, so they
-   would survive a stretched panel; what would not survive is a camera framing it loosely in one axis, and a square
-   makes an error in either axis equally obvious. Height drives the width -- with `flex: 1` the basis wins and the
-   aspect ratio is quietly ignored. */
+/* Square where there is room for it: the trajectories are stated as fractions and survive a stretched panel, but a
+   camera framing a square loosely in one axis makes the error obvious in either. Height drives the width, since with
+   `flex: 1` the basis wins and the aspect ratio is quietly ignored.
+
+   It gives way rather than pushing the columns beside it off the screen, which is what a hard `flex: 0 0 auto` did:
+   the results table was squeezed to a single letter. The figure stays correct when it does -- it is drawn on a square
+   field centred in whatever the canvas turns out to be -- and the four crosses now mark that field, which is a better
+   framing target than the panel's own edges ever were. */
 .bench-stage {
   position: relative;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   height: 100%;
   max-width: 100%;
+  min-width: 0;
   aspect-ratio: 1;
   align-self: center;
 }
@@ -486,7 +491,7 @@ button,
   flex-direction: column;
   justify-content: center;
   gap: 0.5rem;
-  flex: 0 0 22rem;
+  flex: 0 1 16rem;
   min-width: 0;
 }
 
@@ -535,6 +540,68 @@ button,
 
 .bench-back {
   align-self: center;
+}
+
+/* The third column, and the one a finished run is actually read from. The tally says how many failed; only this
+   says which, and whether the failures share a figure, a theme, or nothing. */
+.bench-results {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 0 1 17rem;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.bench-results-table {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 0.15rem 0.7rem;
+  align-content: center;
+  font-size: 0.85rem;
+}
+
+.bench-result {
+  display: contents;
+}
+
+/* Wraps rather than ellipsing. There are only six rows, so a second line costs nothing, and "square, li..." hides
+   exactly the half that says which of the two runs of that figure this was. */
+.bench-result-name {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.bench-result-number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+/* The header row reads as labels, not as a result of its own. */
+.bench-result.heading span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.2rem;
+  margin-bottom: 0.2rem;
+}
+
+/* A test still to come holds its place rather than appearing later and shifting everything below it. */
+.bench-result.pending span {
+  color: var(--muted);
+  opacity: 0.55;
+}
+
+.bench-result.passed .bench-result-number {
+  color: #35c46a;
+}
+
+.bench-result.failed .bench-result-name,
+.bench-result.failed .bench-result-number {
+  color: #ef4444;
 }
 
 .acquirer-view {

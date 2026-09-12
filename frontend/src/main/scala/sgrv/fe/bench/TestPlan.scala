@@ -57,6 +57,12 @@ private[fe] object Palette:
 private[fe] final case class TestCase(figure: Figure, palette: Palette, cadence: Cadence, reps: Int):
   def name: String = f"${figure.toString.toLowerCase}, ${palette.name}, ${cadence.hz}%.2fHz x $reps"
 
+  /** Short enough for a column, and carrying the only two things that differ between the tests of a suite: the figure
+    * and which way its contrast runs. Everything else -- the bands, the cadence, the number of reps -- is the same in
+    * all six, so repeating it in every row would bury the part that tells them apart.
+    */
+  def shortName: String = s"${figure.toString.toLowerCase}, ${palette.theme.toString.toLowerCase}"
+
 private[fe] object TestPlan:
   /** How long to keep listening after the movement stops.
     *
