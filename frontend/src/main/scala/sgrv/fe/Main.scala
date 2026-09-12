@@ -3,6 +3,7 @@ package sgrv.fe
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
 import sgrv.api.AboutInfo
+import sgrv.api.AcquirerPresence
 import sgrv.api.CountingSession
 import sgrv.api.CurrentUser
 import sgrv.fe.acquire.{
@@ -89,6 +90,28 @@ object Main:
 
     def show(screen: Screen): Unit = stateStore.update(_.copy(screen = screen))
 
+    /** Raised while this device waits to be told whether to displace another one that is already counting.
+      *
+      * One acquirer per account is enforced by the relay, which stands the older device down. That is the right outcome
+      * and the wrong way to arrive at it unannounced: on a bench with four handsets signed into one account, a phone
+      * that silently stopped counting looked like a phone that had crashed. So it is asked for first.
+      */
+    val takeoverPending = Var(false)
+
+    /** Becomes the acquirer, asking first if the account already has one.
+      *
+      * The check can fail -- an offline device, a signed-out session -- and a failure here must not stand between
+      * someone and their camera, so it proceeds. The relay still guarantees there is only one.
+      */
+    def acquireRole(): Unit =
+      http
+        .get(AcquirerPresence.Path)
+        .flatMap(response => response.text())
+        .map(_.fromJson[AcquirerPresence])
+        .onComplete:
+          case Success(Right(AcquirerPresence(true))) => takeoverPending.set(true)
+          case _                                      => show(Screen.Acquirer)
+
     def openAbout(): Unit =
       stateStore.update(_.copy(aboutState = AboutState.Loading))
       fetchAbout(http).onComplete:
@@ -134,11 +157,18 @@ object Main:
         )
       )
 
+    /** The About link on its own, for the login screen: there is no account to log out of yet. */
+    def aboutOnly: Element =
+      div(
+        cls := "user-actions",
+        a(cls := "about-link", href := "/about", onClick.preventDefault --> (_ => openAbout()), "About")
+      )
+
     def roleChoice(modifier: String, screen: Screen, title: String, description: String): Element =
       button(
         cls := s"mode-button $modifier",
         typ := "button",
-        onClick --> (_ => show(screen)),
+        onClick --> (_ => if screen == Screen.Acquirer then acquireRole() else show(screen)),
         span(cls := "mode-title", title),
         span(cls := "mode-description", description)
       )
@@ -436,7 +466,12 @@ object Main:
           text.fromJson[LiveCommand] match
             case Right(LiveCommand.Reset)              => resetCount()
             case Right(LiveCommand.CaptureTrace(note)) => captureTrace(note)
-            case Left(details)                         => dom.console.warn(s"Ignoring an unreadable command: $details")
+            case Right(LiveCommand.Displaced)          =>
+              // Another device has taken the role. Leaving this screen is what releases the camera; staying would
+              // leave a phone counting into a room it no longer owns, with its own tally still climbing on screen.
+              dom.console.info("Another device is now counting for this account; standing down")
+              show(Screen.Selection)
+            case Left(details) => dom.console.warn(s"Ignoring an unreadable command: $details")
       )
 
       def release(): Unit =
@@ -683,7 +718,10 @@ object Main:
             // The acquirer keeps its own Back and Logout below the count, so the global bar would only duplicate it.
             case Shell.SignedIn(_, Screen.Acquirer) => emptyNode
             case Shell.SignedIn(_, _)               => userActions
-            case _                                  => emptyNode,
+            // Reachable before signing in as well. Which build a browser is running is exactly the thing one wants
+            // to check on a device that will not behave, and being signed out is no reason not to be able to look.
+            case Shell.Login | Shell.AuthenticationFailed(_) => aboutOnly
+            case _                                           => emptyNode,
         div(
           cls := "content",
           // Distinct, and on the shell rather than the whole state: without it every write to FrontendState builds a
@@ -732,7 +770,12 @@ object Main:
                     dt("Scala version"),
                     dd(information.scalaVersion),
                     dt("Scala.js version"),
-                    dd(information.scalaJsVersion)
+                    dd(information.scalaJsVersion),
+                    // What the browser is actually running, which need not be what the server just served. Stamped
+                    // into the bundle at packaging time and read back out of this browser's own storage, so a cached
+                    // build says so plainly instead of being mistaken for the detector misbehaving.
+                    dt("Frontend build"),
+                    dd(Device.frontendBuild().getOrElse("not recorded by this browser"))
                   )
                 case AboutState.Closed => emptyNode
 
@@ -759,6 +802,41 @@ object Main:
                   account
                     .fold(emptyNode)(email => dl(cls := "about-details about-account", dt("Signed in as"), dd(email))),
                   content
+                )
+              )
+        ,
+        child <-- takeoverPending.signal
+          .map:
+            case false => emptyNode
+            case true  =>
+              div(
+                cls := "about-overlay",
+                div(
+                  cls := "about-dialog takeover-dialog",
+                  role := "alertdialog",
+                  div(cls := "about-header", h2("Another device is counting")),
+                  p(
+                    "This account already has a device counting. Only one can, so taking over will send the other " +
+                      "one back to its home screen and release its camera."
+                  ),
+                  div(
+                    cls := "takeover-actions",
+                    button(
+                      cls := "mode-button",
+                      typ := "button",
+                      "Take over",
+                      onClick --> { _ =>
+                        takeoverPending.set(false)
+                        show(Screen.Acquirer)
+                      }
+                    ),
+                    button(
+                      cls := "back-button",
+                      typ := "button",
+                      "Leave it alone",
+                      onClick --> (_ => takeoverPending.set(false))
+                    )
+                  )
                 )
               )
         ,

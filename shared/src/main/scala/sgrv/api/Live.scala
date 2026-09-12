@@ -34,6 +34,15 @@ object LiveState:
 enum LiveCommand:
   case Reset
 
+  /** Stand down: another device has taken over counting for this account.
+    *
+    * The one message on this channel the server sends of its own accord rather than relaying from a dashboard. A
+    * displaced acquirer used to have its socket closed under it and carry on regardless -- still showing a count, and
+    * still holding the camera -- which on a desk full of phones is how two devices end up counting the same set and
+    * neither of them says so.
+    */
+  case Displaced
+
   /** `note` says who asked and why, and ends up on the recording itself.
     *
     * Without it a capture is identifiable only by the moment it arrived, which is enough to tell one account's runs
@@ -60,12 +69,32 @@ final case class TestEvent(
     acquired: Int,
     lagSeconds: Double,
     atSeconds: Double,
-    detail: Option[String] = None
+    detail: Option[String] = None,
+    /** Which device was counting, as far as the browser will say.
+      *
+      * Recorded because the answer to "why did this suite undercount" has turned out to depend on it more than on
+      * anything in the detector: runs from the same account on different handsets have come back exactly right, one
+      * short on every test, and fifteen short. Without this the only way to tell them apart afterwards was to ask
+      * whoever ran them what was on the desk at the time.
+      */
+    device: Option[String] = None
 )
 
 object TestEvent:
   val Path = "/test/event"
   given JsonCodec[TestEvent] = DeriveJsonCodec.gen[TestEvent]
+
+/** Whether this account already has a device counting for it.
+  *
+  * Asked before a device takes the acquirer's role, so taking over from another one is something the person chooses
+  * rather than something that happens to them.
+  */
+@jsonNoExtraFields
+final case class AcquirerPresence(acquiring: Boolean)
+
+object AcquirerPresence:
+  val Path = "/live/acquirer"
+  given JsonCodec[AcquirerPresence] = DeriveJsonCodec.gen[AcquirerPresence]
 
 object Live:
   /** Where each side connects. Shared so the two ends cannot drift apart. */

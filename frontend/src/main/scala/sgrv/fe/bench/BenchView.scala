@@ -5,7 +5,7 @@ import org.scalajs.dom
 import sgrv.api.{Live, LiveCommand, LiveState, TestEvent}
 import sgrv.fe.acquire.StatusLine
 import sgrv.fe.live.LiveSocket
-import sgrv.fe.{HttpService, Readouts}
+import sgrv.fe.{Device, HttpService, Readouts}
 import zio.json.*
 
 import scala.scalajs.js
@@ -44,6 +44,9 @@ private[fe] object BenchView:
 
     val canvas = canvasTag(cls := "bench-canvas")
 
+    // Read once: it cannot change while the page is open, and every event carries it.
+    val device = Device.describe()
+
     val relay: LiveSocket = LiveSocket(
       Live.DashboardPath,
       text =>
@@ -76,7 +79,10 @@ private[fe] object BenchView:
         acquired = lastComparison.acquired,
         lagSeconds = lastComparison.lagSeconds,
         atSeconds = at,
-        detail = detail
+        detail = detail,
+        // Which handset this was. Suites from one account have come back exactly right, one short on every test, and
+        // fifteen short, and nothing in the record said which phone was which.
+        device = device
       )
       val init = new dom.RequestInit:
         method = dom.HttpMethod.POST
@@ -177,11 +183,16 @@ private[fe] object BenchView:
             stage.set(Stage.Pausing(index, now + TestPlan.PauseSeconds * 1000, comparison.reference))
             // Only when something follows. After the last test the wait leads to a summary, not to another test.
             if index + 1 < plan.size then nextTestAt = Some(now + TestPlan.BreakMillis)
-        case current @ Stage.Pausing(index, _, _) =>
+        case current @ Stage.Pausing(index, _, expected) =>
           // The figure is gone, not merely stopped: a set ends with the weight being put down, and the object
           // leaving the frame is what gives the last rep the trough that every other rep had.
           Stage.restingPalette(current, plan).foreach(Painter.clear(canvas.ref, _))
           lastComparison = lastComparison.copy(acquired = acquired.now())
+          // Judged against the reference now that nothing is moving. While a test runs the colour tracks how far
+          // behind the counter is in seconds, which is the right question then and the wrong one afterwards: a test
+          // that ends on the correct number was finishing in red, because the last rep arrived late and the lag it
+          // arrived with was never revisited.
+          withinTolerance.set(acquired.now() == expected)
           // The stage moves on first, so this is the only frame that scores this test.
           val (next, scored) = Stage.onFrame(stage.now(), now)
           stage.set(next)
@@ -274,28 +285,19 @@ private[fe] object BenchView:
       div(
         cls := "bench-stage",
         canvas,
+        // Text only. Every control lives in the column beside the panel, because reaching for one puts a hand and
+        // a pointer in front of the camera, and the detector counts what the camera sees.
         child <-- stage.signal.map:
           case Stage.Idle =>
             div(
               cls := "bench-overlay",
               p(
-                "Line the camera up with the four green crosses, start it counting, then begin. " +
-                  f"${plan.size} tests, about ${TestPlan.durationSeconds(plan) / 60}%.0f minutes."
-              ),
-              button(
-                cls := "mode-button",
-                typ := "button",
-                "Begin the suite",
-                onClick --> (_ => resetThen(0))
+                "Line the camera up with the four green crosses and start it counting, then begin from the panel " +
+                  f"on the right. ${plan.size} tests, about ${TestPlan.durationSeconds(plan) / 60}%.0f minutes."
               )
             )
-          case Stage.Finished =>
-            div(
-              cls := "bench-overlay",
-              p(child.text <-- summary),
-              button(cls := "mode-button", typ := "button", "Back", onClick --> (_ => onBack()))
-            )
-          case _ => emptyNode
+          case Stage.Finished => div(cls := "bench-overlay", p(child.text <-- summary))
+          case _              => emptyNode
       ),
       div(
         cls := "bench-readouts",
@@ -320,6 +322,16 @@ private[fe] object BenchView:
             figures.map: (label, value) =>
               div(cls := "bench-stat", span(cls := "bench-stat-label", label), span(cls := "bench-stat-value", value))
         ),
+        child <-- stage.signal.map:
+          case Stage.Idle =>
+            button(
+              cls := "mode-button bench-begin",
+              typ := "button",
+              "Begin the suite",
+              onClick --> (_ => resetThen(0))
+            )
+          case _ => emptyNode
+        ,
         button(cls := "back-button bench-back", typ := "button", "Back", onClick --> (_ => onBack()))
       ),
       div(

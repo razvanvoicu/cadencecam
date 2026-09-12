@@ -25,6 +25,7 @@ private[sessions] object TestEventSchema:
   val lagSeconds = "lagSeconds"
   val atSeconds = "atSeconds"
   val detail = "detail"
+  val device = "device"
 
 /** Records what a test run observed about the counter.
   *
@@ -51,6 +52,7 @@ private[sessions] final class TestEventStore(firestore: Firestore):
       TestEventSchema.lagSeconds -> java.lang.Double.valueOf(event.lagSeconds),
       TestEventSchema.atSeconds -> java.lang.Double.valueOf(event.atSeconds)
     ) ++ event.detail.map(TestEventSchema.detail -> _)
+      ++ event.device.map(TestEventSchema.device -> _)
 
 /** Accepts observations from a test run and files them.
   *

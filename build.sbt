@@ -155,14 +155,25 @@ lazy val frontend = (project in file("frontend"))
     )
   )
 
-// Copies the linked Scala.js output into the backend's classpath under `web/` to facilitate packaging and local running
+// Copies the linked Scala.js output into the backend's classpath under `web/` to facilitate packaging and local
+// running. `main.js` is stamped on the way through: the bundle records which build it is into the browser's own
+// storage as it loads, so the About panel can show what is actually running beside what the server thinks it serves.
+// A browser holding a cached bundle is otherwise indistinguishable from one that has picked up the latest, and hours
+// of test results have been read as detector behaviour when they were an old build on one phone.
 lazy val frontendAssets = Def.task {
   val linkedDir = (frontend / Compile / fastLinkJSOutput).value
   val outDir = (Compile / resourceManaged).value / "web"
+  val stamp = s"${version.value} built ${java.time.Instant.now()}"
   IO.createDirectory(outDir)
   linkedDir.listFiles().filter(_.isFile).toSeq.map { src =>
     val dest = outDir / src.getName
-    IO.copyFile(src, dest)
+    if (src.getName == "main.js") {
+      // Wrapped so a browser that refuses storage -- a private window, blocked site data -- loses the stamp rather
+      // than the application.
+      val quoted = "\"" + stamp.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+      val record = "try{localStorage.setItem(\"cadencecam.frontendBuild\"," + quoted + ")}catch(e){}\n"
+      IO.write(dest, record + IO.read(src))
+    } else IO.copyFile(src, dest)
     dest
   }
 }

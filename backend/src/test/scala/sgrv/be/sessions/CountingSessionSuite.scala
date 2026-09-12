@@ -151,3 +151,21 @@ class CountingSessionSuite extends munit.FunSuite:
     )
 
     assertEquals(carried -- stored, Set.empty[String], "a recording carries fields this store does not write")
+
+  test("everything a test event carries is written too"):
+    // The same trap, in the other store. A field added to the shared type and to the bench but not here is sent by
+    // every device and silently dropped, and the absence reads as "the device did not report it".
+    val carried = classOf[sgrv.api.TestEvent].getDeclaredFields.map(_.getName).toSet
+    val stored = Set(
+      TestEventSchema.runId,
+      TestEventSchema.testName,
+      TestEventSchema.kind,
+      TestEventSchema.reference,
+      TestEventSchema.acquired,
+      TestEventSchema.lagSeconds,
+      TestEventSchema.atSeconds,
+      TestEventSchema.detail,
+      TestEventSchema.device
+    )
+
+    assertEquals(carried -- stored, Set.empty[String], "a test event carries fields this store does not write")

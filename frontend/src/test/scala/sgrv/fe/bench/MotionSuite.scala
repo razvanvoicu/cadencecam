@@ -219,7 +219,7 @@ class MotionSuite extends FunSuite:
 
   test("the crosses are green, and small enough not to be the picture"):
     assertEquals(Painter.CrossColour, "rgb(0, 128, 0)")
-    assert(Painter.CrossArm < 0.05, "a cross this large would be a moving part of the scene, not a mark on it")
+    assert(Painter.CrossArm <= 0.01, "a cross this large would be a moving part of the scene, not a mark on it")
     // Between the bands, so nothing shown while framing hints at the theme of the test about to run.
     assert(Painter.IdleLevel > Grey.Dark.end && Painter.IdleLevel < Grey.Light.start)
 

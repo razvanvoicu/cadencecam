@@ -126,7 +126,8 @@ private[fe] object Painter:
   private def crosses(context: dom.CanvasRenderingContext2D, width: Double, height: Double): Unit =
     val arm = math.min(width, height) * CrossArm
     context.strokeStyle = CrossColour
-    context.lineWidth = math.max(1.0, math.min(width, height) * 0.008)
+    // Thinned in the same proportion as the arms, with a floor of one pixel so it cannot vanish entirely.
+    context.lineWidth = math.max(1.0, math.min(width, height) * 0.0027)
     context.lineCap = "butt"
     for (centreX, centreY) <- crossCentres(width, height) do
       context.beginPath()
@@ -136,10 +137,13 @@ private[fe] object Painter:
       context.lineTo(centreX, centreY + arm)
       context.stroke()
 
-  /** Half the length of a cross's arms, as a fraction of the field: small enough that the figure passing over one
-    * changes little, large enough to pick out through a camera across a room.
+  /** Half the length of a cross's arms, as a fraction of the field.
+    *
+    * A third of what it was. The first size was chosen to be found through a camera across a room and turned out to be
+    * large enough to read as part of the scene rather than a mark on it -- the object passes directly over two of them,
+    * and at that size what it covered and uncovered was a signal of its own.
     */
-  val CrossArm = 0.03
+  val CrossArm = 0.01
 
   /** Where the four crosses go, in canvas pixels.
     *

@@ -1,7 +1,7 @@
 package sgrv.be.sessions
 
 import java.security.SecureRandom
-import sgrv.api.{Live, LiveCommand, LiveReading}
+import sgrv.api.{AcquirerPresence, Live, LiveCommand, LiveReading}
 import sgrv.be.BackendCapabilities
 import sgrv.be.auth.SessionStore
 import sgrv.be.core.{AccessPolicy, BackendPlugin, CapabilitySet, RequestContext}
@@ -25,8 +25,13 @@ object LiveRelay extends BackendPlugin:
   override val accessPolicy: AccessPolicy[Requires] = AccessPolicy.Authenticated
   override val routes: Routes[Requires & RequestContext, Nothing] = Routes(
     Method.GET / "ws" / "acquirer" -> handler(asUser(acquirer)),
-    Method.GET / "ws" / "dashboard" -> handler(asUser(dashboard))
+    Method.GET / "ws" / "dashboard" -> handler(asUser(dashboard)),
+    // Asked before a device takes the role, so displacing another one is a choice rather than a surprise.
+    Method.GET / "live" / "acquirer" -> handler(asUser(presence))
   )
+
+  private def presence(email: String): ZIO[Any, Nothing, Response] =
+    LiveSessions.hasAcquirer(email).map(counting => Response.json(AcquirerPresence(counting).toJson))
 
   /** Resolves who is connecting before opening the socket, so the account is fixed for the connection's lifetime and
     * never has to be taken from a message.
@@ -61,8 +66,11 @@ object LiveRelay extends BackendPlugin:
               .flatMap:
                 case Some(displaced) =>
                   // The account already had one. The newest connection is the device the user is looking at, so the
-                  // older is closed rather than left to report into a room it no longer owns.
-                  ZIO.logInfo(s"A second acquirer joined for $email; closing the first") *> displaced.shutdown
+                  // older is told to stand down and then closed. Telling it first is the point: a device whose socket
+                  // simply died went on showing a count and holding its camera, which is how two phones end up
+                  // counting one set with neither of them saying so.
+                  ZIO.logInfo(s"A second acquirer joined for $email; standing the first down") *>
+                    LiveSessions.send(displaced, LiveCommand.Displaced.toJson).ignore *> displaced.shutdown
                 case None => ZIO.logInfo(s"Acquirer joined for $email")
           case Read(WebSocketFrame.Text(text)) =>
             text.fromJson[LiveReading] match

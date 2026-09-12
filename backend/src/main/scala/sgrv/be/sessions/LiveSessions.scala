@@ -97,5 +97,5 @@ object LiveSessions:
   /** Whether this account currently has a device counting for it. */
   def hasAcquirer(email: String): UIO[Boolean] = room(email).map(_.acquirer.isDefined)
 
-  private def send(channel: WebSocketChannel, text: String): Task[Unit] =
+  private[sessions] def send(channel: WebSocketChannel, text: String): Task[Unit] =
     channel.send(Read(WebSocketFrame.text(text)))

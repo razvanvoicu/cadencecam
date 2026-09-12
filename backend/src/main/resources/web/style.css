@@ -1,31 +1,22 @@
+/* Dark, whatever the browser is set to.
+   This is a camera application: the screen it is used beside is part of the scene, and on a laptop that opened light
+   while its neighbour opened dark, the two devices were being asked to meter quite different rooms. A theme that
+   follows a machine setting is also a variable nobody records, which is the last thing a test bench needs. */
 :root {
-  color-scheme: light dark;
-  --fg: #1c1c1e;
-  --muted: #5c5c66;
-  --bg: #f6f6f7;
-  --panel-bg: #ffffff;
-  --border: #d0d0d4;
-  --accent: #2f6feb;
-  --backdrop: rgb(0 0 0 / 45%);
-  --shadow: rgb(0 0 0 / 20%);
+  color-scheme: dark;
+  --fg: #e6e6e8;
+  --muted: #a2a2ac;
+  --bg: #161618;
+  --panel-bg: #202024;
+  --border: #3a3a40;
+  --accent: #7aa2ff;
+  --backdrop: rgb(0 0 0 / 65%);
+  --shadow: rgb(0 0 0 / 45%);
   /* The calorie panel keeps its colour in both themes: it is a deliberate field rather than part of the surface,
      and a panel that inverted with the theme would read as a different element rather than the same one. */
   --calorie-bg: #16233a;
   /* The card's inner padding, named so the calorie panel can cancel exactly it and reach the frame's edge. */
   --screen-padding: 1.25rem;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --fg: #e6e6e8;
-    --muted: #a2a2ac;
-    --bg: #161618;
-    --panel-bg: #202024;
-    --border: #3a3a40;
-    --accent: #7aa2ff;
-    --backdrop: rgb(0 0 0 / 65%);
-    --shadow: rgb(0 0 0 / 45%);
-  }
 }
 
 html {
@@ -542,6 +533,34 @@ button,
   align-self: center;
 }
 
+/* The one control that starts a run, beside the readouts rather than over the panel: reaching for a button on the
+   panel puts a hand and a pointer in front of the camera, and the detector counts whatever the camera sees. */
+.bench-begin {
+  align-self: center;
+  margin-top: 0.5rem;
+}
+
+.takeover-dialog p {
+  margin: 0 0 1rem;
+  color: var(--muted);
+}
+
+.takeover-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Plain buttons rather than the tall role cards the class is shaped for: these carry one line, not a title and a
+   description, and at card height they read as a menu of modes rather than an answer to a question. */
+.takeover-actions .mode-button {
+  display: block;
+  padding: 0.7rem 1rem;
+  min-height: 0;
+  text-align: center;
+  font-weight: 600;
+}
+
 /* The third column, and the one a finished run is actually read from. The tally says how many failed; only this
    says which, and whether the failures share a figure, a theme, or nothing. */
 .bench-results {
@@ -904,11 +923,5 @@ button,
 }
 
 .error {
-  color: #c0392b;
-}
-
-@media (prefers-color-scheme: dark) {
-  .error {
-    color: #ff7c6b;
-  }
+  color: #ff7c6b;
 }
