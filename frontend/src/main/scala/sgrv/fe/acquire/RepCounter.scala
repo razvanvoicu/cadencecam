@@ -20,8 +20,20 @@ private[fe] final case class DetectorSettings(
       *
       * The cost is a floor on how small a rep may be: a peak stands about twice a channel's amplitude above its
       * valleys, so this rejects any movement swinging a quadrant's brightness by less than half of it.
+      *
+      * Four rather than five. "About twice the amplitude" holds only for a peak with movement on both sides, and the
+      * first rep of a set has none: it rises out of stillness, so its prominence is measured against a resting level
+      * rather than a trough and comes to about half what its neighbours score. One recording missed its opening rep on
+      * exactly that margin -- 4.27 against a floor of 5, where every later crossing scored 7.2 to 7.8, with the same
+      * excursion in the raw brightness and the same fall afterwards.
+      *
+      * It is also less load-bearing than it was. The floor was raised to five when prominence was the only test of
+      * amplitude, and camera shake was measured scoring up to thirteen, so it was never what rejected shake; a peak
+      * must now also be one the movement came back from, which is the test that does. Replayed over fifty-three
+      * recordings on the current bench, four recovered two counts and lost none, and nothing ran away -- the worst
+      * count anywhere was a hundred and three, through fifteen seconds of a deliberately static scene.
       */
-    prominenceFloor: Double = 5.0,
+    prominenceFloor: Double = 4.0,
     /** Fifteen seconds of samples before a lock is attempted: enough to hold several cycles of the slowest cadence in
       * the band.
       */

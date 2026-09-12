@@ -228,11 +228,20 @@ class RepCounterSuite extends FunSuite:
 
   test("the noise floor rejects movement too small to be a rep"):
     val settings = DetectorSettings()
-    assertEquals(settings.prominenceFloor, 5.0)
+    assertEquals(settings.prominenceFloor, 4.0)
     // A peak stands about twice a channel's amplitude above its valleys, so the floor bites below half of it.
-    val tooSmall = rotating(1.0, 60.0, amplitude = 1.5)
+    val tooSmall = rotating(1.0, 60.0, amplitude = settings.prominenceFloor / 4)
 
-    assertEquals(run(tooSmall).count, 0)
+    assertEquals(run(tooSmall).count, 0, "a movement at a quarter of the floor was counted")
+
+  test("the strength badge keeps its measured boundaries when the floor moves"):
+    // The margin divides by the floor, so lowering the floor raises every margin by the same proportion. A badge
+    // whose bands were fixed multiples would silently re-grade every movement each time a detector threshold moved,
+    // and would then be reporting the threshold rather than the signal.
+    val floor = DetectorSettings().prominenceFloor
+
+    assertEqualsDouble(SignalStrength.StrongAbove * floor, 12.5, 0.001)
+    assertEqualsDouble(SignalStrength.AdequateAbove * floor, 7.5, 0.001)
 
   test("a rep of ordinary size still clears the raised floor"):
     val reading = run(rotating(1.0, 60.0, amplitude = 6.0))

@@ -12,8 +12,18 @@ private[fe] enum SignalStrength:
   case Weak
 
 private[fe] object SignalStrength:
-  val StrongAbove = 2.5
-  val AdequateAbove = 1.5
+  /** The bands, as multiples of the floor.
+    *
+    * Stated so the boundaries stay where they were measured. The margin divides by the detector's prominence floor, so
+    * lowering that floor raises every margin by the same proportion -- and a badge that quietly re-graded every
+    * movement each time a detector threshold moved would be reporting the threshold, not the signal. These are the
+    * measured boundaries of 12.5 and 7.5 in prominence, expressed against whatever the floor currently is.
+    */
+  private val StrongProminence = 12.5
+  private val AdequateProminence = 7.5
+
+  val StrongAbove: Double = StrongProminence / DetectorSettings().prominenceFloor
+  val AdequateAbove: Double = AdequateProminence / DetectorSettings().prominenceFloor
 
   def of(margin: Double): SignalStrength =
     if margin >= StrongAbove then Strong
