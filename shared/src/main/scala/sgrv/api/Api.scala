@@ -73,6 +73,12 @@ final case class SignalTrace(
       * there is no other way to read them off a phone.
       */
     camera: Option[String] = None,
+    /** Which device recorded this, as far as its browser will say.
+      *
+      * Two handsets pointed at the same panel have produced recordings that count quite differently, and nothing else
+      * in a trace says which was which.
+      */
+    device: Option[String] = None,
     /** What became of the attempt to hold the camera's controls still, and at which sample it was settled.
       *
       * In the same record as the signal it may have disturbed, so the two can be read against each other instead of

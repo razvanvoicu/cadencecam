@@ -54,6 +54,18 @@ private[fe] final case class DetectorSettings(
       * below the weakest real rep.
       */
     returnFraction: Double = 0.2,
+    /** How far a quadrant's tally may exceed the leading one's and still be believed.
+      *
+      * Two quadrants watching one movement disagree about its edges, never about its middle: the figure reaches them at
+      * different moments, so at the start and the end of a set one of them can legitimately have seen a crossing the
+      * other did not. Measured over sixty-five recordings that honest gap was one rep, and at most two.
+      *
+      * A channel claiming twenty-five more is not watching the same movement, whatever its period says. That happens: a
+      * quadrant the figure barely reaches has almost no signal, its threshold falls to the floor, and the noise it then
+      * finds can match the cadence by chance. Its power is no help in spotting it -- guarding on that was tried and let
+      * every one of them through -- but the size of its claim gives it away at once.
+      */
+    quadrantDisagreement: Int = 2,
     /** Samples ignored at the start of a window while the filter settles. A band-pass starting from rest rings when the
       * signal first arrives, and that ringing would otherwise dominate the very statistics used to decide what counts
       * as a peak.
@@ -301,19 +313,24 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
             partner.quadrant,
             leader.periodSamples.getOrElse(0.0) / settings.sampleRateHz
           )
-          // Both channels of the pair, each counted from its own peaks. Which of them leads is settled by signal
-          // power, frequently by a couple of percent, and the one that loses has repeatedly been the one that saw
-          // every rep: at the edges of a set two quadrants honestly disagree about how many crossings they saw,
-          // because the movement reaches them at different moments.
-          tally(leader, windowLength, totalSamples)
-          tally(partner, windowLength, totalSamples)
-          // The larger of the two, and never less than what has already been reported.
+          // Every channel that agrees with the leader on period, each counted from its own peaks -- not just the
+          // single best partner. Which one is "best" is settled by signal power, often by a couple of per cent, and
+          // it changes hands during a set; a channel only tallies while it is in the pair, so the one set aside
+          // stops accumulating and its total is no longer comparable. Two quadrants both saw every rep of one
+          // recording and the count still came out short, because neither held the partner's place throughout.
+          val agreeing = channels.filter: channel =>
+            channel.quadrant == leader.quadrant || RepAnalysis.agree(leader, channel, settings.periodTolerance)
+          agreeing.foreach(tally(_, windowLength, totalSamples))
+          // The largest believable tally, and never less than what has already been reported.
           //
-          // Larger rather than an average or a vote, because the two err in one direction only: a quadrant that does
-          // not really see the movement finds fewer crossings, not more. Measured across fifty-nine recordings the
-          // partner ran up to a hundred reps *below* the leader and never more than two above, and taking the larger
-          // turned no correct count into a wrong one while very nearly doubling how many came out exact.
-          counted =
-            math.max(counted, math.max(tallies.getOrElse(leader.quadrant, 0), tallies.getOrElse(partner.quadrant, 0)))
+          // Largest rather than an average or a vote, because a quadrant that does not really see the movement finds
+          // fewer crossings, not more: across sixty-five recordings a partner ran as much as a hundred reps below the
+          // leader and never more than two above. Believable is what the margin decides -- a channel claiming far
+          // more is reading its own noise, and that is the one case where taking the larger would be a disaster.
+          val leading = tallies.getOrElse(leader.quadrant, 0)
+          val believable = agreeing
+            .map(channel => tallies.getOrElse(channel.quadrant, 0))
+            .filter(_ <= leading + settings.quadrantDisagreement)
+          counted = math.max(counted, believable.maxOption.getOrElse(leading))
 
     reading

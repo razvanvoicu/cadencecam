@@ -40,6 +40,8 @@ private[fe] object TraceCapture:
       camera: Option[String] = None,
       controls: Option[String] = None,
       controlsAtSample: Option[Int] = None,
+      // Which handset recorded it. Two pointed at the same panel have produced recordings that count differently.
+      device: Option[String] = None,
       // The rate belongs to the detector, so a recording is stamped with it from there rather than from the view.
       sampleRateHz: Double = DetectorSettings().sampleRateHz
   ): SignalTrace =
@@ -51,7 +53,8 @@ private[fe] object TraceCapture:
       note = note.map(_.trim).filter(_.nonEmpty),
       camera = camera,
       controls = controls,
-      controlsAtSample = controlsAtSample
+      controlsAtSample = controlsAtSample,
+      device = device
     )
 
   /** One line describing what became of the camera's controls, for a trace to carry. */

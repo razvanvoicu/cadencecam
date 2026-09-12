@@ -389,7 +389,8 @@ object Main:
         * and the pace is only worth reporting to the nearest whole number a screen will show.
         */
       def publish(): Unit =
-        val reading = LiveReading(repCount.now(), math.round(counter.repsPerMinute).toDouble, latestStatus)
+        val reading =
+          LiveReading(repCount.now(), math.round(counter.repsPerMinute).toDouble, latestStatus, Device.describe())
         if !lastPublished.contains(reading) then if relay.send(reading.toJson) then lastPublished = Some(reading)
 
       def onSample(sample: Sample): Unit =
@@ -450,7 +451,17 @@ object Main:
         if TraceCapture.worthSending(signals) then
           TraceCapture.send(
             http,
-            TraceCapture.of(signals, repCount.now(), lock.now(), note, cameraReport, controlNote, controlsAtSample),
+            TraceCapture
+              .of(
+                signals,
+                repCount.now(),
+                lock.now(),
+                note,
+                cameraReport,
+                controlNote,
+                controlsAtSample,
+                Device.describe()
+              ),
             capture.set
           )
         else capture.set(CaptureState.Failed("nothing recorded yet"))

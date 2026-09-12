@@ -9,7 +9,18 @@ import zio.json.{DeriveJsonCodec, JsonCodec, jsonNoExtraFields}
   * the other to repeat it.
   */
 @jsonNoExtraFields
-final case class LiveReading(reps: Int, repsPerMinute: Double, status: String)
+final case class LiveReading(
+    reps: Int,
+    repsPerMinute: Double,
+    status: String,
+    /** Which device is doing the counting, as far as its browser will say.
+      *
+      * Travels with the reading because the acquirer is the only one that knows it, and it is the one worth knowing. A
+      * test event is filed by the bench, which recorded its own device readily enough -- and the bench is a laptop
+      * showing an animation, not the handset whose camera and processor decide whether the reps are found.
+      */
+    device: Option[String] = None
+)
 
 object LiveReading:
   given JsonCodec[LiveReading] = DeriveJsonCodec.gen[LiveReading]

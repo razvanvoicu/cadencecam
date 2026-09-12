@@ -146,6 +146,7 @@ class CountingSessionSuite extends munit.FunSuite:
       CountingSessionSchema.lock,
       CountingSessionSchema.note,
       CountingSessionSchema.camera,
+      CountingSessionSchema.device,
       CountingSessionSchema.controls,
       CountingSessionSchema.controlsAtSample
     )

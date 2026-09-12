@@ -46,8 +46,11 @@ private[fe] object BenchView:
 
     val canvas = canvasTag(cls := "bench-canvas")
 
-    // Read once: it cannot change while the page is open, and every event carries it.
-    val device = Device.describe()
+    // The device that is counting, which arrives with its readings. The bench's own device is a laptop showing an
+    // animation; the handset whose camera and processor decide whether the reps are found is the one worth naming,
+    // and the first run with this field recorded the laptop.
+    val countingDevice = Var(Option.empty[String])
+    val benchDevice = Device.describe()
 
     val relay: LiveSocket = LiveSocket(
       Live.DashboardPath,
@@ -57,6 +60,7 @@ private[fe] object BenchView:
             state.reading.foreach: latest =>
               acquired.set(latest.reps)
               statusText.set(latest.status)
+              latest.device.foreach(name => countingDevice.set(Some(name)))
             if !state.acquiring then statusText.set("No device is counting yet")
           case Left(details) => dom.console.warn(s"Ignoring an unreadable update: $details"),
       onOpen = () => connected.set(true),
@@ -85,7 +89,7 @@ private[fe] object BenchView:
         detail = detail,
         // Which handset this was. Suites from one account have come back exactly right, one short on every test, and
         // fifteen short, and nothing in the record said which phone was which.
-        device = device
+        device = countingDevice.now().orElse(benchDevice.map(name => s"bench $name"))
       )
       val init = new dom.RequestInit:
         method = dom.HttpMethod.POST

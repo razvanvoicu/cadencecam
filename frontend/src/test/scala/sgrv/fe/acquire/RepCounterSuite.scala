@@ -303,3 +303,31 @@ class RepCounterSuite extends FunSuite:
       val count = counter.update(window, taken).count
       assert(count >= highest, s"the count fell from $highest to $count")
       highest = count
+
+  test("a channel reading its own noise cannot run away with the count"):
+    // The one case where believing the larger tally would be a disaster. A quadrant the figure barely reaches has
+    // almost no signal, its threshold falls to the floor, and the noise it finds can match the cadence by chance --
+    // on real recordings such a channel counted a hundred and thirty-six where a hundred reps were performed, with
+    // enough power that guarding on strength let it straight through.
+    val cycles = 30
+    val real = rotating(1.0, cycles.toDouble, amplitude = 6.0)
+    // One quadrant carries the same cadence with a second bump inside every cycle, so it finds roughly twice as many
+    // peaks while still agreeing about the period.
+    val doubled = Seq.tabulate(real(Quadrant.Q2).length): i =>
+      val t = i / rate
+      120.0 + 6.0 * math.sin(2 * math.Pi * t) + 6.0 * math.sin(4 * math.Pi * t)
+    val counter = RepCounter()
+    val channels = real.updated(Quadrant.Q2, doubled)
+
+    val reading = run(channels, counter)
+
+    assert(
+      reading.count <= cycles,
+      s"a noisy channel pushed the count to ${reading.count} where only $cycles cycles happened"
+    )
+
+  test("the honest gap between two quadrants is a rep, so that is what is allowed"):
+    // Not a number picked for comfort: across sixty-five recordings two quadrants of one movement differed by one
+    // rep, and at most two. The margin is what separates that from a channel watching something else entirely.
+    assert(DetectorSettings().quadrantDisagreement >= 1, "a quadrant must be allowed the rep another one missed")
+    assert(DetectorSettings().quadrantDisagreement <= 3, "a wider margin admits a channel reading its own noise")

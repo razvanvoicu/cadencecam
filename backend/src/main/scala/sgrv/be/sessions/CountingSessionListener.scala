@@ -51,6 +51,7 @@ private[sessions] object CountingSessionSchema:
     * picture was darkening.
     */
   val camera = "camera"
+  val device = "device"
   val controls = "controls"
   val controlsAtSample = "controlsAtSample"
 
@@ -111,6 +112,7 @@ private[sessions] final class CountingSessionStore(firestore: Firestore):
       CountingSessionSchema.lock -> trace.lock
     ) ++ trace.note.map(CountingSessionSchema.note -> _)
       ++ trace.camera.map(CountingSessionSchema.camera -> _)
+      ++ trace.device.map(CountingSessionSchema.device -> _)
       ++ trace.controls.map(CountingSessionSchema.controls -> _)
       ++ trace.controlsAtSample.map(at => CountingSessionSchema.controlsAtSample -> java.lang.Long.valueOf(at.toLong))
 
