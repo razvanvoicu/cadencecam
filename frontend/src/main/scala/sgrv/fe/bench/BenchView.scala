@@ -40,6 +40,8 @@ private[fe] object BenchView:
     // When the next test's figure appears, while a break is running. A plain var, read every frame; only the whole
     // second derived from it reaches the view, so the readout changes once a second rather than sixty times.
     var nextTestAt = Option.empty[Double]
+    // Where the figure stopped, so it can be held there without jumping.
+    var restingPhase = 0.0
     val breakRemaining = Var(Option.empty[Int])
 
     val canvas = canvasTag(cls := "bench-canvas")
@@ -70,6 +72,7 @@ private[fe] object BenchView:
         testName = stage.now() match
           case Stage.Poised(index, _)     => plan(index).name
           case Stage.Running(index, _)    => plan(index).name
+          case Stage.Holding(index, _, _) => plan(index).name
           case Stage.Pausing(index, _, _) => plan(index).name
           case Stage.Settling(index)      => plan(index).name
           case _                          => "suite"
@@ -146,6 +149,13 @@ private[fe] object BenchView:
       val remaining = Stage.secondsRemaining(nextTestAt, now)
       if remaining != breakRemaining.now() then breakRemaining.set(remaining)
       stage.now() match
+        case Stage.Holding(index, _, expected) =>
+          // Still there, motionless, at the phase the last rep ended on. The object has not been put down yet.
+          Painter.draw(canvas.ref, plan(index), restingPhase)
+          lastComparison = lastComparison.copy(acquired = acquired.now())
+          withinTolerance.set(acquired.now() == expected)
+          val (next, _) = Stage.onFrame(stage.now(), now)
+          stage.set(next)
         case Stage.Poised(index, _) =>
           // On screen and motionless. Drawn at the phase the movement will start from, so nothing jumps when it does.
           Painter.draw(canvas.ref, plan(index), 0.0)
@@ -180,7 +190,9 @@ private[fe] object BenchView:
             wasWithin = comparison.withinTolerance
           if comparison.reference >= test.reps then
             report("movement-finished", elapsed, Some(s"${test.reps} reps shown"))
-            stage.set(Stage.Pausing(index, now + TestPlan.PauseSeconds * 1000, comparison.reference))
+            // Held where it finished, then put down. The phase is kept so nothing jumps as it stops.
+            restingPhase = test.cadence.phaseAt(elapsed)
+            stage.set(Stage.Holding(index, now + TestPlan.StillAfterMovingMillis, comparison.reference))
             // Only when something follows. After the last test the wait leads to a summary, not to another test.
             if index + 1 < plan.size then nextTestAt = Some(now + TestPlan.BreakMillis)
         case current @ Stage.Pausing(index, _, expected) =>
@@ -234,6 +246,7 @@ private[fe] object BenchView:
         val index = current match
           case Stage.Poised(i, _)     => i + 1
           case Stage.Running(i, _)    => i + 1
+          case Stage.Holding(i, _, _) => i + 1
           case Stage.Pausing(i, _, _) => i + 1
           // Between two tests: the one just scored is behind us, so the next is the one to name.
           case Stage.Settling(i) => math.min(i + 2, plan.size)

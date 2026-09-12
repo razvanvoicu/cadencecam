@@ -35,8 +35,14 @@ class StageSuite extends FunSuite:
     assertEquals(Stage.onFrame(pausing, 1000.0), (Stage.Settling(1), Some(1 -> 12)))
 
   test("no other stage scores anything"):
-    val others =
-      Seq(Stage.Idle, Stage.Running(0, 0.0), Stage.Settling(0), Stage.Finished, Stage.Poised(0, 10_000_000.0))
+    val others = Seq(
+      Stage.Idle,
+      Stage.Running(0, 0.0),
+      Stage.Settling(0),
+      Stage.Finished,
+      Stage.Poised(0, 10_000_000.0),
+      Stage.Holding(0, 10_000_000.0, 100)
+    )
 
     others.foreach: stage =>
       assertEquals(Stage.onFrame(stage, 10_000.0), (stage, None), s"$stage scored something")
@@ -93,13 +99,30 @@ class StageSuite extends FunSuite:
       s"${TestPlan.StillBeforeMovingMillis}ms is shorter than the ${slowestPeriodMillis}ms a rep can take"
     )
 
+  test("the figure is held where it finished before it is put down"):
+    // The mirror of the hold at the start, and for the same reason: the movement ending and the object leaving are
+    // two events, and run together the last rep's own return is tangled with the step of the object going.
+    val holding = Stage.Holding(index = 2, until = 5000.0, reference = 100)
+
+    assertEquals(Stage.onFrame(holding, 4999.0), (holding, None), "it was put down early")
+    val (next, scored) = Stage.onFrame(holding, 5000.0)
+    assertEquals(scored, None, "nothing is scored when the figure goes; that waits for the pause to end")
+    assertEquals(next, Stage.Pausing(2, 5000.0 + TestPlan.PauseSeconds * 1000, 100))
+
+  test("while the figure is still being held it belongs on screen"):
+    assertEquals(Stage.restingPalette(Stage.Holding(0, 1000.0, 100), plan), None)
+
+  test("the hold at each end is the same length, so the two ends can be compared"):
+    assertEquals(TestPlan.StillBeforeMovingMillis, TestPlan.StillAfterMovingMillis)
+
   test("the break lasts long enough for everything that has to happen in it"):
     // A capture has to reach the backend before the reset wipes the buffer it was made from, and the reset has to
     // reach the other device before the next test's movement is credited to it.
     assertEquals(TestPlan.PauseSeconds, 15)
     assertEquals(
       TestPlan.BreakMillis,
-      TestPlan.PauseSeconds * 1000 + Bench.CaptureBeforeResetMillis + Bench.SettleAfterResetMillis
+      TestPlan.StillAfterMovingMillis + TestPlan.PauseSeconds * 1000 +
+        Bench.CaptureBeforeResetMillis + Bench.SettleAfterResetMillis
     )
     assert(TestPlan.BreakMillis > TestPlan.PauseSeconds * 1000, "the break outlasts the pause inside it")
 

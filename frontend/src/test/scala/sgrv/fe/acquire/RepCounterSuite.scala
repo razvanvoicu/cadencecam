@@ -274,3 +274,32 @@ class RepCounterSuite extends FunSuite:
     // Measured over the last few, so a change of pace within a set is reported rather than averaged away.
     val settings = DetectorSettings()
     assertEquals(settings.paceWindowReps, 10)
+
+  test("a quadrant the movement reaches late is not allowed to lose a rep the other one saw"):
+    // Two quadrants of a locked pair are not two views of one peak train: the movement crosses them at different
+    // moments, so at the edges of a set they honestly disagree by one. Which of them leads is settled by signal
+    // power, often by a couple of percent, and across fifty-nine recordings the loser was repeatedly the one that
+    // had seen every rep -- six suites in a row came in one short that way.
+    val cycles = 30
+    val full = rotating(1.0, cycles.toDouble, amplitude = 6.0)
+    // The leading channel starts a quarter of a cycle late, so its first crossing never happened. The others carry
+    // the whole movement, exactly as a quadrant further from the start does.
+    val late = full.updated(Quadrant.Q1, full(Quadrant.Q1).drop((rate / 4).toInt))
+
+    val whole = run(full).count
+    val clipped = run(late).count
+
+    assertEquals(clipped, whole, "a rep one channel missed at the edge was lost from the total")
+
+  test("the count still never goes backwards when the pair changes"):
+    // Two tallies mean two numbers that could disagree, and the reported one is a maximum over them. A pair that
+    // moves to a channel with a smaller tally must not make the count drop: a rep that happened cannot un-happen.
+    val counter = RepCounter()
+    val channels = rotating(1.0, 40.0, amplitude = 6.0)
+    var highest = 0
+
+    for taken <- 1 to (40 * rate).toInt do
+      val window = channels.view.mapValues(_.take(taken).takeRight(QuadrantSignals.DetectionWindow)).toMap
+      val count = counter.update(window, taken).count
+      assert(count >= highest, s"the count fell from $highest to $count")
+      highest = count

@@ -21,6 +21,14 @@ private[fe] enum Stage:
   case Poised(index: Int, until: Double)
 
   case Running(index: Int, startedAt: Double)
+
+  /** The figure on screen and motionless again, its last rep finished, before it leaves the frame.
+    *
+    * The mirror of `Poised`, and for the same reason: the movement ending and the object being put down are two events,
+    * and running them together leaves the last rep's own return tangled with the step of the object going. Held here,
+    * the return happens in clear air and the step lands well after it.
+    */
+  case Holding(index: Int, until: Double, reference: Int)
   case Pausing(index: Int, until: Double, reference: Int)
 
   /** Between one test being scored and the next beginning.
@@ -44,7 +52,10 @@ private[fe] object Stage:
   def onFrame(stage: Stage, now: Double): (Stage, Option[(Int, Int)]) = stage match
     // The reference clock starts here rather than when the figure appeared: the still moment is not counted, and
     // timing it from the arrival would have the harness expecting a rep the animation has not shown yet.
-    case Poised(index, until) if now >= until            => (Running(index, now), None)
+    case Poised(index, until) if now >= until => (Running(index, now), None)
+    // Still holding the figure: the movement is over but the object has not been put down yet.
+    case Holding(index, until, reference) if now >= until =>
+      (Pausing(index, now + TestPlan.PauseSeconds * 1000, reference), None)
     case Pausing(index, until, expected) if now >= until => (Settling(index), Some(index -> expected))
     case other                                           => (other, None)
 

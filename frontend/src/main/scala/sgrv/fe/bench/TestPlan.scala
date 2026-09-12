@@ -91,12 +91,22 @@ private[fe] object TestPlan:
     */
   val StillBeforeMovingMillis = 3000
 
+  /** How long the figure stands still at the end, before it leaves the frame.
+    *
+    * The mirror of the moment before. A set ends with the weight held at the end of the last rep and then put down, not
+    * with it vanishing mid-swing, and separating those two events separates what they do to the signal: the last rep's
+    * own return happens in clear air, and the step of the object leaving lands three seconds later where it can be told
+    * apart from a rep rather than argued about.
+    */
+  val StillAfterMovingMillis = 3000
+
   /** How long from the end of one test's movement to the start of the next one's.
     *
     * The pause the detector is given to finish reporting, then the time a capture needs to reach the backend before the
     * reset wipes what it was made from, then the settle that lets the reset take effect on the other device.
     */
-  val BreakMillis: Int = PauseSeconds * 1000 + Bench.CaptureBeforeResetMillis + Bench.SettleAfterResetMillis
+  val BreakMillis: Int =
+    StillAfterMovingMillis + PauseSeconds * 1000 + Bench.CaptureBeforeResetMillis + Bench.SettleAfterResetMillis
 
   /** How far the counter may lag or lead before it is worth recording, in seconds of movement.
     *
@@ -137,7 +147,7 @@ private[fe] object TestPlan:
 
   /** How long one test runs: the still moment, the movement, and the pause after it. What a capture has to cover. */
   def testSeconds(test: TestCase): Double =
-    StillBeforeMovingMillis / 1000.0 + test.reps / test.cadence.hz + PauseSeconds
+    (StillBeforeMovingMillis + StillAfterMovingMillis) / 1000.0 + test.reps / test.cadence.hz + PauseSeconds
 
   /** How long a whole suite runs, including what happens between one test and the next. */
   def durationSeconds(plan: Seq[TestCase]): Double =

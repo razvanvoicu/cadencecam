@@ -176,7 +176,7 @@ class MotionSuite extends FunSuite:
   test("a suite takes about a quarter of an hour, and the arithmetic says so plainly"):
     // Six tests rather than two, and worth stating outright: whoever starts a run should know they are committing to
     // it rather than discovering the length halfway through.
-    assertEqualsDouble(TestPlan.durationSeconds(TestPlan.standard()), 880.5, 1.0)
+    assertEqualsDouble(TestPlan.durationSeconds(TestPlan.standard()), 898.5, 1.0)
 
   test("a capture is asked for before the reset that would wipe what it records"):
     // The reset now clears the signal buffer, so the order is load-bearing rather than incidental: capturing after
