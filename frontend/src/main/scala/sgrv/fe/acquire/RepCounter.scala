@@ -42,6 +42,18 @@ private[fe] final case class DetectorSettings(
       * within a set, rather than reporting an average of a workout that has moved on.
       */
     paceWindowReps: Int = 10,
+    /** How far a peak's own quadrant must come back down after it, against how far the movement usually comes back.
+      *
+      * A rep is a round trip and a weight being put down is not, but a band-pass cannot tell them apart: it is blind to
+      * a constant, so a brightness that rose and stayed reads exactly like one that rose and fell. Every recorded test
+      * with a dark object on a light ground ended with a phantom rep at the moment the object left the frame, and this
+      * is what rejects it.
+      *
+      * A fifth. Across twenty-four recorded tests every real rep came back at least a third as far as the typical one,
+      * and every phantom less than a seventh; a fifth sits between, half again above the worst phantom and a third
+      * below the weakest real rep.
+      */
+    returnFraction: Double = 0.2,
     /** Samples ignored at the start of a window while the filter settles. A band-pass starting from rest rings when the
       * signal first arrives, and that ringing would otherwise dominate the very statistics used to decide what counts
       * as a peak.
@@ -129,8 +141,18 @@ private[fe] object RepAnalysis:
     val threshold = math.max(settings.prominenceFloor, settings.prominenceFactor * power)
     // Peaks are reported against the whole window, so the caller's index arithmetic stays unaffected by the skip.
     val measured = PeakDetector.measured(settled, settings.minimumDistanceSamples, threshold)
-    val peaks = measured.map(_._1 + settings.settlingSamples)
-    val prominences = measured.map(_._2).sorted
+    // Against the quadrant's own brightness, so a peak the movement never came back from -- the object leaving the
+    // frame for good -- is not mistaken for the round trip a rep is. The newest peak is held back until there is
+    // enough signal after it to judge, which costs at most the period of the slowest cadence in the band.
+    val found = measured.map(_._1 + settings.settlingSamples)
+    val peaks =
+      PeakDetector.returning(samples, found, settings.maximumGapSamples, settings.returnFraction)
+    // Of the peaks that survived, not of everything the detector looked at: this says how far the movement being
+    // counted stands above the bar, and a peak that was rejected is not being counted.
+    val kept = peaks.toSet
+    val prominences = measured.collect {
+      case (index, prominence) if kept.contains(index + settings.settlingSamples) => prominence
+    }.sorted
     // Against the fixed floor rather than the adaptive threshold. The threshold rises with the scene's own
     // activity, so dividing by it flatters a quiet scene: measured against real recordings, a camera shaken by
     // typing scored higher that way than a movement that counted perfectly. The floor is the bar a movement

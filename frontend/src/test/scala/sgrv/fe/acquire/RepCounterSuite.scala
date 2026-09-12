@@ -35,6 +35,14 @@ class RepCounterSuite extends FunSuite:
   private def settlingLoss(hz: Double) =
     DetectorSettings().settlingSamples / rate * hz
 
+  /** What the return test costs at the other end: a peak is not a rep until the movement has come back from it, so the
+    * newest peak waits for the slowest period the band admits before it can be judged at all. Like the settling loss
+    * this is bounded and does not accumulate -- it is the tail of a run, not a fraction of it -- and in a real session
+    * it is paid during the pause after the set rather than costing a rep.
+    */
+  private def returnLoss(hz: Double) =
+    DetectorSettings().maximumGapSamples / rate * hz
+
   test("counts one rep per cycle of a steady cadence, losing only the filter's settling window"):
     // 40 seconds at 0.556 Hz is the stair-climber example from the design notes: about 22 cycles.
     Seq((0.556, 40.0), (1.0, 40.0), (1.0, 80.0), (1.5, 60.0)).foreach: (hz, seconds) =>
@@ -44,7 +52,7 @@ class RepCounterSuite extends FunSuite:
       assert(reading.lock.isInstanceOf[LockState.Locked], s"$hz Hz: expected a lock, got ${reading.lock}")
       // Never more than really happened: a count that invents reps is worse than one that misses the opening few.
       assert(reading.count <= cycles, f"$hz%.3f Hz over ${seconds}%.0fs counted ${reading.count} of $cycles%.1f")
-      val floor = cycles - settlingLoss(hz) - 2
+      val floor = cycles - settlingLoss(hz) - returnLoss(hz) - 2
       assert(reading.count >= floor, f"$hz%.3f Hz counted ${reading.count}, below the tolerable $floor%.1f")
 
   test("the error stays constant as a session runs on, rather than accumulating"):
