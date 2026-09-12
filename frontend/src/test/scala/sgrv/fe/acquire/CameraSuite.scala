@@ -7,53 +7,78 @@ class CameraSuite extends FunSuite:
 
   private def aspect(width: Int, height: Int): Double = width.toDouble / height
 
-  test("keeps the device's own proportions, so no field of view is cropped away"):
-    // A 4:3 phone sensor must not be squeezed into 16:9; that crop is what loses the view.
-    Seq((4032, 3024), (3264, 2448), (1920, 1080), (2448, 3264)).foreach: (deviceWidth, deviceHeight) =>
-      val (width, height) = Camera.budgetedSize(deviceWidth, deviceHeight, Camera.PixelBudget)
+  test("keeps the camera's own proportions, so no field of view is cropped away"):
+    // A 4:3 phone sensor must not be squeezed into 16:9; that crop is what loses the view. Turning it on end is not
+    // a crop, so the shape is compared the long way round.
+    Seq((4032, 3024), (3264, 2448), (1920, 1080), (2448, 3264)).foreach: (nativeWidth, nativeHeight) =>
+      for portrait <- Seq(true, false) do
+        val (width, height) = Camera.wantedSize(nativeWidth, nativeHeight, portrait, Camera.MinimumPixels)
+        val longWays = aspect(math.max(width, height), math.min(width, height))
+        val nativeLongWays = aspect(math.max(nativeWidth, nativeHeight), math.min(nativeWidth, nativeHeight))
 
-      assertEqualsDouble(
-        aspect(width, height),
-        aspect(deviceWidth, deviceHeight),
-        0.02,
-        s"$deviceWidth×$deviceHeight became $width×$height, changing its shape"
-      )
+        assertEqualsDouble(
+          longWays,
+          nativeLongWays,
+          0.02,
+          s"${nativeWidth}x$nativeHeight became ${width}x$height, changing its shape"
+        )
 
-  test("stays within the pixel budget"):
-    Seq((4032, 3024), (3264, 2448), (1920, 1080), (8000, 6000)).foreach: (deviceWidth, deviceHeight) =>
-      val (width, height) = Camera.budgetedSize(deviceWidth, deviceHeight, Camera.PixelBudget)
+  test("a phone held upright is asked for an upright frame"):
+    // The point of the whole exercise. A sensor's long axis lies along the phone's, so the whole of what it sees
+    // while the phone stands up is a tall picture; a wide one in that position is the middle band of it, with the
+    // rest dropped -- and the rest is where the exercise is.
+    val (width, height) = Camera.wantedSize(4032, 3024, portrait = true, Camera.MinimumPixels)
+
+    assert(height > width, s"a phone standing upright was asked for ${width}x$height")
+    assertEqualsDouble(aspect(width, height), 3.0 / 4, 0.02)
+
+  test("a device lying down is asked for a frame lying down"):
+    val (width, height) = Camera.wantedSize(4032, 3024, portrait = false, Camera.MinimumPixels)
+
+    assert(width > height, s"a screen lying down was asked for ${width}x$height")
+    assertEqualsDouble(aspect(width, height), 4.0 / 3, 0.02)
+
+  test("the orientation comes from the screen's own shape"):
+    assert(Camera.wantsPortrait(390, 780), "a phone held upright")
+    assert(!Camera.wantsPortrait(780, 390), "the same phone on its side")
+    assert(Camera.wantsPortrait(800, 800), "a square screen is no worse served upright")
+
+  test("the frame carries at least the minimum, and not a great deal more"):
+    // A floor rather than a budget: pixels past it buy nothing a sample can use, and cost throughput on a phone.
+    Seq((4032, 3024), (3264, 2448), (1920, 1080), (8000, 6000)).foreach: (nativeWidth, nativeHeight) =>
+      val (width, height) = Camera.wantedSize(nativeWidth, nativeHeight, portrait = true, Camera.MinimumPixels)
 
       assert(
-        width * height <= Camera.PixelBudget,
-        s"$deviceWidth×$deviceHeight became $width×$height = ${width * height} pixels"
+        width * height >= Camera.MinimumPixels,
+        s"${nativeWidth}x$nativeHeight became ${width}x$height = ${width * height}, under the floor"
+      )
+      assert(
+        width * height < Camera.MinimumPixels * 1.02,
+        s"${nativeWidth}x$nativeHeight became ${width}x$height, far past the floor"
       )
 
-  test("uses what a modest camera offers rather than scaling it up"):
-    val (width, height) = Camera.budgetedSize(640, 480, Camera.PixelBudget)
+  test("a camera that cannot reach the floor is asked for everything it has, not more"):
+    // Asking a 640x480 webcam for a megapixel invites it to answer with some other mode entirely.
+    val (width, height) = Camera.wantedSize(640, 480, portrait = false, Camera.MinimumPixels)
 
     assertEquals((width, height), (640, 480))
 
-  test("a portrait sensor stays portrait"):
-    val (width, height) = Camera.budgetedSize(3024, 4032, Camera.PixelBudget)
-
-    assert(height > width, s"portrait became $width×$height")
-
   test("dimensions stay even, so the quadrant split is exact"):
-    Seq((4032, 3024), (1999, 1001), (641, 481)).foreach: (deviceWidth, deviceHeight) =>
-      val (width, height) = Camera.budgetedSize(deviceWidth, deviceHeight, Camera.PixelBudget)
+    Seq((4032, 3024), (1999, 1001), (641, 481), (3024, 4032)).foreach: (nativeWidth, nativeHeight) =>
+      val (width, height) = Camera.wantedSize(nativeWidth, nativeHeight, portrait = true, Camera.MinimumPixels)
 
       assertEquals(width % 2, 0, s"$width is odd")
       assertEquals(height % 2, 0, s"$height is odd")
 
   test("a 4:3 sensor yields more field of view than the 16:9 request it replaces"):
-    // The concrete gain: same budget, but the frame is no longer cut down to a widescreen strip.
-    val (width, height) = Camera.budgetedSize(4032, 3024, Camera.PixelBudget)
+    // The concrete gain: the frame is no longer cut down to a widescreen strip.
+    val (width, height) = Camera.wantedSize(4032, 3024, portrait = false, Camera.MinimumPixels)
 
     assert(aspect(width, height) < 1.4, f"expected a 4:3 frame, got ${aspect(width, height)}%.2f")
-    assert(width * height > 1280 * 720, s"$width×$height should carry more than the old fixed 1280×720")
+    assert(width * height > 1280 * 720, s"${width}x$height should carry more than the old fixed 1280x720")
 
   test("refuses a camera reporting no size at all"):
-    intercept[IllegalArgumentException](Camera.budgetedSize(0, 480, Camera.PixelBudget))
+    intercept[IllegalArgumentException](Camera.wantedSize(0, 480, portrait = true, Camera.MinimumPixels))
 
   test("a camera on the same side as the screen is mirrored, one facing away is not"):
     assert(Camera.mirrors(Some("user")), "a front camera shows the viewer to themselves")
@@ -158,34 +183,61 @@ class CameraSuite extends FunSuite:
     // trace shows it was ever involved.
     assert(!Camera.holdControls)
 
-  test("the camera's own proportions are kept exactly, portrait or landscape"):
-    // A phone standing portrait delivers a portrait frame, and that is the whole field of view its sensor offers in
-    // that orientation. Asking for landscape can only be satisfied by throwing some of it away.
-    val (portraitW, portraitH) = Camera.bestSize(3024, 4032, 4032, 4032, Camera.PixelBudget)
-    val (landscapeW, landscapeH) = Camera.bestSize(4032, 3024, 4032, 4032, Camera.PixelBudget)
+  test("the camera is opened asking for its whole field of view"):
+    // Leaving the size unsaid is what kept the view cropped: the browser then picks a default, and on Android that
+    // default is a widescreen mode -- a crop chosen before the app has any say.
+    val video = Camera.openingConstraints(None).asInstanceOf[js.Dynamic].video
 
-    assertEqualsDouble(portraitW.toDouble / portraitH, 3024.0 / 4032.0, 0.01)
-    assertEqualsDouble(landscapeW.toDouble / landscapeH, 4032.0 / 3024.0, 0.01)
-    assert(portraitH > portraitW, s"a portrait frame must stay portrait, got ${portraitW}x$portraitH")
-    assert(landscapeW > landscapeH, s"a landscape frame must stay landscape, got ${landscapeW}x$landscapeH")
+    assertEquals(video.width.ideal, Camera.FullFieldProbe.asInstanceOf[js.Any])
+    assertEquals(video.height.ideal, Camera.FullFieldProbe.asInstanceOf[js.Any])
+    assertEquals(video.facingMode, "environment".asInstanceOf[js.Any])
 
-  test("the frame is the largest that fits the budget at the camera's own shape"):
-    val (width, height) = Camera.bestSize(4032, 3024, 4032, 4032, Camera.PixelBudget)
+  test("the request is square, which is what selects the widest mode a camera has"):
+    // Not an arbitrary large number in each dimension. A camera's wide modes are its tall mode with the top and
+    // bottom cut off, so the mode holding the most picture is the largest one nearest square -- and a browser picking
+    // by fitness distance, which counts the shortfall in each dimension separately, lands on exactly that one when
+    // both ideals are the same. Naming only a width would leave a 4:3 mode and its 16:9 crop equally preferred.
+    val video = Camera.openingConstraints(None).asInstanceOf[js.Dynamic].video
 
-    assert(width * height <= Camera.PixelBudget, s"${width}x$height exceeds the budget")
-    // And not wastefully small: within a few percent of the budget.
-    assert(width * height > Camera.PixelBudget * 0.9, s"${width}x$height wastes most of the budget")
+    assertEquals(video.width.ideal, video.height.ideal)
+    assert(
+      Camera.FullFieldProbe > 4032,
+      "the probe must exceed any sensor, or it selects a mode rather than the widest"
+    )
 
-  test("the camera's own limits bound the request without reshaping it"):
-    // The two maxima are separate numbers and need not belong to one supported mode, so they are used as bounds.
-    val (width, height) = Camera.bestSize(3024, 4032, 720, 1280, Camera.PixelBudget)
+  test("choosing a camera still asks for that camera's whole field of view"):
+    val video = Camera.openingConstraints(Some("back-camera")).asInstanceOf[js.Dynamic].video
 
-    assert(width <= 720 && height <= 1280, s"${width}x$height exceeds what the camera reported")
-    assertEqualsDouble(width.toDouble / height, 3024.0 / 4032.0, 0.01)
+    assertEquals(video.deviceId.exact, "back-camera".asInstanceOf[js.Any])
+    assertEquals(video.width.ideal, Camera.FullFieldProbe.asInstanceOf[js.Any])
 
-  test("dimensions stay even, so the quadrant split is exact"):
-    val sizes = Seq((3024, 4032), (4032, 3024), (1080, 1920), (640, 480), (1233, 999))
-    sizes.foreach: (w, h) =>
-      val (width, height) = Camera.bestSize(w, h, 8000, 8000, Camera.PixelBudget)
-      assertEquals(width % 2, 0, s"width $width from ${w}x$h is odd")
-      assertEquals(height % 2, 0, s"height $height from ${w}x$h is odd")
+  test("a frame of the same proportions is the same picture, at any size"):
+    assert(Camera.sameShape((4032, 3024), (1152, 864)), "a 4:3 frame scaled down is still 4:3")
+    assert(Camera.sameShape((3024, 4032), (864, 1152)), "and so is a portrait one")
+    // Rounding to even dimensions moves the ratio a little, and must not read as a crop.
+    assert(Camera.sameShape((1233, 999), (1232, 998)))
+
+  test("a frame of different proportions is a crop, and is caught"):
+    // The case this exists for: asking for 1152x864 and being handed 1280x720, which is a quarter of the picture
+    // gone. It is the nearest mode by the distance a browser measures, so it has to be rejected afterwards.
+    assert(!Camera.sameShape((1152, 864), (1280, 720)), "4:3 to 16:9 loses the top and bottom")
+    assert(!Camera.sameShape((4032, 3024), (4032, 2268)))
+    assert(!Camera.sameShape((864, 1152), (1152, 864)), "turning a frame on its side is not the same picture")
+
+  test("the shape tolerance is far below the gap it has to detect"):
+    val fourThree = 4.0 / 3
+    val sixteenNine = 16.0 / 9
+
+    assert(Camera.ShapeTolerance < (sixteenNine - fourThree) / sixteenNine / 4)
+
+  test("the same picture turned on end has lost nothing, and is accepted"):
+    // Turning is not cropping. A sensor whose widest mode is 4032x3024 shows exactly as much at 3024x4032, and
+    // rejecting that would reject the very frame this app wants on a phone standing upright.
+    assert(Camera.keptFieldOfView((4032, 3024), (3024, 4032)), "the same picture stood on end")
+    assert(Camera.keptFieldOfView((4032, 3024), (866, 1156)), "stood on end and scaled down to the floor")
+    assert(Camera.keptFieldOfView((4032, 3024), (1156, 866)), "left lying down and scaled down")
+
+  test("a picture of another shape has been trimmed, and is rejected"):
+    assert(!Camera.keptFieldOfView((4032, 3024), (1280, 720)), "a widescreen crop of a 4:3 sensor")
+    assert(!Camera.keptFieldOfView((4032, 3024), (720, 1280)), "and the same crop stood on end")
+    assert(!Camera.keptFieldOfView((4032, 3024), (1000, 1000)), "a square crop is still a crop")

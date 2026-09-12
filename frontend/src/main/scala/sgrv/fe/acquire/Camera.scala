@@ -26,15 +26,35 @@ private[fe] final case class ControlOutcome(
 )
 
 private[fe] object Camera:
-  /** How many pixels a frame may carry. A budget rather than a fixed size: the shape is left to the device.
+  /** How many pixels a frame must carry at least.
     *
-    * Asking for a particular width and height pins an aspect ratio, and a phone whose sensor is 4:3 satisfies a 16:9
-    * request by cropping — quietly discarding field of view, which is the one thing this app cannot spare. It needs to
-    * see the whole movement, not a sharper picture of part of it.
+    * A floor, not a budget. It was a budget, and a ceiling on pixels is a thing worth trading field of view for, which
+    * is the wrong trade entirely: a detector cannot count a movement the camera was not pointed at, and a sharper
+    * picture of half the exercise is worth less than a coarser picture of all of it. So the frame is the smallest one
+    * at the camera's own shape that still carries this many pixels, and if seeing everything costs more than this, it
+    * costs more.
+    *
+    * A million is enough detail by a wide margin: a sample reads about two and a half thousand pixels, so even a
+    * quadrant of this frame is two hundred times more than the detector looks at.
     */
-  val PixelBudget = 1_000_000
+  val MinimumPixels = 1_000_000
 
-  /** Opens the camera without dictating a size, so the device offers its own preferred mode and its own aspect.
+  /** The size asked for when the point is to see everything, not to see it sharply.
+    *
+    * Larger than any phone sensor, and deliberately the same in both dimensions. A camera's modes are not one picture
+    * at several sizes: the wide ones are usually the tall one with its top and bottom discarded, so the mode with the
+    * most field of view is the largest one whose shape is nearest square. Asking for a big square is exactly the
+    * request that selects it, because the fitness distance a browser minimises counts the shortfall in each dimension
+    * separately -- against a 4096 ideal, a 16:9 crop of a 4:3 sensor is always further away than the 4:3 mode it was
+    * cut from, while the two are equally far from any request that names only a width.
+    *
+    * Opening without a size at all is what this replaces, and it is why the view stayed cropped: a browser left to
+    * choose picks a convenient default, and on Android that default is a widescreen mode -- a crop, chosen before the
+    * app has any say.
+    */
+  val FullFieldProbe = 4096
+
+  /** Opens the camera asking for its whole field of view, and nothing else about the shape.
     *
     * With no camera chosen, the rear one is preferred: the acquirer points away from the user, at the equipment. A
     * chosen camera is requested exactly, since the point of choosing is to override that preference.
@@ -43,20 +63,58 @@ private[fe] object Camera:
     val video = deviceId match
       case Some(id) => js.Dynamic.literal(deviceId = js.Dynamic.literal(exact = id))
       case None     => js.Dynamic.literal(facingMode = "environment")
+    video.updateDynamic("width")(js.Dynamic.literal(ideal = FullFieldProbe))
+    video.updateDynamic("height")(js.Dynamic.literal(ideal = FullFieldProbe))
     js.Dynamic.literal(audio = false, video = video).asInstanceOf[dom.MediaStreamConstraints]
 
-  /** The largest frame within the budget that keeps the device's own proportions.
+  /** The same request on its own, for going back to the widest mode after a narrower one turned out to crop.
     *
-    * Scaling both dimensions by the same factor is what preserves the field of view: the frame carries fewer pixels but
-    * still shows everything the sensor can see. Dimensions are kept even so the quadrant split is exact.
+    * No aspect ratio named here, unlike the request that steps down from it: naming one would be naming a shape, and
+    * the point of this request is to accept whichever shape carries the most picture.
     */
-  private[acquire] def budgetedSize(deviceWidth: Int, deviceHeight: Int, budget: Int): (Int, Int) =
-    require(deviceWidth > 0 && deviceHeight > 0, "a camera must report a positive size")
-    val pixels = deviceWidth.toDouble * deviceHeight
-    val scale = if pixels <= budget then 1.0 else math.sqrt(budget / pixels)
-    // Rounded down, not to nearest: rounding up can carry the frame back over the budget it was scaled to meet.
-    def even(value: Double): Int = math.max(2, (math.floor(value / 2) * 2).toInt)
-    (even(deviceWidth * scale), even(deviceHeight * scale))
+  private def widestRequest: dom.MediaTrackConstraints =
+    js.Dynamic
+      .literal(
+        width = js.Dynamic.literal(ideal = FullFieldProbe),
+        height = js.Dynamic.literal(ideal = FullFieldProbe)
+      )
+      .asInstanceOf[dom.MediaTrackConstraints]
+
+  /** Whether the frame should stand up or lie down: the way the screen does.
+    *
+    * A phone held upright has its sensor's long axis vertical, so the whole of what that camera can see is a tall
+    * picture. A camera handing back a wide one in that position has not turned the picture round -- it has kept the
+    * middle band and dropped the rest, which is precisely the field of view the exercise happens in.
+    */
+  private[acquire] def wantsPortrait(viewportWidth: Double, viewportHeight: Double): Boolean =
+    viewportHeight >= viewportWidth
+
+  /** The frame to ask for: the camera's own proportions, stood the way the screen is, carrying at least the minimum.
+    *
+    * The shape is taken from the widest mode the camera offers and only ever turned, never altered, so nothing is
+    * cropped: a 4032x3024 sensor asked for portrait is asked for 3024x4032, which is the same picture rotated. Size is
+    * then the smallest that meets the floor, because pixels past the floor buy nothing the detector can use and cost
+    * throughput on a phone -- and it is capped at what the camera actually has, since asking for more than a sensor can
+    * produce invites it to answer with some other mode entirely.
+    *
+    * Dimensions are rounded up to even, so the quadrant split is exact and the floor is met rather than just missed.
+    */
+  private[acquire] def wantedSize(
+      nativeWidth: Int,
+      nativeHeight: Int,
+      portrait: Boolean,
+      minimumPixels: Int
+  ): (Int, Int) =
+    require(nativeWidth > 0 && nativeHeight > 0, "a camera must report a positive size")
+    val longer = math.max(nativeWidth, nativeHeight).toDouble
+    val shorter = math.min(nativeWidth, nativeHeight).toDouble
+    val aspect = longer / shorter
+    val wanted = math.min(minimumPixels.toDouble, nativeWidth.toDouble * nativeHeight)
+    val shortSide = math.sqrt(wanted / aspect)
+    def even(value: Double): Int = math.max(2, (math.ceil(value / 2) * 2).toInt)
+    val across = even(shortSide)
+    val along = even(shortSide * aspect)
+    if portrait then (across, along) else (along, across)
 
   /** False on an insecure origin, where the browser does not expose `mediaDevices` at all. */
   private[acquire] def supported: Boolean =
@@ -213,31 +271,91 @@ private[fe] object Camera:
     dom.window.setTimeout(() => settled.success(()), millis.toDouble)
     settled.future
 
-  /** Narrows an open camera to the largest mode within the budget at the device's own aspect ratio.
+  /** Brings the frame down to the pixel budget without narrowing what it shows.
     *
-    * Best effort by design: a browser that does not report its capabilities, or refuses the constraint, simply keeps
-    * the mode it opened with. A working camera at the wrong size beats no camera at all.
+    * The camera opened on its widest mode, which is more pixels than the detector can use and more than a phone can
+    * decode all session without heating; but reducing the size means asking again, and asking again lets the browser
+    * pick a different mode -- which is how field of view gets lost without anything appearing to go wrong. Two guards
+    * against that. The request carries an aspect ratio alongside the dimensions, so a widescreen candidate is penalised
+    * rather than merely not preferred. And the result is read back: if what came back is not the widest mode's own
+    * shape, one way up or the other, the request is withdrawn and the wide mode restored.
+    *
+    * Field of view wins over pixel count whenever the two conflict. That is the whole point of the exercise: a detector
+    * cannot count what the camera was not pointed at, and a sharper picture of half the movement is worth less than a
+    * coarser picture of all of it.
+    *
+    * Best effort throughout: a browser that reports no size, or refuses the constraint, keeps the mode it opened with.
     */
   private def fitToDevice(stream: dom.MediaStream): Future[Unit] =
     stream.getVideoTracks().headOption match
       case None        => Future.successful(())
       case Some(track) =>
         deliveredSize(track) match
-          case None                                    => Future.successful(())
-          case Some((deliveredWidth, deliveredHeight)) =>
-            val (maxWidth, maxHeight) = deviceMaximum(track).getOrElse((Int.MaxValue, Int.MaxValue))
-            val (width, height) = bestSize(deliveredWidth, deliveredHeight, maxWidth, maxHeight, PixelBudget)
-            val wanted = js.Dynamic
-              .literal(
-                width = js.Dynamic.literal(ideal = width),
-                height = js.Dynamic.literal(ideal = height)
-              )
-              .asInstanceOf[dom.MediaTrackConstraints]
+          case None         => Future.successful(())
+          case Some(widest) =>
+            val portrait = wantsPortrait(dom.window.innerWidth.toDouble, dom.window.innerHeight.toDouble)
+            val (width, height) = wantedSize(widest._1, widest._2, portrait, MinimumPixels)
             track
-              .applyConstraints(wanted)
+              .applyConstraints(sizeRequest(width, height))
               .toFuture
-              .map(_ => ())
+              .flatMap: _ =>
+                deliveredSize(track) match
+                  case Some(now) if !keptFieldOfView(widest, now) =>
+                    dom.console.warn(
+                      s"Asking for ${width}x$height moved the camera off ${widest._1}x${widest._2} to " +
+                        s"${now._1}x${now._2}, which is a different picture rather than the same one resized or " +
+                        "turned; going back to the widest mode"
+                    )
+                    track.applyConstraints(widestRequest).toFuture.map(_ => ())
+                  case Some(now) if portrait != (now._2 > now._1) =>
+                    // Nothing lost, so this stands: the whole picture is there, lying the wrong way. Worth saying,
+                    // because a preview that does not match the screen's shape looks like a fault and is not one.
+                    dom.console.warn(
+                      s"This camera will not turn its frame: asked for ${width}x$height, given ${now._1}x${now._2}. " +
+                        "The whole field of view is there, in the other orientation."
+                    )
+                    Future.successful(())
+                  case _ => Future.successful(())
               .recover { case _ => () }
+
+  /** A request for a size that also says what shape that size is meant to be.
+    *
+    * The aspect ratio is the load-bearing part. Width and height alone leave a browser free to answer with a mode of
+    * quite different proportions -- 1280x720 sits closer to a request for 1152x864 than 1024x768 does, by the distance
+    * a browser actually measures -- and answering that way costs a quarter of the picture.
+    */
+  private def sizeRequest(width: Int, height: Int): dom.MediaTrackConstraints =
+    js.Dynamic
+      .literal(
+        width = js.Dynamic.literal(ideal = width),
+        height = js.Dynamic.literal(ideal = height),
+        aspectRatio = js.Dynamic.literal(ideal = width.toDouble / height)
+      )
+      .asInstanceOf[dom.MediaTrackConstraints]
+
+  /** Whether two frames show the same picture at different sizes, rather than different pictures.
+    *
+    * Proportions are the only evidence available: a camera does not report what it cropped, so a mode that comes back a
+    * different shape from the one asked for has thrown something away, and a mode of the same shape has not.
+    */
+  private[acquire] def sameShape(before: (Int, Int), after: (Int, Int)): Boolean =
+    val first = before._1.toDouble / before._2
+    val second = after._1.toDouble / after._2
+    first > 0 && second > 0 && math.abs(first - second) / math.max(first, second) <= ShapeTolerance
+
+  /** How far two aspect ratios may differ and still count as the same shape: a couple of percent, which covers rounding
+    * to even dimensions and nothing else. The gap between 4:3 and 16:9 is a third.
+    */
+  private[acquire] val ShapeTolerance = 0.02
+
+  /** Whether a frame still shows everything the widest mode showed -- the same picture, resized, turned, or both.
+    *
+    * Turning is not losing. A sensor whose widest mode is 4032x3024 shows exactly as much at 3024x4032; the picture has
+    * been stood on end, not trimmed. Any other shape has been trimmed, whatever its pixel count, and that is the only
+    * thing this has to catch.
+    */
+  private[acquire] def keptFieldOfView(widest: (Int, Int), now: (Int, Int)): Boolean =
+    sameShape(widest, now) || sameShape((widest._2, widest._1), now)
 
   /** The shape the camera is actually delivering, which is the one to keep.
     *
@@ -256,41 +374,6 @@ private[fe] object Camera:
         width <- Option(settings.width).filterNot(js.isUndefined).map(_.asInstanceOf[Int]).filter(_ > 0)
         height <- Option(settings.height).filterNot(js.isUndefined).map(_.asInstanceOf[Int]).filter(_ > 0)
       yield (width, height)
-
-  /** The largest frame that keeps the camera's own proportions, within the pixel budget and the camera's own limits.
-    *
-    * The proportions come from what is being delivered and are never altered, so the whole field of view survives: only
-    * the number of pixels it is described with changes. The camera's maxima are used as bounds rather than as a shape,
-    * which is all they can honestly be.
-    */
-  private[acquire] def bestSize(
-      deliveredWidth: Int,
-      deliveredHeight: Int,
-      maxWidth: Int,
-      maxHeight: Int,
-      budget: Int
-  ): (Int, Int) =
-    require(deliveredWidth > 0 && deliveredHeight > 0, "a camera must report a positive size")
-    val aspect = deliveredWidth.toDouble / deliveredHeight
-    val fromBudget = math.sqrt(budget * aspect)
-    val width = math.min(fromBudget, math.min(maxWidth.toDouble, maxHeight.toDouble * aspect))
-    // Rounded down and kept even, so the quadrant split is exact and the frame cannot creep back over the budget.
-    def even(value: Double): Int = math.max(2, (math.floor(value / 2) * 2).toInt)
-    (even(width), even(width / aspect))
-
-  /** The largest frame the device says it can produce. Two independent maxima, so useful only as bounds. */
-  private def deviceMaximum(track: dom.MediaStreamTrack): Option[(Int, Int)] =
-    val dynamic = track.asInstanceOf[js.Dynamic]
-    if js.isUndefined(dynamic.getCapabilities) then None
-    else
-      val capabilities = dynamic.getCapabilities()
-      for
-        width <- Option(capabilities.width).filterNot(js.isUndefined).flatMap(value => maximumOf(value))
-        height <- Option(capabilities.height).filterNot(js.isUndefined).flatMap(value => maximumOf(value))
-      yield (width, height)
-
-  private def maximumOf(range: js.Dynamic): Option[Int] =
-    Option(range.max).filterNot(js.isUndefined).map(_.asInstanceOf[Int]).filter(_ > 0)
 
   /** Releases the camera. Without this the indicator light stays on and the device stays locked to this tab. */
   def stop(stream: dom.MediaStream): Unit =

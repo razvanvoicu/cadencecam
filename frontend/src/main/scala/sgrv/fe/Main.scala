@@ -484,9 +484,24 @@ object Main:
                 prepare(element)
                 element.asInstanceOf[js.Dynamic].srcObject = opened.asInstanceOf[js.Any]
                 val _ = element.play()
+                // Taken from the element rather than from the track, and re-taken whenever it changes. The element's
+                // intrinsic size is what is actually being painted; a track's reported settings can describe the
+                // frame before the device rotated it, and can still name the old mode for a moment after a constraint
+                // has been applied. Either disagreement would size the box to a shape the picture does not have, and
+                // put the drawn quadrant lines somewhere the detector is not sampling.
+                //
+                // Assigned rather than added, so restarting the camera replaces these handlers instead of stacking
+                // another copy on the same element.
+                val media = element.asInstanceOf[js.Dynamic]
+                val noteShape: js.Function1[dom.Event, Unit] = _ =>
+                  val shown = element.videoWidth
+                  val tall = element.videoHeight
+                  if shown > 0 && tall > 0 then
+                    frame.ref.style.setProperty("--frame-aspect", (shown.toDouble / tall).toString)
+                    cameraState.set(CameraState.Streaming(shown, tall))
+                media.onloadedmetadata = noteShape
+                media.onresize = noteShape
                 val (width, height) = Camera.resolution(opened).getOrElse((0, 0))
-                // The stream's own shape, so the preview box is exactly the frame being sampled and the quadrant
-                // lines drawn over it mark the quadrants the detector actually divides.
                 if width > 0 && height > 0 then
                   frame.ref.style.setProperty("--frame-aspect", (width.toDouble / height).toString)
                 mirrored.set(Camera.mirrors(Camera.facing(opened)))
