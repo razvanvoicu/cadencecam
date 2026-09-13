@@ -44,6 +44,9 @@ private[fe] object BenchView:
     var restingPhase = 0.0
     // Whether the counting device has said it is back at zero since the last reset was sent.
     var resetConfirmed = false
+    // Whether it has a cadence yet. Until it does, being behind is not a discrepancy but the ordinary opening of
+    // every set, and saying so in red teaches whoever is watching to ignore the colour.
+    val hasCadence = Var(false)
     val breakRemaining = Var(Option.empty[Int])
 
     val canvas = canvasTag(cls := "bench-canvas")
@@ -66,6 +69,7 @@ private[fe] object BenchView:
               // A zero from the counting device is how a reset is known to have landed. It announces one whether or
               // not anything else changed, so the absence of this is real evidence that the command went missing.
               if latest.reps == 0 then resetConfirmed = true
+              hasCadence.set(latest.counting)
             if !state.acquiring then statusText.set("No device is counting yet")
           case Left(details) => dom.console.warn(s"Ignoring an unreadable update: $details"),
       onOpen = () => connected.set(true),
@@ -118,6 +122,9 @@ private[fe] object BenchView:
         // The same clock the animation frame reports, which is milliseconds since the page loaded rather than
         // since 1970. Mixing the two put the elapsed time at minus fifty years and overflowed the count.
         // The figure stands still first; the reference clock starts when it begins to move.
+        // A new test has no cadence yet, whatever the last one ended on, so the count goes neutral until the
+        // counting device says it has found one again.
+        hasCadence.set(false)
         stage.set(Stage.Poised(index, dom.window.performance.now() + TestPlan.StillBeforeMovingMillis))
         report("started", 0.0, Some(plan(index).name))
 
@@ -346,7 +353,9 @@ private[fe] object BenchView:
           acquired.signal.map(_.toString),
           "counted",
           cls := "bench-acquired",
-          cls("astray") <-- withinTolerance.signal.map(!_)
+          cls("astray") <-- withinTolerance.signal
+            .combineWith(hasCadence.signal)
+            .map((within, counting) => counting && !within)
         ),
         p(
           cls := "lock-state",
