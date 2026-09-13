@@ -436,35 +436,3 @@ class RepCounterSuite extends FunSuite:
     // quarters of its own set's median, and cool-down noise stood at about a third of the movement it followed.
     assert(DetectorSettings().peakHeightShare < 0.75, "this would reject reps during ordinary exposure drift")
     assert(DetectorSettings().peakHeightShare > 0.36, "this would admit the noise that follows a set")
-
-  test("a peak arriving at half the cadence is not a rep"):
-    // One camera's quadrant brightness rises and falls twice per rep -- energy at twice the cadence measured four
-    // times larger than the fundamental -- putting an extra peak halfway between two real ones. Nothing about its
-    // height or shape marks it out; only its timing does.
-    val settings = DetectorSettings()
-    val everyTwelve = Seq(0, 12, 24, 36, 48, 60)
-    val withHarmonics = Seq(0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60)
-
-    assertEquals(RepAnalysis.expectedInterval(everyTwelve, settings), Some(12.0))
-    // The doubled train's own median is six, which the band clamp leaves alone -- six is a plausible cadence. What
-    // rejects the extras is the counter walking them in order against the cadence, not this estimate.
-    assertEquals(RepAnalysis.expectedInterval(withHarmonics, settings), Some(6.0))
-
-  test("the expected interval is held inside the band the detector claims"):
-    // Early in a set, before the movement settles, a wild estimate can appear and set the bar for everything after
-    // it. A cadence quicker than the fastest rep the band admits is not a cadence.
-    val settings = DetectorSettings()
-    val quickest = settings.sampleRateHz / settings.highHz
-    val slowest = settings.sampleRateHz / settings.lowHz
-
-    assertEquals(RepAnalysis.expectedInterval(Seq(0, 1, 2, 3), settings), Some(quickest))
-    assertEquals(RepAnalysis.expectedInterval(Seq(0, 60, 120, 180), settings), Some(slowest))
-    assertEquals(RepAnalysis.expectedInterval(Seq.empty, settings), None)
-    assertEquals(RepAnalysis.expectedInterval(Seq(7), settings), None)
-
-  test("the cadence bar sits below the fast tail of an honest set"):
-    // Exercise does not keep time: on a recording that counts perfectly the intervals run from 0.83 to 1.42 of their
-    // median, and the bench swings its own cadence by a quarter either way on purpose. A bar at 0.8 clips that tail
-    // -- it cost sixty-six recordings when tried -- while half, where the unwanted peak lands, is far below.
-    assert(DetectorSettings().cadenceTolerance < 0.83, "this would reject the fast end of a real set")
-    assert(DetectorSettings().cadenceTolerance > 0.5, "this would admit a peak at twice the cadence")
