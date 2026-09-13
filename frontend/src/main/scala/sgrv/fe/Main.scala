@@ -88,6 +88,10 @@ object Main:
       case Success(MeResult(session, _)) => updateUser(session)
       case Failure(error)                => updateUser(AuthenticationFailed(errorMessage(error)))
 
+    // Asked once, at the start: Chrome on Android keeps the handset's model out of its user agent, and the only way
+    // to learn it is an explicit request that answers later.
+    Device.learn()
+
     def show(screen: Screen): Unit = stateStore.update(_.copy(screen = screen))
 
     /** Raised while this device waits to be told whether to displace another one that is already counting.

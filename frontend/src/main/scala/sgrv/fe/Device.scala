@@ -2,6 +2,7 @@ package sgrv.fe
 
 import org.scalajs.dom
 import scala.scalajs.js
+import scala.concurrent.ExecutionContext.Implicits.global
 
 /** What this device is, as far as a browser will admit.
   *
@@ -15,6 +16,38 @@ import scala.scalajs.js
   */
 private[fe] object Device:
 
+  /** What the browser will only say when asked directly, once it has answered.
+    *
+    * Chrome on Android no longer puts the handset's model in its user agent: every device reports the frozen
+    * placeholder "K", so four suites run on four different phones all filed themselves as "Android 10, K" and the field
+    * was worth nothing for the one job it exists to do. The model is still available, but only through an explicit
+    * request, and that request is asynchronous -- so it is made once at startup and the answer kept.
+    */
+  private var asked = Option.empty[String]
+
+  /** Asks for the model the user agent omits. Chromium only; elsewhere there is nothing to ask and nothing is lost.
+    *
+    * Fire and forget: readings and recordings both happen seconds later at the earliest, and a device that answers late
+    * simply describes itself from the next one onwards rather than blocking anything.
+    */
+  def learn(): Unit =
+    val navigator = dom.window.navigator.asInstanceOf[js.Dynamic]
+    val data = navigator.userAgentData
+    if js.isUndefined(data) || data == null || js.isUndefined(data.getHighEntropyValues) then ()
+    else
+      try
+        data
+          .getHighEntropyValues(js.Array("model", "platformVersion"))
+          .asInstanceOf[js.Promise[js.Dynamic]]
+          .toFuture
+          .foreach(values => asked = named(text(values.model), text(values.platformVersion)))
+      catch case _: Throwable => ()
+
+  /** The two answers as one phrase, or nothing when the browser named neither. */
+  private[fe] def named(model: Option[String], platformVersion: Option[String]): Option[String] =
+    val parts = Seq(model.filter(_.nonEmpty), platformVersion.filter(_.nonEmpty).map(version => s"v$version")).flatten
+    Option.when(parts.nonEmpty)(parts.mkString(" "))
+
   /** The hints a browser offers, preferred in the order they are specific.
     *
     * `userAgentData` is the modern, structured form and gives the platform cleanly; the user agent string carries the
@@ -22,7 +55,8 @@ private[fe] object Device:
     */
   def describe(): Option[String] =
     val navigator = dom.window.navigator.asInstanceOf[js.Dynamic]
-    val parts = Seq(fromUserAgentData(navigator), model(text(navigator.userAgent)), text(navigator.platform))
+    val parts =
+      Seq(asked, fromUserAgentData(navigator), model(text(navigator.userAgent)), text(navigator.platform))
     val described = parts.flatten.distinct.filter(_.nonEmpty)
     Option.when(described.nonEmpty)(described.mkString("; ").take(200))
 

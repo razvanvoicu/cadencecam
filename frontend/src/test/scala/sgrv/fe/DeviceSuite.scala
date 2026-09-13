@@ -31,3 +31,14 @@ class DeviceSuite extends FunSuite:
     // The key is shared with a line build.sbt prepends to main.js; if the two drift, the About panel silently shows
     // nothing and a stale bundle goes on looking like a fresh one.
     assertEquals(Device.BuildKey, "cadencecam.frontendBuild")
+
+  test("the model a browser will only give when asked is put to use"):
+    // Chrome on Android freezes the model in its user agent to "K", so four suites on four different phones all
+    // filed themselves identically and the field was worth nothing for the one job it has.
+    assertEquals(Device.named(Some("Pixel 8"), Some("14")), Some("Pixel 8 v14"))
+    assertEquals(Device.named(Some("SM-A536B"), None), Some("SM-A536B"))
+    assertEquals(Device.named(None, Some("14")), Some("v14"))
+
+  test("a browser that will not say is not made to look like one that did"):
+    assertEquals(Device.named(None, None), None)
+    assertEquals(Device.named(Some(""), Some("")), None)
