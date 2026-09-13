@@ -1,7 +1,7 @@
 package sgrv.fe
 
 import com.raquo.laminar.api.L.*
-import sgrv.fe.acquire.SignalStrength
+import sgrv.fe.acquire.{NoiseLevel, SignalStrength}
 
 /** The rows the acquirer and the dashboard both show.
   *
@@ -37,7 +37,8 @@ private[fe] object Readouts:
       status: Signal[String],
       onReset: () => Unit,
       // Absent on a watching screen, which has no camera of its own to judge.
-      margin: Signal[Option[Double]] = Val(None)
+      margin: Signal[Option[Double]] = Val(None),
+      noise: Signal[Option[Double]] = Val(None)
   ): HtmlElement =
     div(
       cls := "control-row",
@@ -53,16 +54,31 @@ private[fe] object Readouts:
       ),
       // Says which of the three it is doing rather than letting a stalled count look like a steady one.
       p(cls := "lock-state", child.text <-- status),
-      // In the counterweight's place, so the reading stays centred on the panel: the badge is exactly the reset
-      // control's footprint. Empty and invisible when there is nothing to report, which is what the spacer was.
+      // Two gauges in the counterweight's column, the room above the movement. They answer different questions and
+      // fail in opposite directions: a faint movement in a still scene and a strong one in a noisy scene both count
+      // badly, and only one of them is fixed by moving closer.
       div(
-        cls := "footer-spacer signal-badge",
-        cls("strong") <-- margin.map(_.exists(SignalStrength.of(_) == SignalStrength.Strong)),
-        cls("adequate") <-- margin.map(_.exists(SignalStrength.of(_) == SignalStrength.Adequate)),
-        cls("weak") <-- margin.map(_.exists(SignalStrength.of(_) == SignalStrength.Weak)),
-        child.text <-- margin.map(_.fold("")(SignalStrength.label)),
-        title <-- margin.map(_.fold("")(m => s"${SignalStrength.label(m)}: ${SignalStrength.Description}")),
-        aria.label <-- margin.map(_.fold("")(m => s"Signal ${SignalStrength.label(m)}, ${SignalStrength.Description}"))
+        cls := "gauges",
+        div(
+          cls := "gauge noise-badge",
+          cls("strong") <-- noise.map(_.exists(NoiseLevel.of(_) == NoiseLevel.Quiet)),
+          cls("adequate") <-- noise.map(_.exists(NoiseLevel.of(_) == NoiseLevel.Fair)),
+          cls("weak") <-- noise.map(_.exists(NoiseLevel.of(_) == NoiseLevel.Noisy)),
+          child.text <-- noise.map(_.fold("")(NoiseLevel.label)),
+          title <-- noise.map(_.fold("")(level => s"Noise ${NoiseLevel.label(level)}: ${NoiseLevel.Description}")),
+          aria.label <-- noise.map(_.fold("")(level => s"Noise ${NoiseLevel.label(level)}, ${NoiseLevel.Description}"))
+        ),
+        div(
+          cls := "gauge signal-badge",
+          cls("strong") <-- margin.map(_.exists(SignalStrength.of(_) == SignalStrength.Strong)),
+          cls("adequate") <-- margin.map(_.exists(SignalStrength.of(_) == SignalStrength.Adequate)),
+          cls("weak") <-- margin.map(_.exists(SignalStrength.of(_) == SignalStrength.Weak)),
+          child.text <-- margin.map(_.fold("")(SignalStrength.label)),
+          title <-- margin.map(_.fold("")(m => s"${SignalStrength.label(m)}: ${SignalStrength.Description}")),
+          aria.label <-- margin.map(
+            _.fold("")(m => s"Signal ${SignalStrength.label(m)}, ${SignalStrength.Description}")
+          )
+        )
       )
     )
 

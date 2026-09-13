@@ -281,25 +281,29 @@ button,
 
 /* The foot of the panel: reset at the left, the lock reading filling the rest. Sharing the row rather than
    floating over it means the button occupies the corner without costing height or covering the text. */
+/* Three tracks: the control, the line, and the gauges. The outer two are the same width, so the middle one lands on
+   the centre of the panel by construction -- where the flex row needed a spacer element kept in step with the button
+   by hand, and the reading drifted off centre whenever the two fell out of step. */
 .control-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--control-size) minmax(0, 1fr) var(--control-size);
   align-items: center;
   gap: 0.75rem;
 }
 
-.control-row .lock-state {
-  flex: 1;
-  min-width: 0;
-  /* The standalone label carried a bottom margin; inside the row it would lift the text off the button's centre. */
-  margin-bottom: 0;
+/* The room above the movement, stacked in the counterweight's track. Rows sized by content, so a gauge with nothing
+   to say takes no height and the pair stays centred on the control opposite. */
+.gauges {
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 0.2rem;
 }
 
-/* Occupies the counterweight's place, so showing it cannot shift the reading off centre. Colour carries the band
-   and the number carries the value, so neither alone has to be relied on. */
-.signal-badge {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.gauge {
+  display: grid;
+  place-items: center;
+  width: var(--control-size);
+  min-height: 1.15rem;
   border-radius: 6px;
   font-size: 0.7rem;
   font-weight: 600;
@@ -307,27 +311,41 @@ button,
   color: transparent;
 }
 
-.signal-badge.strong {
+.control-row .lock-state {
+  min-width: 0;
+  /* The standalone label carried a bottom margin; inside the row it would lift the text off the button's centre. */
+  margin-bottom: 0;
+}
+
+/* Colour carries the band and the number carries the value, so neither alone has to be relied on. The two gauges
+   share one set of bands: green means "this will not stop you counting", red means "this will". */
+.signal-badge.strong,
+.noise-badge.strong {
   background: rgb(53 196 106 / 18%);
   color: #35c46a;
 }
 
-.signal-badge.adequate {
+.signal-badge.adequate,
+.noise-badge.adequate {
   background: rgb(245 158 11 / 18%);
   color: #f59e0b;
 }
 
-.signal-badge.weak {
+.signal-badge.weak,
+.noise-badge.weak {
   background: rgb(239 68 68 / 18%);
   color: #ef4444;
 }
 
-/* The spacer mirrors the button's footprint exactly, which is what keeps the reading centred on the panel. */
-.reset-button,
-.footer-spacer {
-  flex: none;
-  width: 2.5rem;
-  height: 2.5rem;
+/* One size for the control and the gauges opposite it, named so the grid's outer tracks and the button cannot fall
+   out of step -- which is what the old spacer element existed to prevent, and sometimes did not. */
+:root {
+  --control-size: 2.5rem;
+}
+
+.reset-button {
+  width: var(--control-size);
+  height: var(--control-size);
 }
 
 .reset-button {
@@ -727,6 +745,23 @@ button,
   pointer-events: none;
 }
 
+/* The second opinion, beside the leader. The count is the larger of two channels that agree about the cadence, so
+   which one corroborates matters as much as which one leads -- and when the pair is the wrong one, seeing both
+   marked is what shows it. Purple: next to blue in hue, so the two read as a pair, and nowhere near the green
+   trace or the red of a failing count. */
+.partner-dot {
+  position: absolute;
+  top: 0.3rem;
+  right: 1.1rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #a855f7;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.partner-dot.shown,
 .leader-dot.shown {
   opacity: 1;
 }

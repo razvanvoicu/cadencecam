@@ -328,6 +328,7 @@ object Main:
       // How far the movement stands above the background, kept whether or not a cadence has been found: a movement
       // too faint to count looks from the outside exactly like no movement at all.
       val signalMargin = Var(Option.empty[Double])
+      val noiseLevel = Var(Option.empty[Double])
       // Derived from the camera itself rather than chosen: one on the same side as the screen is shown mirrored,
       // one facing away is not. Not persisted, since it belongs to the hardware rather than to the user.
       val mirrored = Var(false)
@@ -430,6 +431,7 @@ object Main:
         repCount.set(total)
         lock.set(reading.lock)
         signalMargin.set(reading.margin)
+        noiseLevel.set(reading.noise)
         publish()
         tick.update(_ + 1)
         sampleCount += 1
@@ -460,6 +462,7 @@ object Main:
         restOffsets.set(Map.empty)
         lock.set(LockState.Acquiring(0, 0))
         signalMargin.set(None)
+        noiseLevel.set(None)
         // Cleared rather than saved as zero: a reload should find nothing to resume, rather than a zero that goes on
         // being resumed for the rest of the retention window.
         repCountStore.clear()
@@ -602,6 +605,17 @@ object Main:
             // The status line already names the leader in words; this is the same fact placed on the trace.
             aria.hidden := true
           ),
+          // The second opinion. The count is the larger of two channels that agree about the cadence, so which one
+          // is corroborating matters as much as which one leads -- and when they are the wrong pair, seeing both
+          // marked is what shows it.
+          div(
+            cls := "partner-dot",
+            cls("shown") <-- lock.signal.map:
+              case LockState.Locked(_, partner, _) => partner == quadrant
+              case _                               => false
+            ,
+            aria.hidden := true
+          ),
           pane,
           // Redraw on every sample, so the trace keeps scrolling on a still scene too: samples arrive whether or
           // not anything in front of the camera moves.
@@ -685,7 +699,7 @@ object Main:
                 )
           ),
           Readouts.reading(repCount.signal.map(_.toString), "reps"),
-          Readouts.controls(statusText, () => resetCount(), signalMargin.signal),
+          Readouts.controls(statusText, () => resetCount(), signalMargin.signal, noiseLevel.signal),
           div(
             cls := "acquirer-actions",
             cls("open") <-- menuOpen.signal,

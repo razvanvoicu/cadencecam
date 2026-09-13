@@ -116,7 +116,18 @@ private[fe] final case class ChannelAnalysis(
     margin: Option[Double]
 )
 
-private[fe] final case class RepReading(count: Int, lock: LockState, margin: Option[Double] = None)
+private[fe] final case class RepReading(
+    count: Int,
+    lock: LockState,
+    margin: Option[Double] = None,
+    /** The quietest quadrant's amplitude: the closest thing to a measurement of the background on its own.
+      *
+      * Separate from the margin, which says how far the movement stands above the bar. This says how high the bar is
+      * being pushed by the room, and the two fail differently -- a strong movement in a noisy scene and a faint one in
+      * a still scene both count badly, for opposite reasons and with opposite remedies.
+      */
+    noise: Option[Double] = None
+)
 
 private[fe] object RepAnalysis:
 
@@ -287,7 +298,12 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
     */
   private var currentMargin: Option[Double] = None
 
-  def reading: RepReading = RepReading(counted, state, currentMargin)
+  /** The quietest channel's amplitude, kept for the same reason as the margin: it is most worth knowing when nothing is
+    * being counted, which is exactly when the screen has least else to say.
+    */
+  private var currentNoise: Option[Double] = None
+
+  def reading: RepReading = RepReading(counted, state, currentMargin, currentNoise)
 
   /** The pace of the last few reps, in reps per minute, or zero when too few have been seen to say.
     *
@@ -343,6 +359,9 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
       // From whichever channel is carrying the most, which is the best case the movement offers rather than an
       // average dragged down by the quadrants nothing happens in.
       currentMargin = channels.flatMap(_.margin).maxOption
+      // The smallest, not the largest: whatever is moving is rarely in all four quadrants at once, so the quietest
+      // of them is the best estimate of the background by itself.
+      currentNoise = channels.map(_.power).minOption
       // Stay with the channel already being counted for as long as it still agrees with another. The quadrants
       // carry the same period at different phases, so a leader that changed between updates would interleave two
       // phases of the same movement and count each cycle more than once.
