@@ -396,3 +396,43 @@ class RepCounterSuite extends FunSuite:
     assertEquals(RepAnalysis.corroborated(Seq(42), margin), None)
     assertEquals(RepAnalysis.corroborated(Seq.empty, margin), None)
     assertEquals(RepAnalysis.corroborated(Seq(10, 90), margin), None, "two channels far apart agree about nothing")
+
+  test("speckle left behind when a set ends does not start counting"):
+    // The failure this exists for. The bar a peak must clear is the greater of the fixed floor and a multiple of the
+    // amplitude around it, and the second term cannot reject noise: a window holding only noise sets a bar that noise
+    // clears, since peaks routinely exceed one and a half times their own RMS. One recording gained eleven reps after
+    // its movement had stopped, as the bar decayed behind the departing set.
+    val settings = DetectorSettings()
+    val reps = Seq(0.0, 20.0, 0.0, 20.0, 0.0, 20.0, 0.0, 20.0, 0.0, 20.0, 0.0)
+    val afterwards = Seq(0.0, 6.0, 0.0, 6.0, 0.0, 6.0, 0.0)
+    val settled = reps ++ afterwards
+    val peaks = settled.indices.filter(i =>
+      i > 0 && i < settled.length - 1 &&
+        settled(i) > settled(i - 1) && settled(i) >= settled(i + 1)
+    )
+
+    val standing = RepAnalysis.standingOut(settled, peaks, Some(2.0), settings)
+
+    assert(standing.forall(_ < reps.length), s"noise after the set was counted: $standing")
+    assertEquals(standing.size, 5, "every rep of the set must survive")
+
+  test("a movement that dims as the lighting does is still counted"):
+    // The opposite failure, and the more dangerous one because it is silent: a bar anchored to what the scene used to
+    // look like ratchets out of reach as a room darkens and the count simply stops. Auto-exposure was measured moving
+    // the amplitude by as much as forty per cent in ten seconds, so this is not hypothetical.
+    val settings = DetectorSettings()
+    val fading = (0 until 12).flatMap(i => Seq(0.0, 20.0 * math.pow(0.94, i.toDouble)))
+    val peaks = fading.indices.filter(i =>
+      i > 0 && i < fading.length - 1 &&
+        fading(i) > fading(i - 1) && fading(i) >= fading(i + 1)
+    )
+
+    val standing = RepAnalysis.standingOut(fading, peaks, Some(2.0), settings)
+
+    assertEquals(standing, peaks, "a rep was thrown away because the room dimmed")
+
+  test("the guard sits below the worst honest dip and above the noise it rejects"):
+    // Both bounds are measurements, not preferences. Across sixty-four recordings no genuine rep fell below three
+    // quarters of its own set's median, and cool-down noise stood at about a third of the movement it followed.
+    assert(DetectorSettings().peakHeightShare < 0.75, "this would reject reps during ordinary exposure drift")
+    assert(DetectorSettings().peakHeightShare > 0.36, "this would admit the noise that follows a set")

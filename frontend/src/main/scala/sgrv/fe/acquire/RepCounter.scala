@@ -78,6 +78,28 @@ private[fe] final case class DetectorSettings(
       * every one of them through -- but the size of its claim gives it away at once.
       */
     quadrantDisagreement: Int = 2,
+    /** How tall a peak must stand against the peaks of the last few reps before it counts.
+      *
+      * The threshold a peak clears is the greater of the prominence floor and a multiple of the amplitude around it,
+      * and the second term is self-defeating against noise: when a window holds nothing but noise, the bar is set by
+      * that noise, and noise peaks routinely exceed one and a half times their own RMS. So when a set ends and the
+      * movement slides out of the window, the bar decays after it and the camera's own speckle starts counting -- one
+      * recording gained eleven reps that way after the movement had stopped.
+      *
+      * Judged against the movement rather than against the window: peaks within a set are all of a size, while noise
+      * after one is a fraction of what preceded it. Measured across sixty-four recordings, cool-down noise stood at
+      * about a third of the movement's own amplitude while no genuine rep fell below three quarters of its set's
+      * median. A half sits between, a third clear of the worst honest dip.
+      */
+    peakHeightShare: Double = 0.5,
+    /** How far back "the last few reps" reaches, counted in reps rather than seconds.
+      *
+      * In reps so it scales with cadence -- ten reps is twelve seconds at 0.8Hz and four at two -- and short enough to
+      * follow the lighting. Auto-exposure moves the amplitude by as much as forty per cent in ten seconds on a noisy
+      * phone, so a memory anchored further back would judge a rep against a scene that no longer exists and start
+      * rejecting real ones.
+      */
+    heightMemoryReps: Int = 10,
     /** Samples ignored at the start of a window while the filter settles. A band-pass starting from rest rings when the
       * signal first arrives, and that ringing would otherwise dominate the very statistics used to decide what counts
       * as a peak.
@@ -176,9 +198,12 @@ private[fe] object RepAnalysis:
     val threshold = math.max(settings.prominenceFloor, settings.prominenceFactor * power)
     // Peaks are reported against the whole window, so the caller's index arithmetic stays unaffected by the skip.
     val measured = PeakDetector.measured(settled, settings.minimumDistanceSamples, threshold)
+    // Against the last few reps of this channel, so the camera's own speckle cannot start counting once the movement
+    // has left the window and the adaptive bar has decayed after it.
+    val standing = standingOut(settled, measured.map(_._1), periodOf(measured.map(_._1)), settings)
     // Against the quadrant's own brightness, so a peak the movement never came back from -- the object leaving the
     // frame for good -- is not mistaken for the round trip a rep is.
-    val found = measured.map(_._1 + settings.settlingSamples)
+    val found = standing.map(_ + settings.settlingSamples)
     // Judged over the time one rep takes here rather than the slowest the band allows: that wait is the count's
     // standing delay behind the movement, so where it comes from is not a detail.
     val peaks = PeakDetector.returning(samples, found, returnWindow(found, settings), settings.returnFraction)
@@ -207,6 +232,32 @@ private[fe] object RepAnalysis:
     * Bounded both ways: never shorter than the closest two peaks may fall, and never longer than the old fixed wait, so
     * an implausible period cannot make it wait longer than it used to.
     */
+  /** The peaks that stand up against the last few reps before them.
+    *
+    * A peak is measured against the tallest thing in the preceding stretch of its own channel. Within a set that is
+    * another rep, so every rep passes; after a set it is still a rep, so the camera's speckle does not. The memory
+    * expires about ten reps after the movement stops, which is deliberate -- a longer one would buy protection during a
+    * period when nothing is happening and pay for it in adaptiveness while something is.
+    *
+    * Taken from the signal rather than from the peaks already credited, which matters: a memory that only learned from
+    * accepted peaks would stop learning the moment it started rejecting, and a scene that dimmed would ratchet the bar
+    * up out of reach and never count again.
+    */
+  private[acquire] def standingOut(
+      settled: Seq[Double],
+      peaks: Seq[Int],
+      periodSamples: Option[Double],
+      settings: DetectorSettings
+  ): Seq[Int] =
+    val reach = periodSamples
+      .map(period => (period * settings.heightMemoryReps).round.toInt)
+      .getOrElse(settled.length)
+      .max(settings.maximumGapSamples)
+    peaks.filter: index =>
+      val from = math.max(0, index - reach)
+      val tallest = settled.slice(from, index + 1).maxOption.getOrElse(0.0)
+      tallest <= 0 || settled(index) >= settings.peakHeightShare * tallest
+
   private[acquire] def returnWindow(peaks: Seq[Int], settings: DetectorSettings): Int =
     periodOf(peaks)
       .map(period => period.round.toInt.max(settings.minimumDistanceSamples).min(settings.maximumGapSamples))
