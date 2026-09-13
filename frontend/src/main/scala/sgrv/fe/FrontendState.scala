@@ -76,6 +76,14 @@ private[fe] enum AboutState:
   case Loaded(information: AboutInfo)
   case Failed(message: String)
 
+  /** Opened before signing in, where the backend's build cannot be asked for.
+    *
+    * The panel is reachable from the login screen because which build a browser is running is exactly what one wants to
+    * check on a device that will not behave -- and that is knowable locally. Asking the backend from there only ever
+    * produced a 401 dressed up as a failure message, and it tripped the session handling on the way.
+    */
+  case LocalOnly
+
 private[fe] object AboutState:
   given JsonCodec[AboutState] = DeriveJsonCodec.gen[AboutState]
 

@@ -529,15 +529,33 @@ button,
   font-variant-numeric: tabular-nums;
 }
 
-.bench-back {
-  align-self: center;
+/* Both controls beside the readouts rather than over the panel: reaching for a button on the panel puts a hand and a
+   pointer in front of the camera, and the detector counts whatever the camera sees. Side by side and of one size,
+   because stacking two different shapes reads as a main action and an afterthought, which is not the relationship --
+   one starts a quarter of an hour of measurement and the other leaves. */
+.bench-controls {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  align-self: stretch;
 }
 
-/* The one control that starts a run, beside the readouts rather than over the panel: reaching for a button on the
-   panel puts a hand and a pointer in front of the camera, and the detector counts whatever the camera sees. */
-.bench-begin {
-  align-self: center;
-  margin-top: 0.5rem;
+.bench-control {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0.7rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-bg);
+  color: var(--fg);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.bench-control:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .takeover-dialog p {

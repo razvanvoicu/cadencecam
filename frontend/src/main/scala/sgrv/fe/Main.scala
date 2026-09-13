@@ -113,14 +113,22 @@ object Main:
           case _                                      => show(Screen.Acquirer)
 
     def openAbout(): Unit =
-      stateStore.update(_.copy(aboutState = AboutState.Loading))
-      fetchAbout(http).onComplete:
-        case Success(information) if stateStore.current.aboutState == AboutState.Loading =>
-          stateStore.update(_.copy(aboutState = AboutState.Loaded(information)))
-        case Failure(error) if stateStore.current.aboutState == AboutState.Loading =>
-          val message = Option(error.getMessage).map(_.trim).filter(_.nonEmpty).getOrElse("The request failed.")
-          stateStore.update(_.copy(aboutState = AboutState.Failed(message)))
-        case _ => ()
+      val signedIn = stateStore.current.user match
+        case SignedIn(_, _) | Restoring(_, _) => true
+        case _                                => false
+      // Nobody to ask before signing in: the build endpoint needs a session, so asking only ever produced a 401
+      // dressed up as a failure, and tripped the session handling on the way out. What is worth knowing there --
+      // which bundle this browser is running -- is known locally.
+      if !signedIn then stateStore.update(_.copy(aboutState = AboutState.LocalOnly))
+      else
+        stateStore.update(_.copy(aboutState = AboutState.Loading))
+        fetchAbout(http).onComplete:
+          case Success(information) if stateStore.current.aboutState == AboutState.Loading =>
+            stateStore.update(_.copy(aboutState = AboutState.Loaded(information)))
+          case Failure(error) if stateStore.current.aboutState == AboutState.Loading =>
+            val message = Option(error.getMessage).map(_.trim).filter(_.nonEmpty).getOrElse("The request failed.")
+            stateStore.update(_.copy(aboutState = AboutState.Failed(message)))
+          case _ => ()
 
     def logout(): Unit =
       if stateStore.current.logoutState != LogoutState.InProgress then
@@ -183,14 +191,14 @@ object Main:
           roleChoice(
             "mode-acquirer",
             Screen.Acquirer,
-            "Signal acquirer",
+            "Counter",
             "Aim this device's camera at the movement and let it count the reps."
           ),
           roleChoice(
             "mode-dashboard",
             Screen.Dashboard,
             "Dashboard",
-            "Watch the live rep count arriving from the acquiring device."
+            "Watch the live rep count arriving from the counting device."
           ),
           roleChoice(
             "mode-bench",
@@ -390,7 +398,13 @@ object Main:
         */
       def publish(): Unit =
         val reading =
-          LiveReading(repCount.now(), math.round(counter.repsPerMinute).toDouble, latestStatus, Device.describe())
+          LiveReading(
+            repCount.now(),
+            math.round(counter.repsPerMinute).toDouble,
+            latestStatus,
+            Device.describe(),
+            counting = lock.now().isInstanceOf[LockState.Locked]
+          )
         if !lastPublished.contains(reading) then if relay.send(reading.toJson) then lastPublished = Some(reading)
 
       def onSample(sample: Sample): Unit =
@@ -632,7 +646,7 @@ object Main:
           cls := "screen acquirer",
           div(
             cls := "acquirer-header",
-            h1(cls := "screen-title", "Signal acquirer"),
+            h1(cls := "screen-title", "Counter"),
             button(
               cls := "menu-button",
               typ := "button",
@@ -790,6 +804,14 @@ object Main:
                     // What the browser is actually running, which need not be what the server just served. Stamped
                     // into the bundle at packaging time and read back out of this browser's own storage, so a cached
                     // build says so plainly instead of being mistaken for the detector misbehaving.
+                    dt("Frontend build"),
+                    dd(Device.frontendBuild().getOrElse("not recorded by this browser"))
+                  )
+                // Before signing in: the one field that can be known without a backend, which is also the one that
+                // matters on a device that will not behave.
+                case AboutState.LocalOnly =>
+                  dl(
+                    cls := "about-details",
                     dt("Frontend build"),
                     dd(Device.frontendBuild().getOrElse("not recorded by this browser"))
                   )

@@ -360,17 +360,22 @@ private[fe] object BenchView:
             figures.map: (label, value) =>
               div(cls := "bench-stat", span(cls := "bench-stat-label", label), span(cls := "bench-stat-value", value))
         ),
-        child <-- stage.signal.map:
-          case Stage.Idle =>
-            button(
-              cls := "mode-button bench-begin",
-              typ := "button",
-              "Begin the suite",
-              onClick --> (_ => resetThen(0))
-            )
-          case _ => emptyNode
-        ,
-        button(cls := "back-button bench-back", typ := "button", "Back", onClick --> (_ => onBack()))
+        // Side by side and the same size. Two controls of different shapes stacked one above the other read as a
+        // primary action and an afterthought, which is not the relationship: one starts a quarter of an hour of
+        // measurement and the other leaves.
+        div(
+          cls := "bench-controls",
+          button(
+            cls := "bench-control",
+            typ := "button",
+            disabled <-- stage.signal.map(_ != Stage.Idle),
+            // One word: the pair share a row, and "Begin the suite" wrapped onto two lines while "Back" sat on one,
+            // which is the uneven look this was meant to fix. The panel beside it says what is being begun.
+            "Begin",
+            onClick --> (_ => resetThen(0))
+          ),
+          button(cls := "bench-control", typ := "button", "Back", onClick --> (_ => onBack()))
+        )
       ),
       div(
         cls := "bench-results",

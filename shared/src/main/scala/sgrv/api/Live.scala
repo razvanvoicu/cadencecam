@@ -19,7 +19,14 @@ final case class LiveReading(
       * test event is filed by the bench, which recorded its own device readily enough -- and the bench is a laptop
       * showing an animation, not the handset whose camera and processor decide whether the reps are found.
       */
-    device: Option[String] = None
+    device: Option[String] = None,
+    /** Whether the counter has a cadence to count by.
+      *
+      * A watching device cannot tell "behind" from "not started" without it, and those want saying differently: for the
+      * first fifteen seconds of every set the count is legitimately zero while the detector works out what it is
+      * looking at, and colouring that as a discrepancy paints the normal opening of every set as a fault.
+      */
+    counting: Boolean = false
 )
 
 object LiveReading:
