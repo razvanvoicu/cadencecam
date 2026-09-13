@@ -60,6 +60,14 @@ class TraceCaptureSuite extends FunSuite:
       "attempted; held: exposureMode, left automatic: focusMode"
     )
 
+  test("what the camera settled on is carried too, when it says"):
+    // "held: exposureMode" described a good outcome and a picture pinned at the darkest exposure identically, which is
+    // why the last attempt could not be diagnosed from the recordings.
+    assertEquals(
+      TraceCapture.describe(ControlOutcome("attempted", Seq("exposureMode"), Nil, Some("""{"exposureTime":312.5}"""))),
+      """attempted; held: exposureMode; settled: {"exposureTime":312.5}"""
+    )
+    assertEquals(TraceCapture.describe(ControlOutcome("switched off")), "switched off; held: none")
   test("a trace records the sample at which the controls settled"):
     // In the same record as the signal, so the picture changing and the controls settling can be read against each
     // other rather than against two clocks.

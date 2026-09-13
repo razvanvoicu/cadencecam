@@ -22,7 +22,13 @@ private[acquire] final case class ManualControl(mode: String, setting: String)
 private[fe] final case class ControlOutcome(
     reason: String,
     held: Seq[String] = Seq.empty,
-    skipped: Seq[String] = Seq.empty
+    skipped: Seq[String] = Seq.empty,
+    /** What the camera reported once the controls had been applied, verbatim.
+      *
+      * Recorded because the last attempt failed in a way the outcome could not show: the controls were held, and held
+      * at the wrong value. "Held" alone says nothing about whether the picture is usable.
+      */
+    settled: Option[String] = None
 )
 
 private[fe] object Camera:
@@ -162,15 +168,23 @@ private[fe] object Camera:
     */
   private[acquire] val settleBeforeLockMillis = 1500
 
-  /** Whether to hold the controls still at all. Off, pending evidence that it helps.
+  /** Whether to hold the controls still at all. On, with the evidence it was waiting for and the fault it had fixed.
     *
-    * It was added to stop the camera re-metering on the movement being counted, and a phone then began darkening badly
-    * a second or so after opening — which looked exactly like this feature misfiring. It was not: a captured trace
-    * showed the browser exposing neither `getCapabilities` nor `getSettings` on that device, so none of this ran, and
-    * the darkening happened anyway. Rather than reason further about a suspect that cannot act, it is switched off so
-    * the same test says plainly whether it was ever involved.
+    * The evidence: on one handset the brightness of the whole frame swings harder than the movement does. Measured
+    * across the four quadrants at once -- the part of the signal that cannot come from an object in any one of them --
+    * it reaches 1.6 times the amplitude of the reps themselves, at 1.30 Hz, inside the very band the detector passes
+    * and at no fixed relation to the cadence. A handset that counts every test exactly right shows a twentieth of that.
+    * Nothing downstream can separate the two: the wobble is the camera re-metering on the object it is being asked to
+    * watch, and six attempts to filter it out failed because a component with no fixed frequency relation to the signal
+    * cannot be notched away.
+    *
+    * The fault: it was tried before and the picture came out at the darkest the sensor would go. The mode and the value
+    * it was to be held at were sent in one request, and a camera still in automatic discards the value -- so it went
+    * manual and stayed wherever the driver left it. They are now two requests, the mode first. What the camera reports
+    * once they are applied is recorded on the trace, so "held" and "held at something usable" can be told apart without
+    * anyone having to look at a phone.
     */
-  private[acquire] val holdControls = false
+  private[acquire] val holdControls = true
 
   /** Which of the wanted controls this camera says it can hold manually.
     *
@@ -199,9 +213,20 @@ private[fe] object Camera:
     val current = settings.selectDynamic(control.setting)
     Option.when(!js.isUndefined(current) && current != null):
       val wanted = js.Dynamic.literal()
-      wanted.updateDynamic(control.mode)("manual")
       wanted.updateDynamic(control.setting)(current)
       wanted
+
+  /** The request that switches one control to manual, carrying nothing else.
+    *
+    * Separate from the value, and applied before it, because a browser that is still in automatic mode discards the
+    * value outright: the mode change has to have taken effect before the setting means anything. Sent together -- which
+    * is how this was written -- the camera goes manual and then sits at whatever the driver defaults to, which is the
+    * darkest end of its range. That is the symptom this had, and the reason it was switched off.
+    */
+  private[acquire] def switching(control: ManualControl): js.Dynamic =
+    val wanted = js.Dynamic.literal()
+    wanted.updateDynamic(control.mode)("manual")
+    wanted
 
   /** What this camera says it can do and where it currently sits, as JSON.
     *
@@ -249,22 +274,30 @@ private[fe] object Camera:
             val skipped = capable.filter(control => pinning(control, settled).isEmpty).map(_.mode)
             if skipped.nonEmpty then
               dom.console.info(s"Left automatic, having no value to hold them at: ${skipped.mkString(", ")}")
+            def request(wanted: js.Dynamic): Future[Unit] =
+              track
+                .applyConstraints(
+                  js.Dynamic.literal(advanced = js.Array(wanted)).asInstanceOf[dom.MediaTrackConstraints]
+                )
+                .toFuture
+                .map(_ => ())
             capable
-              .flatMap(control => pinning(control, settled).map(control.mode -> _))
+              .flatMap(control => pinning(control, settled).map(control -> _))
               .foldLeft(Future.successful(Seq.empty[String])): (earlier, pinned) =>
-                val (mode, wanted) = pinned
+                val (control, value) = pinned
                 earlier.flatMap: locked =>
-                  track
-                    .applyConstraints(
-                      js.Dynamic.literal(advanced = js.Array(wanted)).asInstanceOf[dom.MediaTrackConstraints]
-                    )
-                    .toFuture
-                    .map(_ => locked :+ mode)
+                  // Mode first and on its own; only then the value it is to be held at.
+                  request(switching(control))
+                    .flatMap(_ => request(value))
+                    .map(_ => locked :+ control.mode)
                     .recover { case _ => locked }
               .map: locked =>
                 if locked.isEmpty then dom.console.info("The camera holds none of its controls still")
                 else dom.console.info(s"Camera controls held still: ${locked.mkString(", ")}")
-                ControlOutcome("attempted", locked, skipped)
+                // What the camera actually settled on, read back rather than assumed. Held at the darkest end of the
+                // range is indistinguishable from held correctly unless the value itself is recorded.
+                val after = js.JSON.stringify(dynamic.getSettings())
+                ControlOutcome("attempted", locked, skipped, Some(after))
 
   private def after(millis: Int): Future[Unit] =
     val settled = scala.concurrent.Promise[Unit]()

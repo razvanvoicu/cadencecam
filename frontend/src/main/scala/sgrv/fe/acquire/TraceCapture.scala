@@ -57,11 +57,17 @@ private[fe] object TraceCapture:
       device = device
     )
 
-  /** One line describing what became of the camera's controls, for a trace to carry. */
+  /** One line describing what became of the camera's controls, for a trace to carry.
+    *
+    * Ends with what the camera reported afterwards when there is anything to report. Which controls were held is not
+    * enough on its own: the last attempt held them successfully, at the darkest exposure the sensor had, and a trace
+    * saying "held: exposureMode" described that outcome and a good one identically.
+    */
   private[fe] def describe(outcome: ControlOutcome): String =
     val held = if outcome.held.isEmpty then "none" else outcome.held.mkString("+")
     val skipped = if outcome.skipped.isEmpty then "" else s", left automatic: ${outcome.skipped.mkString("+")}"
-    s"${outcome.reason}; held: $held$skipped"
+    val settled = outcome.settled.fold("")(reported => s"; settled: $reported")
+    s"${outcome.reason}; held: $held$skipped$settled"
 
   private[acquire] def describe(lock: LockState): String = lock match
     case LockState.Acquiring(samples, needed)              => s"acquiring $samples/$needed"

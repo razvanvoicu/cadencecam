@@ -145,13 +145,30 @@ class CameraSuite extends FunSuite:
     // Long enough for metering to converge, short enough not to spend a set on automatic.
     assert(Camera.settleBeforeLockMillis >= 500 && Camera.settleBeforeLockMillis <= 3000)
 
-  test("holding a control still carries the value it settled on, not only the mode"):
+  test("holding a control still carries the value it settled on"):
     val settled = js.Dynamic.literal("exposureTime" -> 312.5, "colorTemperature" -> 4200)
 
     val exposure = Camera.pinning(ManualControl("exposureMode", "exposureTime"), settled).get
 
-    assertEquals(exposure.exposureMode.asInstanceOf[String], "manual")
     assertEquals(exposure.exposureTime.asInstanceOf[Double], 312.5)
+
+  test("the value request carries no mode, and the mode request carries no value"):
+    // The two go in separate calls, the mode first. A camera still in automatic discards a value sent alongside the
+    // switch, so a combined request leaves it manual at whatever the driver defaults to -- the darkest end of the
+    // range, which is exactly what the last attempt produced.
+    val settled = js.Dynamic.literal("exposureTime" -> 312.5)
+    val control = ManualControl("exposureMode", "exposureTime")
+
+    val value = Camera.pinning(control, settled).get
+    assert(js.isUndefined(value.selectDynamic("exposureMode")), "the value request must not carry the mode")
+
+    val mode = Camera.switching(control)
+    assertEquals(mode.exposureMode.asInstanceOf[String], "manual")
+    assert(js.isUndefined(mode.selectDynamic("exposureTime")), "the mode request must not carry the value")
+
+  test("every control switches to manual by its own mode name"):
+    Camera.manualControls.foreach: control =>
+      assertEquals(Camera.switching(control).selectDynamic(control.mode).asInstanceOf[String], "manual")
 
   test("a control the camera reports no value for is left automatic rather than pinned to nothing"):
     // Cameras advertise a manual mode while reporting no current value for it, and asking for the mode alone tells
@@ -177,11 +194,12 @@ class CameraSuite extends FunSuite:
       )
     )
 
-  test("holding the controls still is switched off, pending evidence that it helps"):
-    // It was suspected of darkening a phone's picture and cleared by measurement: that device exposed neither
-    // getCapabilities nor getSettings, so none of this could run, and the darkening happened anyway. Off until a
-    // trace shows it was ever involved.
-    assert(!Camera.holdControls)
+  test("holding the controls still is switched on"):
+    // On, with the evidence it was waiting for: on one handset the brightness of the whole frame -- the part of the
+    // signal common to all four quadrants, which no object in any one of them can explain -- swings at 1.6 times the
+    // amplitude of the reps, at 1.30 Hz, inside the band the detector passes. A handset that counts every test
+    // exactly right shows a twentieth of that.
+    assert(Camera.holdControls)
 
   test("the camera is opened asking for its whole field of view"):
     // Leaving the size unsaid is what kept the view cropped: the browser then picks a default, and on Android that
