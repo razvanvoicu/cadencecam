@@ -1004,28 +1004,39 @@ button,
   color: #ff7c6b;
 }
 
-/* Camera controls: folded away behind one button, because the picture and the count are what the screen is for. */
-.camera-adjust {
+/* Camera controls as a sheet at the foot of the screen: what the sliders do is only visible in the picture, so the
+   picture has to stay on screen while they move. */
+.camera-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
   display: grid;
   gap: 0.4rem;
-  margin: 0.5rem 0 0;
-  align-self: stretch;
+  padding: 0.6rem 0.75rem calc(0.75rem + env(safe-area-inset-bottom));
+  background: var(--panel-bg);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -8px 24px rgb(0 0 0 / 45%);
 }
 
-.camera-adjust-toggle {
-  padding: 0.45rem 0.6rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-bg);
+.camera-sheet-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.camera-sheet-close {
+  border: none;
+  background: none;
   color: var(--muted);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.2rem 0.35rem;
   cursor: pointer;
-}
-
-.camera-adjust-panel {
-  display: grid;
-  gap: 0.35rem;
 }
 
 /* Label, slider, value. The slider takes whatever is left, so the row still fits a 320px screen. */
@@ -1051,4 +1062,16 @@ button,
   color: var(--muted);
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.camera-sheet-auto {
+  margin-top: 0.15rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
 }

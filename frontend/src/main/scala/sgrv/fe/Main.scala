@@ -714,53 +714,6 @@ object Main:
                   button(cls := "back-button", typ := "button", "Try again", onClick --> (_ => startCamera()))
                 )
           ),
-          // Offered only when the camera reports something with a range on it, and folded away until asked for: the
-          // picture and the count are what this screen is for, and a row of sliders above them would say otherwise.
-          child <-- adjustables.signal.map: available =>
-            if available.isEmpty then emptyNode
-            else
-              div(
-                cls := "camera-adjust",
-                button(
-                  cls := "camera-adjust-toggle",
-                  typ := "button",
-                  child.text <-- adjustOpen.signal.map(open =>
-                    if open then "Hide camera controls" else "Camera controls"
-                  ),
-                  onClick --> (_ => adjustOpen.update(open => !open))
-                ),
-                child <-- adjustOpen.signal.map:
-                  case false => emptyNode
-                  case true  =>
-                    div(
-                      cls := "camera-adjust-panel",
-                      available.map: control =>
-                        val shown = Var(control.current)
-                        div(
-                          cls := "camera-adjust-row",
-                          label(cls := "camera-adjust-label", control.label),
-                          input(
-                            cls := "camera-adjust-slider",
-                            typ := "range",
-                            minAttr := control.min.toString,
-                            maxAttr := control.max.toString,
-                            stepAttr := control.step.toString,
-                            defaultValue := control.current.toString,
-                            onInput.mapToValue --> { raw =>
-                              raw.toDoubleOption.foreach: value =>
-                                shown.set(value)
-                                stream.foreach: opened =>
-                                  val _ = CameraAdjust.move(opened, control, value)
-                            }
-                          ),
-                          span(
-                            cls := "camera-adjust-value",
-                            child.text <-- shown.signal.map(value => f"$value%.4g")
-                          )
-                        )
-                    )
-              )
-          ,
           Readouts.reading(repCount.signal.map(_.toString), "reps"),
           Readouts.controls(statusText, () => resetCount(), signalMargin.signal, noiseLevel.signal),
           div(
@@ -780,6 +733,16 @@ object Main:
                       // before belongs to a different view of the world.
                       () => { release(); startCamera(Some(next.deviceId)) }
                     ),
+            // Only where there is something to move. A menu entry that opens an empty sheet is worse than no entry,
+            // and on Safari there is nothing to move: it reports exposure as modes, with no range to put a slider on.
+            child <-- adjustables.signal.map: available =>
+              if available.isEmpty then emptyNode
+              else
+                menuItem(
+                  "Camera controls",
+                  () => adjustOpen.set(true)
+                )
+            ,
             // Kept in the menu rather than on the panel: capturing is for working on the detector, not for
             // working out, and a control that stops a set is worth a deliberate tap.
             child <-- capture.signal.map: state =>
@@ -803,6 +766,63 @@ object Main:
             menuItem("Logout", () => logout())
           )
         ),
+        // A sheet at the foot of the screen rather than a panel in the flow: what these sliders do is only visible in
+        // the picture, so the picture has to stay on screen while they move.
+        child <-- adjustOpen.signal
+          .combineWith(adjustables.signal)
+          .map: (open, available) =>
+            if !open || available.isEmpty then emptyNode
+            else
+              val dial = stream.map(CameraAdjust.Dial(_))
+              div(
+                cls := "camera-sheet",
+                div(
+                  cls := "camera-sheet-head",
+                  span("Camera"),
+                  button(
+                    cls := "camera-sheet-close",
+                    typ := "button",
+                    aria.label := "Close camera controls",
+                    "\u2715",
+                    onClick --> (_ => adjustOpen.set(false))
+                  )
+                ),
+                available.map: control =>
+                  val shown = Var(control.current)
+                  div(
+                    cls := "camera-adjust-row",
+                    label(cls := "camera-adjust-label", control.label),
+                    input(
+                      cls := "camera-adjust-slider",
+                      typ := "range",
+                      minAttr := "0",
+                      maxAttr := CameraAdjust.Positions.toString,
+                      stepAttr := "1",
+                      defaultValue := (CameraAdjust
+                        .positionOf(control, control.current) * CameraAdjust.Positions).round.toString,
+                      onInput.mapToValue --> { raw =>
+                        raw.toDoubleOption.foreach: position =>
+                          val value = CameraAdjust.valueAt(control, position / CameraAdjust.Positions)
+                          shown.set(value)
+                          dial.foreach(_.set(control, value))
+                      }
+                    ),
+                    span(cls := "camera-adjust-value", child.text <-- shown.signal.map(value => f"$value%.4g"))
+                  )
+                ,
+                // The way back from a picture no slider can recover, which is how this was first met.
+                button(
+                  cls := "camera-sheet-auto",
+                  typ := "button",
+                  "Back to automatic",
+                  onClick --> { _ =>
+                    dial.foreach: one =>
+                      val _ = one.automatic()
+                    adjustOpen.set(false)
+                  }
+                )
+              )
+        ,
         // Below the panel and laid out as the quadrants themselves are, so a trace sits where the movement that
         // produced it appeared on screen.
         div(
