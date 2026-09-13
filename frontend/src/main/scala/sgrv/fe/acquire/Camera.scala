@@ -16,7 +16,15 @@ private[fe] enum CameraState:
   case Unavailable(message: String)
 
 /** A camera control that can be held still, paired with the setting that says where to hold it. */
-private[acquire] final case class ManualControl(mode: String, setting: String)
+/** One camera control that can be taken off automatic, and every value that has to be supplied once it is.
+  *
+  * More than one value per mode, because they do not come apart. Switching the exposure to manual stops the camera
+  * choosing its sensitivity as well as its shutter, and a request that names only the shutter leaves the sensitivity
+  * wherever the driver puts it -- as low as 21 on a camera metering at 100, which is a picture four stops darker than
+  * the one being replaced.
+  */
+private[acquire] final case class ManualControl(mode: String, settings: Seq[String]):
+  def name: String = mode
 
 /** What became of the attempt to hold a camera's controls still, and why. */
 private[fe] final case class ControlOutcome(
@@ -156,9 +164,9 @@ private[fe] object Camera:
     * other.
     */
   private[acquire] val manualControls = Seq(
-    ManualControl("exposureMode", "exposureTime"),
-    ManualControl("whiteBalanceMode", "colorTemperature"),
-    ManualControl("focusMode", "focusDistance")
+    ManualControl("exposureMode", Seq("exposureTime", "iso")),
+    ManualControl("whiteBalanceMode", Seq("colorTemperature")),
+    ManualControl("focusMode", Seq("focusDistance"))
   )
 
   /** How long the camera stays automatic before being held still.
@@ -210,10 +218,14 @@ private[fe] object Camera:
     * automatic exposure that drifts is a nuisance, an exposure pinned to a number nobody chose is unusable.
     */
   private[acquire] def pinning(control: ManualControl, settings: js.Dynamic): Option[js.Dynamic] =
-    val current = settings.selectDynamic(control.setting)
-    Option.when(!js.isUndefined(current) && current != null):
+    val readable = control.settings.flatMap: setting =>
+      val current = settings.selectDynamic(setting)
+      Option.when(!js.isUndefined(current) && current != null)(setting -> current)
+    // Every value this mode governs, in one request. They are sent together because they take effect together: a
+    // shutter held without a sensitivity is not a held exposure, it is half of one.
+    Option.when(readable.nonEmpty):
       val wanted = js.Dynamic.literal()
-      wanted.updateDynamic(control.setting)(current)
+      readable.foreach((setting, current) => wanted.updateDynamic(setting)(current))
       wanted
 
   /** The request that switches one control to manual, carrying nothing else.

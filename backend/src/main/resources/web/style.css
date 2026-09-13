@@ -1003,3 +1003,52 @@ button,
 .error {
   color: #ff7c6b;
 }
+
+/* Camera controls: folded away behind one button, because the picture and the count are what the screen is for. */
+.camera-adjust {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.5rem 0 0;
+  align-self: stretch;
+}
+
+.camera-adjust-toggle {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-bg);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.camera-adjust-panel {
+  display: grid;
+  gap: 0.35rem;
+}
+
+/* Label, slider, value. The slider takes whatever is left, so the row still fits a 320px screen. */
+.camera-adjust-row {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr 3.5rem;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.camera-adjust-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.camera-adjust-slider {
+  width: 100%;
+  min-width: 0;
+}
+
+.camera-adjust-value {
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

@@ -7,7 +7,9 @@ import sgrv.api.AcquirerPresence
 import sgrv.api.CountingSession
 import sgrv.api.CurrentUser
 import sgrv.fe.acquire.{
+  Adjustable,
   Camera,
+  CameraAdjust,
   CameraDevice,
   CameraState,
   FrameSampler,
@@ -368,6 +370,11 @@ object Main:
       var controlsAtSample = Option.empty[Int]
       var stream: Option[dom.MediaStream] = None
       var sampler: Option[FrameSampler] = None
+      // What this camera lets a person move by hand. Empty until a camera is open, and on any camera that reports its
+      // settings as modes rather than ranges -- Safari offers no exposure at all, so there the panel simply is not
+      // there rather than being there and inert.
+      val adjustables = Var(Seq.empty[Adjustable])
+      val adjustOpen = Var(false)
 
       val video = videoTag(cls := "camera-video")
       // The overlay's lines sit at 50% of this box, so the box must be exactly the frame: its aspect ratio is set
@@ -516,6 +523,7 @@ object Main:
         sampler = None
         stream.foreach(Camera.stop)
         stream = None
+        adjustables.set(Seq.empty)
         // Stopping the tracks is not enough on its own: while the video element still holds the stream, the browser
         // can keep the camera powered and its indicator lit after the view has gone. Letting go of it here is what
         // actually turns the camera off.
@@ -552,6 +560,14 @@ object Main:
               case Success(opened) =>
                 stream = Some(opened)
                 cameraReport = Camera.report(opened)
+                // Read after the controls have been held, so the sliders start from what the camera actually settled
+                // on rather than from what it was doing while metering was still moving.
+                adjustables.set(
+                  (for
+                    capabilities <- CameraAdjust.capabilitiesOf(opened)
+                    settings <- CameraAdjust.settingsOf(opened)
+                  yield CameraAdjust.adjustable(capabilities, settings)).getOrElse(Seq.empty)
+                )
                 val element = video.ref
                 prepare(element)
                 element.asInstanceOf[js.Dynamic].srcObject = opened.asInstanceOf[js.Any]
@@ -698,6 +714,53 @@ object Main:
                   button(cls := "back-button", typ := "button", "Try again", onClick --> (_ => startCamera()))
                 )
           ),
+          // Offered only when the camera reports something with a range on it, and folded away until asked for: the
+          // picture and the count are what this screen is for, and a row of sliders above them would say otherwise.
+          child <-- adjustables.signal.map: available =>
+            if available.isEmpty then emptyNode
+            else
+              div(
+                cls := "camera-adjust",
+                button(
+                  cls := "camera-adjust-toggle",
+                  typ := "button",
+                  child.text <-- adjustOpen.signal.map(open =>
+                    if open then "Hide camera controls" else "Camera controls"
+                  ),
+                  onClick --> (_ => adjustOpen.update(open => !open))
+                ),
+                child <-- adjustOpen.signal.map:
+                  case false => emptyNode
+                  case true  =>
+                    div(
+                      cls := "camera-adjust-panel",
+                      available.map: control =>
+                        val shown = Var(control.current)
+                        div(
+                          cls := "camera-adjust-row",
+                          label(cls := "camera-adjust-label", control.label),
+                          input(
+                            cls := "camera-adjust-slider",
+                            typ := "range",
+                            minAttr := control.min.toString,
+                            maxAttr := control.max.toString,
+                            stepAttr := control.step.toString,
+                            defaultValue := control.current.toString,
+                            onInput.mapToValue --> { raw =>
+                              raw.toDoubleOption.foreach: value =>
+                                shown.set(value)
+                                stream.foreach: opened =>
+                                  val _ = CameraAdjust.move(opened, control, value)
+                            }
+                          ),
+                          span(
+                            cls := "camera-adjust-value",
+                            child.text <-- shown.signal.map(value => f"$value%.4g")
+                          )
+                        )
+                    )
+              )
+          ,
           Readouts.reading(repCount.signal.map(_.toString), "reps"),
           Readouts.controls(statusText, () => resetCount(), signalMargin.signal, noiseLevel.signal),
           div(

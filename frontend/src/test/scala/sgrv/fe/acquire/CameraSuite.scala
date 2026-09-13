@@ -148,7 +148,7 @@ class CameraSuite extends FunSuite:
   test("holding a control still carries the value it settled on"):
     val settled = js.Dynamic.literal("exposureTime" -> 312.5, "colorTemperature" -> 4200)
 
-    val exposure = Camera.pinning(ManualControl("exposureMode", "exposureTime"), settled).get
+    val exposure = Camera.pinning(ManualControl("exposureMode", Seq("exposureTime")), settled).get
 
     assertEquals(exposure.exposureTime.asInstanceOf[Double], 312.5)
 
@@ -157,7 +157,7 @@ class CameraSuite extends FunSuite:
     // switch, so a combined request leaves it manual at whatever the driver defaults to -- the darkest end of the
     // range, which is exactly what the last attempt produced.
     val settled = js.Dynamic.literal("exposureTime" -> 312.5)
-    val control = ManualControl("exposureMode", "exposureTime")
+    val control = ManualControl("exposureMode", Seq("exposureTime"))
 
     val value = Camera.pinning(control, settled).get
     assert(js.isUndefined(value.selectDynamic("exposureMode")), "the value request must not carry the mode")
@@ -176,21 +176,23 @@ class CameraSuite extends FunSuite:
     // this is the case that turned a correct exposure dark a second after opening.
     val settled = js.Dynamic.literal("exposureTime" -> 312.5)
 
-    assertEquals(Camera.pinning(ManualControl("focusMode", "focusDistance"), settled), None)
-    assertEquals(Camera.pinning(ManualControl("whiteBalanceMode", "colorTemperature"), settled), None)
+    assertEquals(Camera.pinning(ManualControl("focusMode", Seq("focusDistance")), settled), None)
+    assertEquals(Camera.pinning(ManualControl("whiteBalanceMode", Seq("colorTemperature")), settled), None)
 
   test("a camera reporting no settings at all is left entirely alone"):
     val nothing = js.Dynamic.literal()
 
     assert(Camera.manualControls.forall(control => Camera.pinning(control, nothing).isEmpty))
 
-  test("each control is pinned by its own setting"):
+  test("each control is pinned by every setting its mode governs"):
+    // Exposure carries two. Taking it off automatic stops the camera choosing its sensitivity as well as its shutter,
+    // and naming only the shutter leaves sensitivity wherever the driver puts it -- which is how the picture went dark.
     assertEquals(
-      Camera.manualControls.map(control => control.mode -> control.setting).toMap,
+      Camera.manualControls.map(control => control.mode -> control.settings).toMap,
       Map(
-        "exposureMode" -> "exposureTime",
-        "whiteBalanceMode" -> "colorTemperature",
-        "focusMode" -> "focusDistance"
+        "exposureMode" -> Seq("exposureTime", "iso"),
+        "whiteBalanceMode" -> Seq("colorTemperature"),
+        "focusMode" -> Seq("focusDistance")
       )
     )
 
