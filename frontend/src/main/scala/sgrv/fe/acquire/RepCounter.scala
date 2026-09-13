@@ -201,6 +201,23 @@ private[fe] object RepAnalysis:
       .map(period => period.round.toInt.max(settings.minimumDistanceSamples).min(settings.maximumGapSamples))
       .getOrElse(settings.maximumGapSamples)
 
+  /** The largest tally that another channel arrived at very nearly as well, if any did.
+    *
+    * What makes a count believable is a second opinion within a rep or two. A channel reading its own noise reaches a
+    * number nothing else is near -- a hundred and thirty-six against ninety-nine on a real recording -- and a channel
+    * that has only just begun agreeing sits far below everything, which is just as uncorroborated.
+    *
+    * Comparing against the leading channel instead, which is what this replaced, failed in both directions: it believed
+    * a runaway whenever the runaway was the one leading, since nothing bounds a leader against itself, and it froze the
+    * count when the leader was the one starting from nothing.
+    */
+  private[acquire] def corroborated(counts: Seq[Int], margin: Int): Option[Int] =
+    counts.zipWithIndex
+      .filter: (value, index) =>
+        counts.zipWithIndex.exists((other, another) => another != index && math.abs(other - value) <= margin)
+      .map(_._1)
+      .maxOption
+
   private[acquire] def agree(first: ChannelAnalysis, second: ChannelAnalysis, tolerance: Double): Boolean =
     (first.periodSamples, second.periodSamples) match
       case (Some(a), Some(b)) if a > 0 && b > 0 => math.abs(a - b) / math.max(a, b) <= tolerance
@@ -349,16 +366,27 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
           val agreeing = channels.filter: channel =>
             channel.quadrant == leader.quadrant || RepAnalysis.agree(leader, channel, settings.periodTolerance)
           agreeing.foreach(tally(_, windowLength, totalSamples))
-          // The largest believable tally, and never less than what has already been reported.
+          // The largest tally another channel corroborates, and never less than what has already been reported.
           //
           // Largest rather than an average or a vote, because a quadrant that does not really see the movement finds
           // fewer crossings, not more: across sixty-five recordings a partner ran as much as a hundred reps below the
-          // leader and never more than two above. Believable is what the margin decides -- a channel claiming far
-          // more is reading its own noise, and that is the one case where taking the larger would be a disaster.
-          val leading = tallies.getOrElse(leader.quadrant, 0)
-          val believable = agreeing
-            .map(channel => tallies.getOrElse(channel.quadrant, 0))
-            .filter(_ <= leading + settings.quadrantDisagreement)
-          counted = math.max(counted, believable.maxOption.getOrElse(leading))
+          // leader and never more than two above. What makes a tally believable is a second channel arriving at very
+          // nearly the same number -- a channel reading its own noise counted a hundred and thirty-six where the
+          // others sat at ninety-nine, and nothing agreed with it.
+          //
+          // Corroboration rather than a comparison against the leader, which was the first attempt and had two
+          // faults. It believed a runaway whenever the runaway happened to be leading, since nothing bounds a leader
+          // against itself. And it could freeze the count outright: a channel that starts agreeing late begins its
+          // tally at zero, and if it then wins on power every other tally is further from it than the margin allows,
+          // so nothing can raise the count until it catches up. A suite recorded that exactly -- a test that counted
+          // nothing for two minutes while reporting the previous test's total, and passed, because the reference
+          // climbed to meet a number that was never measured.
+          val counts = agreeing.map(channel => tallies.getOrElse(channel.quadrant, 0))
+          // With nothing corroborated -- one channel alone, or two that disagree wildly -- the leader stands, which
+          // is what this did before there was a second opinion to consult.
+          val believed = RepAnalysis
+            .corroborated(counts, settings.quadrantDisagreement)
+            .getOrElse(tallies.getOrElse(leader.quadrant, 0))
+          counted = math.max(counted, believed)
 
     reading

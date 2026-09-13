@@ -446,6 +446,11 @@ object Main:
         // being resumed for the rest of the retention window.
         repCountStore.clear()
         repCount.set(0)
+        // Announced rather than left to the next change of reading. A reset is the one moment a watching device
+        // needs to hear about even if nothing else has moved: it is how the bench knows its command arrived, and a
+        // command silently lost left one phone counting a whole test onto the previous test's total.
+        lastPublished = None
+        publish()
 
       def captureTrace(note: Option[String] = None): Unit =
         if TraceCapture.worthSending(signals) then

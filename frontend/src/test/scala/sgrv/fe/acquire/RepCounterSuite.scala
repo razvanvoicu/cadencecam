@@ -364,3 +364,35 @@ class RepCounterSuite extends FunSuite:
     val settings = DetectorSettings()
 
     assertEquals(RepAnalysis.returnWindow(Seq(0, 1, 2, 3, 4), settings), settings.minimumDistanceSamples)
+
+  test("a channel nothing else agrees with is not believed, even when it leads"):
+    // The runaway from a real recording: one quadrant reading its own noise reached 136 while the others sat at 99.
+    // Comparing against the leader let it through whenever it happened to be the leader, because nothing bounds a
+    // leader against itself.
+    val margin = DetectorSettings().quadrantDisagreement
+
+    assertEquals(RepAnalysis.corroborated(Seq(136, 99, 99), margin), Some(99))
+    assertEquals(RepAnalysis.corroborated(Seq(99, 136, 99), margin), Some(99))
+    assertEquals(RepAnalysis.corroborated(Seq(99, 99, 136), margin), Some(99))
+
+  test("a rep one channel saw and another nearly did is believed"):
+    // The honest disagreement: two quadrants of one movement differ about its edges by a rep, never its middle.
+    val margin = DetectorSettings().quadrantDisagreement
+
+    assertEquals(RepAnalysis.corroborated(Seq(99, 100), margin), Some(100))
+    assertEquals(RepAnalysis.corroborated(Seq(100, 99, 0), margin), Some(100))
+
+  test("a channel that has only just begun agreeing cannot freeze the count"):
+    // The failure this exists for. A channel starting its tally at zero and winning on power made every other tally
+    // further away than the margin allowed, so nothing could raise the count until it caught up -- and a recorded
+    // test counted nothing for two minutes while reporting the previous test's total, and passed.
+    val margin = DetectorSettings().quadrantDisagreement
+
+    assertEquals(RepAnalysis.corroborated(Seq(0, 60, 61), margin), Some(61), "the two that agree must be heard")
+
+  test("with no second opinion there is nothing to corroborate"):
+    val margin = DetectorSettings().quadrantDisagreement
+
+    assertEquals(RepAnalysis.corroborated(Seq(42), margin), None)
+    assertEquals(RepAnalysis.corroborated(Seq.empty, margin), None)
+    assertEquals(RepAnalysis.corroborated(Seq(10, 90), margin), None, "two channels far apart agree about nothing")

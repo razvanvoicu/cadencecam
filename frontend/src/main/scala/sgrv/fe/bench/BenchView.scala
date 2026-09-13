@@ -42,6 +42,8 @@ private[fe] object BenchView:
     var nextTestAt = Option.empty[Double]
     // Where the figure stopped, so it can be held there without jumping.
     var restingPhase = 0.0
+    // Whether the counting device has said it is back at zero since the last reset was sent.
+    var resetConfirmed = false
     val breakRemaining = Var(Option.empty[Int])
 
     val canvas = canvasTag(cls := "bench-canvas")
@@ -61,6 +63,9 @@ private[fe] object BenchView:
               acquired.set(latest.reps)
               statusText.set(latest.status)
               latest.device.foreach(name => countingDevice.set(Some(name)))
+              // A zero from the counting device is how a reset is known to have landed. It announces one whether or
+              // not anything else changed, so the absence of this is real evidence that the command went missing.
+              if latest.reps == 0 then resetConfirmed = true
             if !state.acquiring then statusText.set("No device is counting yet")
           case Left(details) => dom.console.warn(s"Ignoring an unreadable update: $details"),
       onOpen = () => connected.set(true),
@@ -122,9 +127,25 @@ private[fe] object BenchView:
       * credited to the test that just ended. The reset now also wipes the signal buffer, so each test is measured
       * against its own noise floor rather than against whatever the previous one left behind.
       */
-    def resetThen(index: Int): Unit =
+    def resetThen(index: Int, attempt: Int = 1): Unit =
+      resetConfirmed = false
       val _ = relay.send(LiveCommand.Reset.toJson)
-      val _ = dom.window.setTimeout(() => beginAt(index), Bench.SettleAfterResetMillis.toDouble)
+      val _ = dom.window.setTimeout(
+        () =>
+          if resetConfirmed then beginAt(index)
+          else if attempt < Bench.ResetAttempts then
+            // Sent and never acknowledged. Beginning anyway is how a test came to count a hundred and ninety-nine,
+            // and how another counted nothing at all for two minutes and passed, so it is worth asking again.
+            report("reset-unconfirmed", 0.0, Some(s"attempt $attempt found no zero from the counting device"))
+            resetThen(index, attempt + 1)
+          else
+            // Out of attempts. The test runs regardless -- refusing to start would lose the rest of the suite -- but
+            // the recording says plainly that its starting point was never confirmed.
+            report("reset-failed", 0.0, Some(s"no zero after ${Bench.ResetAttempts} attempts; the count may be stale"))
+            beginAt(index)
+        ,
+        Bench.SettleAfterResetMillis.toDouble
+      )
 
     /** Asks for the recording of the test just finished, then resets once it has had time to arrive.
       *

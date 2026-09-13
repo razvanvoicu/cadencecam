@@ -128,3 +128,13 @@ class StageSuite extends FunSuite:
 
   test("a stage naming a test the plan does not have asks for nothing"):
     assertEquals(Stage.restingPalette(Stage.Settling(plan.size), plan), None)
+
+  test("a reset is asked for more than once before a test is started without one"):
+    // It was sent once, blind, over a socket that is expected to drop. Three recorded tests began holding the
+    // previous test's total because of it: one counted on to a hundred and ninety-nine, and one counted nothing at
+    // all for two minutes and passed, because the reference climbed to meet the stale number.
+    assert(Bench.ResetAttempts >= 2, "a command sent once over a socket that drops is a command sometimes lost")
+    assert(
+      Bench.ResetAttempts * Bench.SettleAfterResetMillis >= 4000,
+      "the attempts must outlast a socket reconnecting, or they are three shots at the same closed door"
+    )
