@@ -100,6 +100,19 @@ private[fe] final case class DetectorSettings(
       * rejecting real ones.
       */
     heightMemoryReps: Int = 10,
+    /** How much sooner than the cadence being kept a candidate may arrive and still be a rep.
+      *
+      * Seven tenths. A rep that follows another in less than that has not been performed: on one camera the brightness
+      * of a quadrant rises and falls twice per rep -- energy at twice the cadence measured four times larger than the
+      * fundamental -- and the extra peak lands halfway between two real ones, at half the interval. Nothing about its
+      * height or shape distinguishes it; only its timing does.
+      *
+      * The bar sits at seven tenths rather than eight because exercise does not keep time. The bench's own cadence
+      * swings by a quarter either way on purpose, and on a recording that counts perfectly the intervals run from 0.83
+      * to 1.42 of their median -- so a bar at 0.8 clips the fast tail of an honest set, which cost sixty-six recordings
+      * when it was tried. Half, where the unwanted peak lands, is comfortably below both.
+      */
+    cadenceTolerance: Double = 0.7,
     /** Samples ignored at the start of a window while the filter settles. A band-pass starting from rest rings when the
       * signal first arrives, and that ringing would otherwise dominate the very statistics used to decide what counts
       * as a peak.
@@ -280,6 +293,21 @@ private[fe] object RepAnalysis:
       .map(_._1)
       .maxOption
 
+  /** The interval to expect between reps, from the peaks this channel is currently showing.
+    *
+    * Taken from the detected train and never from the peaks already accepted. That distinction is the whole of it: an
+    * expectation built from acceptances rises whenever one is refused, which raises the bar that refused it, and the
+    * count walks itself down to every other rep -- measured at 23 of 37 on a recording with nothing wrong with it.
+    *
+    * Clamped to the band the detector claims to handle. A cadence quicker than the fastest rep the band admits is not a
+    * cadence at all, and early in a set, before the movement has settled, that is exactly when a wild estimate can
+    * appear and set the bar for everything after it.
+    */
+  private[acquire] def expectedInterval(peaks: Seq[Int], settings: DetectorSettings): Option[Double] =
+    val quickest = settings.sampleRateHz / settings.highHz
+    val slowest = settings.sampleRateHz / settings.lowHz
+    periodOf(peaks).map(interval => math.min(slowest, math.max(quickest, interval)))
+
   private[acquire] def agree(first: ChannelAnalysis, second: ChannelAnalysis, tolerance: Double): Boolean =
     (first.periodSamples, second.periodSamples) match
       case (Some(a), Some(b)) if a > 0 && b > 0 => math.abs(a - b) / math.max(a, b) <= tolerance
@@ -381,13 +409,24 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
     // Alongside the lock rather than instead of it: the lock says a cadence is being kept, this says the movement
     // was sustained. A peak has to satisfy both before it is a rep.
     val supported = RepAnalysis.sustained(channel.peaks, settings.minimumSustainedPeaks, settings.maximumGapSamples)
+    val expected = RepAnalysis.expectedInterval(supported, settings)
     val absolute = supported.map(index => totalSamples - windowLength + index)
-    val fresh = lastCounted.get(channel.quadrant) match
-      case None => absolute
+    // Walked in order rather than filtered, because accepting one moves the mark the next is judged against.
+    var mark = lastCounted.get(channel.quadrant)
+    var credited = Vector.empty[Int]
+    for candidate <- absolute do
       // A peak must clear the last counted one by the minimum rep interval, not merely come after it.
       // Re-detecting over a window that has grown or slid can move a peak by a sample, and "later than the
       // last" would then count that same peak a second time.
-      case Some(last) => absolute.filter(_ >= last + settings.minimumDistanceSamples)
+      val clears = mark.forall(last => candidate >= last + settings.minimumDistanceSamples)
+      // And it must not arrive sooner than the cadence allows: the peak a doubled signal puts between two real
+      // reps is indistinguishable from them by height or shape, and betrays itself only by its timing.
+      val inTime = mark.forall: last =>
+        expected.forall(interval => (candidate - last) >= settings.cadenceTolerance * interval)
+      if clears && inTime then
+        credited = credited :+ candidate
+        mark = Some(candidate)
+    val fresh = credited
     if fresh.nonEmpty then
       tallies = tallies.updated(channel.quadrant, tallies.getOrElse(channel.quadrant, 0) + fresh.size)
       lastCounted = lastCounted.updated(channel.quadrant, fresh.max)
