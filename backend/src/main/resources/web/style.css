@@ -551,6 +551,31 @@ button,
    pointer in front of the camera, and the detector counts whatever the camera sees. Side by side and of one size,
    because stacking two different shapes reads as a main action and an afterthought, which is not the relationship --
    one starts a quarter of an hour of measurement and the other leaves. */
+.bench-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  align-self: stretch;
+}
+
+/* Matched to .bench-control so the menus and the buttons read as one block of controls. The native arrow is left
+   in place: it is what marks these as choices rather than buttons, which sit directly beneath them. */
+.bench-choice {
+  min-width: 0;
+  padding: 0.55rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+.bench-choice:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .bench-controls {
   display: flex;
   gap: 0.5rem;

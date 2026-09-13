@@ -114,6 +114,20 @@ object AcquirerPresence:
   val Path = "/live/acquirer"
   given JsonCodec[AcquirerPresence] = DeriveJsonCodec.gen[AcquirerPresence]
 
+/** A run the bench is throwing away, and everything filed under it.
+  *
+  * Sent when a suite is abandoned part way. A run interrupted by a phone call, a notification or a misframed camera
+  * leaves behind recordings and events that look exactly like a run that finished badly, and the two are impossible to
+  * tell apart afterwards -- so the harness says which it was at the moment it knows, rather than leaving the evidence
+  * to be sorted out later.
+  */
+@jsonNoExtraFields
+final case class DiscardRun(runId: String)
+
+object DiscardRun:
+  val Path = "/test/run/discard"
+  given JsonCodec[DiscardRun] = DeriveJsonCodec.gen[DiscardRun]
+
 object Live:
   /** Where each side connects. Shared so the two ends cannot drift apart. */
   val AcquirerPath = "/ws/acquirer"

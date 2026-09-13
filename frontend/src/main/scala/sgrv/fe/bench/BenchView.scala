@@ -2,7 +2,7 @@ package sgrv.fe.bench
 
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
-import sgrv.api.{Live, LiveCommand, LiveState, TestEvent}
+import sgrv.api.{DiscardRun, Live, LiveCommand, LiveState, TestEvent}
 import sgrv.fe.acquire.StatusLine
 import sgrv.fe.live.LiveSocket
 import sgrv.fe.{Device, HttpService, Readouts}
@@ -48,6 +48,12 @@ private[fe] object BenchView:
     // every set, and saying so in red teaches whoever is watching to ignore the colour.
     val hasCadence = Var(false)
     val breakRemaining = Var(Option.empty[Int])
+
+    // Which handset is counting and which of its cameras is aimed at the screen. Chosen here because neither can be
+    // read from the counting device: its user-agent names an engine and an OS, Chrome reports every Android model as
+    // "K", and nothing in it says which camera was opened.
+    val rigDevice = Var(Rig.DefaultDevice)
+    val rigCamera = Var(Rig.DefaultCamera)
 
     val canvas = canvasTag(cls := "bench-canvas")
 
@@ -154,6 +160,36 @@ private[fe] object BenchView:
         Bench.SettleAfterResetMillis.toDouble
       )
 
+    /** Stops the suite where it stands and unfiles everything it has written.
+      *
+      * For a run that has gone wrong while it is still going wrong -- a notification, a knocked camera, a phone that
+      * stopped counting -- rather than one that merely scored badly. What it leaves behind is indistinguishable from a
+      * suite that was never begun, which is the point: a partial run kept alongside whole ones is read later as a whole
+      * one, and that is how a corrupt set of numbers gets into an average.
+      *
+      * The animation stops first. The reset and the discard both travel, and a figure still moving while they do would
+      * have the counting device credit reps to a run that no longer exists.
+      */
+    def abandon(): Unit =
+      stage.set(Stage.Idle)
+      nextTestAt = None
+      breakRemaining.set(None)
+      outcomes.set(Vector.empty)
+      acquired.set(0)
+      reference.set(0)
+      withinTolerance.set(true)
+      wasWithin = true
+      hasCadence.set(false)
+      stall = StallWatch()
+      lastComparison = Comparison(0, 0, 0.0, withinTolerance = true)
+      statusText.set(StatusLine.Waiting)
+      val _ = relay.send(LiveCommand.Reset.toJson)
+      val init = new dom.RequestInit:
+        method = dom.HttpMethod.POST
+        headers = js.Dictionary("Content-Type" -> "application/json")
+        body = DiscardRun(runId).toJson
+      val _ = http.send(DiscardRun.Path, init)
+
     /** Asks for the recording of the test just finished, then resets once it has had time to arrive.
       *
       * The order is the whole point. A reset wipes the buffer the recording is made from, so capturing afterwards would
@@ -161,7 +197,9 @@ private[fe] object BenchView:
       * rather than everything since the run began.
       */
     def captureThenReset(index: Int): Unit =
-      val capture: LiveCommand = LiveCommand.CaptureTrace(Some(s"bench $runId, test ${index + 1}: ${plan(index).name}"))
+      val rig = Rig.describe(rigDevice.now(), rigCamera.now())
+      val capture: LiveCommand =
+        LiveCommand.CaptureTrace(Some(s"bench $runId, test ${index + 1}: ${plan(index).name}, $rig"))
       val _ = relay.send(capture.toJson)
       report("trace-requested", TestPlan.PauseSeconds.toDouble, Some(plan(index).name))
       val _ = dom.window.setTimeout(() => resetThen(index + 1), Bench.CaptureBeforeResetMillis.toDouble)
@@ -369,6 +407,26 @@ private[fe] object BenchView:
             figures.map: (label, value) =>
               div(cls := "bench-stat", span(cls := "bench-stat-label", label), span(cls := "bench-stat-value", value))
         ),
+        // What is being measured, above the control that starts it. Locked once a suite is running: the answer is
+        // written into every capture the suite files, and a suite whose recordings disagree about which handset made
+        // them is worse than one with the wrong handset named throughout.
+        div(
+          cls := "bench-choices",
+          select(
+            cls := "bench-choice",
+            disabled <-- stage.signal.map(_ != Stage.Idle),
+            value <-- rigDevice.signal,
+            onChange.mapToValue --> rigDevice.writer,
+            Rig.Devices.map(name => option(value := name, name))
+          ),
+          select(
+            cls := "bench-choice",
+            disabled <-- stage.signal.map(_ != Stage.Idle),
+            value <-- rigCamera.signal,
+            onChange.mapToValue --> rigCamera.writer,
+            Rig.Cameras.map(name => option(value := name, name))
+          )
+        ),
         // Side by side and the same size. Two controls of different shapes stacked one above the other read as a
         // primary action and an afterthought, which is not the relationship: one starts a quarter of an hour of
         // measurement and the other leaves.
@@ -383,7 +441,12 @@ private[fe] object BenchView:
             "Begin",
             onClick --> (_ => resetThen(0))
           ),
-          button(cls := "bench-control", typ := "button", "Back", onClick --> (_ => onBack()))
+          button(cls := "bench-control", typ := "button", "Back", onClick --> (_ => onBack())),
+          // Only while there is something to abandon. Offered before a suite begins it would be a button that throws
+          // away the previous run's evidence, which is not what anyone reaching for it at that moment would mean.
+          child <-- stage.signal.map: current =>
+            if current == Stage.Idle then emptyNode
+            else button(cls := "bench-control", typ := "button", "Abandon", onClick --> (_ => abandon()))
         )
       ),
       div(
