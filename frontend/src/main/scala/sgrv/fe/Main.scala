@@ -609,27 +609,20 @@ object Main:
         div(
           cls := "signal-pane",
           span(cls := "signal-label", quadrant.toString),
-          // Marks the channel the count is actually being taken from. Which quadrant wins is decided by signal
-          // power, so it moves with the lighting rather than with the exercise, and watching it move is the point:
-          // it explains where a tick lands in the movement, which the count alone cannot.
+          // Marks the channel the count is taken from, and the channel corroborating it. One marker in one place,
+          // coloured by role: a quadrant is never both at once, and two markers at different offsets made the same
+          // fact appear in two different spots depending on which role it happened to be.
           div(
-            cls := "leader-dot",
-            cls("shown") <-- lock.signal.map:
+            cls := "channel-dot",
+            cls("leader") <-- lock.signal.map:
               case LockState.Locked(channel, _, _) => channel == quadrant
               case _                               => false
             ,
-            // The status line already names the leader in words; this is the same fact placed on the trace.
-            aria.hidden := true
-          ),
-          // The second opinion. The count is the larger of two channels that agree about the cadence, so which one
-          // is corroborating matters as much as which one leads -- and when they are the wrong pair, seeing both
-          // marked is what shows it.
-          div(
-            cls := "partner-dot",
-            cls("shown") <-- lock.signal.map:
+            cls("partner") <-- lock.signal.map:
               case LockState.Locked(_, partner, _) => partner == quadrant
               case _                               => false
             ,
+            // The status line already names both in words; this is the same fact placed on the trace.
             aria.hidden := true
           ),
           pane,

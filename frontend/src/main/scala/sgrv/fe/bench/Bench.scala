@@ -148,6 +148,15 @@ private[fe] object Painter:
       context.lineTo(centreX, centreY + arm)
       context.stroke()
 
+  /** The figures' sizes, as fractions of the square field they move on.
+    *
+    * Down from 0.08, 0.14 and 0.06: the disc's radius and the square's side by 0.7, which halves their area (0.7
+    * squared is 0.49), and the bar's width by half.
+    */
+  val DiscRadius = 0.056
+  val SquareSide = 0.098
+  val BarWidth = 0.03
+
   /** Half the length of a cross's arms, as a fraction of the field.
     *
     * A third of what it was. The first size was chosen to be found through a camera across a room and turned out to be
@@ -196,11 +205,11 @@ private[fe] object Painter:
       case Figure.Disc =>
         val (x, y) = Trajectory.circular(phase)
         context.beginPath()
-        context.arc(px(x), py(y), field * 0.08, 0, 2 * math.Pi)
+        context.arc(px(x), py(y), field * Painter.DiscRadius, 0, 2 * math.Pi)
         context.fill()
       case Figure.Bar =>
         val (x, y) = Trajectory.swingingEnd(phase)
-        context.lineWidth = field * 0.06
+        context.lineWidth = field * Painter.BarWidth
         context.lineCap = "round"
         context.beginPath()
         context.moveTo(px(Trajectory.Q3._1), py(Trajectory.Q3._2))
@@ -208,7 +217,7 @@ private[fe] object Painter:
         context.stroke()
       case Figure.Square =>
         val (x, y) = Trajectory.shuttle(phase)
-        val side = field * 0.14
+        val side = field * Painter.SquareSide
         context.fillRect(px(x) - side / 2, py(y) - side / 2, side, side)
 
 private[fe] object Bench:

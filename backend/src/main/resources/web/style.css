@@ -755,39 +755,29 @@ button,
   height: 100%;
 }
 
-/* The quadrant currently leading the count. Top-right, opposite the label, and deliberately without a transition:
-   the leader switching is the event worth seeing, and a fade would smear exactly that moment. */
-.leader-dot {
+/* The quadrant the count is taken from, or the one corroborating it. One position for both roles -- a quadrant is
+   never both -- so the marker sits in the same place on every pane and only its colour says which. Top-right,
+   opposite the label, and without a transition: a change of leader is the event worth seeing, and a fade smears it. */
+.channel-dot {
   position: absolute;
   top: 0.3rem;
   right: 0.3rem;
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 50%;
-  /* Blue against the green trace, so it reads as a marker rather than as part of the signal. */
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Blue against the green trace, so it reads as a marker rather than as part of the signal. */
+.channel-dot.leader {
   background: #3b82f6;
-  opacity: 0;
-  pointer-events: none;
+  opacity: 1;
 }
 
-/* The second opinion, beside the leader. The count is the larger of two channels that agree about the cadence, so
-   which one corroborates matters as much as which one leads -- and when the pair is the wrong one, seeing both
-   marked is what shows it. Purple: next to blue in hue, so the two read as a pair, and nowhere near the green
-   trace or the red of a failing count. */
-.partner-dot {
-  position: absolute;
-  top: 0.3rem;
-  right: 1.1rem;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
+/* Purple: next to blue in hue, so the pair reads as a pair, and nowhere near the green trace or a failing red. */
+.channel-dot.partner {
   background: #a855f7;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.partner-dot.shown,
-.leader-dot.shown {
   opacity: 1;
 }
 
