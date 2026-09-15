@@ -18,17 +18,13 @@ private[fe] enum Theme:
 
 /** The two bands the greys are drawn from.
   *
-  * Black on white was never the thing being tested. It is the easiest signal a camera can be given, and every test run
-  * in it said more about the screen than about the detector; the case that matters is a person in a room, where the
-  * brightest thing in frame is rarely paper-white and the darkest is rarely ink. These two bands sit a quarter of the
-  * scale apart rather than the whole of it, so a test asks whether the movement can be found at ordinary contrast.
-  *
-  * Sixty-four levels each, drawn uniformly, so no single pairing can be tuned for and a suite that passes has passed
-  * across the band rather than at one convenient point in it.
+  * Dark is 32 to 63 and light is 192 to 221, leaving 128 levels between the top of the dark band and the bottom of the
+  * light one. Narrowed from 32 to 95 and 128 to 191, which left only 32 levels between them. Each region runs through
+  * its whole band as a gradient, so a test spans the band rather than sitting at one point in it.
   */
 private[fe] object Grey:
-  val Dark: Range = 32 to 95
-  val Light: Range = 128 to 191
+  val Dark: Range = 32 to 63
+  val Light: Range = 192 to 221
 
   /** As CSS, which wants each channel twice over: a grey has all three the same. */
   def css(level: Int): String = f"#$level%02x$level%02x$level%02x"

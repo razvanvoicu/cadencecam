@@ -97,15 +97,15 @@ class MotionSuite extends FunSuite:
   test("the two bands are the ones asked for, and do not meet"):
     // Not black on white. That was the easiest signal a camera can be given, and passing it said little; these bands
     // sit a quarter of the scale apart, which is nearer to what a room offers.
-    assertEquals(Grey.Dark, 32 to 95)
-    assertEquals(Grey.Light, 128 to 191)
+    assertEquals(Grey.Dark, 32 to 63)
+    assertEquals(Grey.Light, 192 to 221)
     assert(Grey.Dark.end < Grey.Light.start, "the two bands must not overlap")
 
   test("a palette puts the lighter band where its theme says"):
     val darker = Palette.of(Theme.Darker)
     assertEquals(darker.ink, Grey.Light)
     assertEquals(darker.ground, Grey.Dark)
-    assertEquals(darker.name, "grey 128-191 on 32-95")
+    assertEquals(darker.name, "grey 192-221 on 32-63")
 
     val lighter = Palette.of(Theme.Lighter)
     assertEquals(lighter.ink, Grey.Dark)
@@ -129,9 +129,9 @@ class MotionSuite extends FunSuite:
 
   test("a gradient's ends are the bottom and top of its band"):
     assertEquals(Texture.grey(Grey.Dark.head), "rgb(32, 32, 32)")
-    assertEquals(Texture.grey(Grey.Dark.last), "rgb(95, 95, 95)")
-    assertEquals(Texture.grey(Grey.Light.head), "rgb(128, 128, 128)")
-    assertEquals(Texture.grey(Grey.Light.last), "rgb(191, 191, 191)")
+    assertEquals(Texture.grey(Grey.Dark.last), "rgb(63, 63, 63)")
+    assertEquals(Texture.grey(Grey.Light.head), "rgb(192, 192, 192)")
+    assertEquals(Texture.grey(Grey.Light.last), "rgb(221, 221, 221)")
 
   test("time before the movement began counts as nothing, not as a large negative number"):
     // Two clocks were mixed once -- an epoch timestamp against the animation frame's milliseconds-since-load -- and
