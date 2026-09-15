@@ -501,7 +501,8 @@ button,
   justify-content: center;
   gap: 0.5rem;
   flex: 0 1 16rem;
-  min-width: 0;
+  /* Never narrower than its widest row of controls, so a menu or a button is not squeezed below its own label. */
+  min-width: min-content;
 }
 
 /* What was actually shown: the truth the other number is being judged against. */
@@ -551,19 +552,28 @@ button,
    pointer in front of the camera, and the detector counts whatever the camera sees. Side by side and of one size,
    because stacking two different shapes reads as a main action and an afterthought, which is not the relationship --
    one starts a quarter of an hour of measurement and the other leaves. */
-.bench-choices {
+/* Menus and buttons share one rule for their rows: as many equal columns as there are controls, each as wide as the
+   widest control in the row. The row is sized to its content, and equal fractions in a grid sized that way all
+   resolve to the largest item, so no control is squeezed below its own label and none is wider than another. */
+.bench-choices,
+.bench-controls {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   gap: 0.5rem;
   margin-top: 1rem;
-  align-self: stretch;
+  width: max-content;
+  align-self: center;
 }
 
 /* Matched to .bench-control so the menus and the buttons read as one block of controls. The native arrow is left
    in place: it is what marks these as choices rather than buttons, which sit directly beneath them. */
+/* Stretched to its column: a select is a replaced element, and a grid cell leaves those at their own width otherwise. */
 .bench-choice {
-  min-width: 0;
-  padding: 0.55rem 0.5rem;
+  justify-self: stretch;
+  padding: 0.55rem 1rem;
+  text-align: center;
+  text-align-last: center;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel-bg);
@@ -576,17 +586,10 @@ button,
   cursor: default;
 }
 
-.bench-controls {
-  display: flex;
-  gap: 0.5rem;
-  margin-top: 1rem;
-  align-self: stretch;
-}
-
 .bench-control {
-  flex: 1 1 0;
-  min-width: 0;
-  padding: 0.7rem 0.5rem;
+  padding: 0.7rem 1rem;
+  text-align: center;
+  white-space: nowrap;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel-bg);
