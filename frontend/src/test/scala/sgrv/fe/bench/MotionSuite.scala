@@ -111,29 +111,27 @@ class MotionSuite extends FunSuite:
     assertEquals(lighter.ink, Grey.Dark)
     assertEquals(lighter.ground, Grey.Light)
 
-  test("a region holds every level of its band, exactly as often as every other"):
-    // Not sixty-five thousand independent draws: that leaves the histogram visibly ragged, some levels a few percent
-    // over and others under. Naming a band is a claim that the test covers it evenly, so the levels are dealt out and
-    // then shuffled, which makes the claim exactly true rather than true on average over enough runs.
-    for band <- Seq(Grey.Dark, Grey.Light) do
-      val pixels = Texture.TileEdge * Texture.TileEdge
-      val counts = Texture.levels(band, pixels, () => scala.util.Random.nextDouble()).groupBy(identity)
+  test("a gradient runs from bottom-left to top-right at 45 degrees"):
+    // Canvas y grows downwards: bottom-left is the larger y.
+    val (x0, y0, x1, y1) = Texture.diagonal(10, 20, 50, 60)
 
-      assertEquals(counts.keySet, band.toSet, "every level of the band must appear")
-      assertEquals(counts.values.map(_.length).toSet, Set(pixels / band.length), "and all of them equally often")
+    assertEquals((x0, y0), (10.0, 60.0), "starts at the bottom-left corner of a square box")
+    assertEquals((x1, y1), (50.0, 20.0), "ends at the top-right corner")
+    assertEqualsDouble(x1 - x0, -(y1 - y0), 1e-9, "equal steps right and up: 45 degrees")
 
-  test("a region is speckled, not flat"):
-    // The mistake this replaces: one level drawn per test and painted flat across the whole region. A camera sees
-    // texture, and a scene with none asks nothing of its denoising, its metering or its compression.
-    val speckle = Texture.levels(Grey.Dark, 640, () => scala.util.Random.nextDouble())
+  test("a gradient stays at 45 degrees across a box that is not square"):
+    // The bar's extent is long and thin; its gradient must not tilt to follow the box's own diagonal.
+    val (x0, y0, x1, y1) = Texture.diagonal(0, 0, 100, 20)
 
-    assert(speckle.distinct.length > 1, "a region of one level is the flat fill this exists to replace")
-    assert(speckle.toSeq != speckle.sorted.toSeq, "dealt but never shuffled would band the region instead")
+    assertEqualsDouble(x1 - x0, -(y1 - y0), 1e-9)
+    assertEqualsDouble((x0 + x1) / 2, 50.0, 1e-9, "centred on the box")
+    assertEqualsDouble((y0 + y1) / 2, 10.0, 1e-9)
 
-  test("a tile can be divided evenly by either band"):
-    assertEquals(Texture.TileEdge * Texture.TileEdge % Grey.Dark.length, 0)
-    assertEquals(Texture.TileEdge * Texture.TileEdge % Grey.Light.length, 0)
-    intercept[IllegalArgumentException](Texture.levels(Grey.Dark, 100, () => 0.5))
+  test("a gradient's ends are the bottom and top of its band"):
+    assertEquals(Texture.grey(Grey.Dark.head), "rgb(32, 32, 32)")
+    assertEquals(Texture.grey(Grey.Dark.last), "rgb(95, 95, 95)")
+    assertEquals(Texture.grey(Grey.Light.head), "rgb(128, 128, 128)")
+    assertEquals(Texture.grey(Grey.Light.last), "rgb(191, 191, 191)")
 
   test("time before the movement began counts as nothing, not as a large negative number"):
     // Two clocks were mixed once -- an epoch timestamp against the animation frame's milliseconds-since-load -- and

@@ -101,7 +101,7 @@ private[fe] object Painter:
     */
   def clear(canvas: dom.HTMLCanvasElement, palette: Palette): Unit =
     val context = canvas.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D]
-    context.fillStyle = Texture.paint(context, palette.ground)
+    context.fillStyle = Texture.paint(context, palette.ground, 0, 0, canvas.width.toDouble, canvas.height.toDouble)
     context.fillRect(0, 0, canvas.width.toDouble, canvas.height.toDouble)
     crosses(context, canvas.width.toDouble, canvas.height.toDouble)
 
@@ -182,16 +182,10 @@ private[fe] object Painter:
     val context = canvas.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D]
     val width = canvas.width.toDouble
     val height = canvas.height.toDouble
-    context.fillStyle = Texture.paint(context, test.palette.ground)
+    context.fillStyle = Texture.paint(context, test.palette.ground, 0, 0, width, height)
     context.fillRect(0, 0, width, height)
     // Under the figure, so the bar and the square cover the marks they reach rather than being drawn over by them.
     crosses(context, width, height)
-    // The figure is speckled too, from its own band. What moves across the frame is a textured object against a
-    // textured ground, which is the thing a camera in a room is ever asked to see.
-    val ink = Texture.paint(context, test.palette.ink)
-    context.fillStyle = ink
-    context.strokeStyle = ink
-
     // The trajectories live on a square field, centred in whatever the canvas turns out to be. Scaling x by the
     // width and y by the height independently would turn the circle into an ellipse the moment the canvas was not
     // exactly square -- which is a layout accident away, and was one.
@@ -201,23 +195,43 @@ private[fe] object Painter:
     def px(x: Double): Double = left + x * field
     def py(y: Double): Double = top + y * field
 
+    // The figure's gradient spans the figure itself, recomputed each frame from where it is now, so its darkest point
+    // stays at its own bottom-left wherever it travels rather than at a fixed place on the screen.
+    def ink(minX: Double, minY: Double, maxX: Double, maxY: Double): Unit =
+      val gradient = Texture.paint(context, test.palette.ink, minX, minY, maxX, maxY)
+      context.fillStyle = gradient
+      context.strokeStyle = gradient
+
     test.figure match
       case Figure.Disc =>
         val (x, y) = Trajectory.circular(phase)
+        val radius = field * Painter.DiscRadius
+        ink(px(x) - radius, py(y) - radius, px(x) + radius, py(y) + radius)
         context.beginPath()
-        context.arc(px(x), py(y), field * Painter.DiscRadius, 0, 2 * math.Pi)
+        context.arc(px(x), py(y), radius, 0, 2 * math.Pi)
         context.fill()
       case Figure.Bar =>
         val (x, y) = Trajectory.swingingEnd(phase)
-        context.lineWidth = field * Painter.BarWidth
+        val width = field * Painter.BarWidth
+        val (pivotX, pivotY) = (px(Trajectory.Q3._1), py(Trajectory.Q3._2))
+        val (endX, endY) = (px(x), py(y))
+        // The stroke's extent, round caps included.
+        ink(
+          math.min(pivotX, endX) - width / 2,
+          math.min(pivotY, endY) - width / 2,
+          math.max(pivotX, endX) + width / 2,
+          math.max(pivotY, endY) + width / 2
+        )
+        context.lineWidth = width
         context.lineCap = "round"
         context.beginPath()
-        context.moveTo(px(Trajectory.Q3._1), py(Trajectory.Q3._2))
-        context.lineTo(px(x), py(y))
+        context.moveTo(pivotX, pivotY)
+        context.lineTo(endX, endY)
         context.stroke()
       case Figure.Square =>
         val (x, y) = Trajectory.shuttle(phase)
         val side = field * Painter.SquareSide
+        ink(px(x) - side / 2, py(y) - side / 2, px(x) + side / 2, py(y) + side / 2)
         context.fillRect(px(x) - side / 2, py(y) - side / 2, side, side)
 
 private[fe] object Bench:

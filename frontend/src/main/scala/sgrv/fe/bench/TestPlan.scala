@@ -35,10 +35,9 @@ private[fe] object Grey:
 
 /** A foreground band against a background band.
   *
-  * Bands rather than levels. Each region is speckled with every grey its band holds, equally often, so the moving
-  * object and the ground behind it each have texture of their own -- which is what a camera is actually ever pointed
-  * at. Two flat tones would be the easiest scene there is, and a detector that only ever passed that would have been
-  * told nothing about a room.
+  * Bands rather than levels. Each region is filled with a 45-degree gradient running from the bottom of its band at the
+  * region's bottom-left to the top of its band at its top-right, so the moving object and the ground behind it each
+  * span their whole band rather than sitting at one flat tone.
   *
   * Contrast is the one thing counting has been observed to depend on, so it is a property of a test rather than a
   * detail of the page.
