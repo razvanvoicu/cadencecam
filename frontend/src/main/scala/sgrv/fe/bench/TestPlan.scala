@@ -5,7 +5,9 @@ private[fe] enum Figure:
   /** A disc whose centre travels a circle, crossing every quadrant once per cycle. */
   case Disc
 
-  /** A bar pivoting about the centre of Q3, its far end swinging between Q4 and Q2 -- the shape of a curl. */
+  /** A bar pivoting about the centre of Q3, its far end swinging between Q4 and Q2, with a disc on that end -- a
+    * forearm and a dumbbell doing curls.
+    */
   case Bar
 
   /** A square shuttling between the centres of Q4 and Q1. */
@@ -139,6 +141,14 @@ private[fe] object TestPlan:
       figure <- Figure.values.toSeq
       theme <- Seq(Theme.Darker, Theme.Lighter)
     yield TestCase(figure, Palette.of(theme), cadence, reps)
+
+  /** The tests a suite will run: those ticked, in catalogue order, each with its position in the catalogue.
+    *
+    * The position travels with the test because it names the test. "Test 5" in a recording means the square on the
+    * darker ground whichever tests were ticked alongside it, rather than whatever happened to run fifth.
+    */
+  def chosen(catalogue: Seq[TestCase], included: Set[Int]): Seq[(Int, TestCase)] =
+    catalogue.zipWithIndex.collect { case (test, at) if included(at) => at -> test }
 
   /** How long one test runs: the still moment, the movement, and the pause after it. What a capture has to cover. */
   def testSeconds(test: TestCase): Double =

@@ -23,7 +23,12 @@ import scala.scalajs.js
 private[fe] object BenchView:
 
   def apply(http: HttpService, onBack: () => Unit): Element =
-    val plan = TestPlan.standard()
+    val catalogue = TestPlan.standard()
+    // Which of the catalogue's tests are ticked. Read when a suite begins and fixed for its length, so unticking a box
+    // part way through cannot change what the running suite is.
+    val included = Var(catalogue.indices.toSet)
+    var suite = TestPlan.chosen(catalogue, catalogue.indices.toSet)
+    def plan: Seq[TestCase] = suite.map(_._2)
     val runId = f"${js.Date.now().toLong}%d-${(js.Math.random() * 4096).toInt}%03x"
 
     val stage = Var[Stage](Stage.Idle)
@@ -199,7 +204,7 @@ private[fe] object BenchView:
     def captureThenReset(index: Int): Unit =
       val rig = Rig.describe(rigDevice.now(), rigCamera.now())
       val capture: LiveCommand =
-        LiveCommand.CaptureTrace(Some(s"bench $runId, test ${index + 1}: ${plan(index).name}, $rig"))
+        LiveCommand.CaptureTrace(Some(s"bench $runId, test ${suite(index)._1 + 1}: ${plan(index).name}, $rig"))
       val _ = relay.send(capture.toJson)
       report("trace-requested", TestPlan.PauseSeconds.toDouble, Some(plan(index).name))
       val _ = dom.window.setTimeout(() => resetThen(index + 1), Bench.CaptureBeforeResetMillis.toDouble)
@@ -311,16 +316,18 @@ private[fe] object BenchView:
       * only one line here counts reps, and it says so.
       */
     val stats = outcomes.signal
-      .combineWith(stage.signal, reference.signal, breakRemaining.signal)
-      .map: (done, current, shown, waiting) =>
+      .combineWith(stage.signal, reference.signal, breakRemaining.signal, included.signal)
+      .map: (done, current, shown, waiting, ticked) =>
+        // Before a suite starts, the size is what is ticked; once it starts, what was ticked when it began.
+        val total = if current == Stage.Idle then ticked.size else plan.size
         val index = current match
           case Stage.Poised(i, _)     => i + 1
           case Stage.Running(i, _)    => i + 1
           case Stage.Holding(i, _, _) => i + 1
           case Stage.Pausing(i, _, _) => i + 1
           // Between two tests: the one just scored is behind us, so the next is the one to name.
-          case Stage.Settling(i) => math.min(i + 2, plan.size)
-          case Stage.Finished    => plan.size
+          case Stage.Settling(i) => math.min(i + 2, total)
+          case Stage.Finished    => total
           case Stage.Idle        => 0
         val passed = done.count(_.passed)
         // One row, two jobs: while a test runs it counts the reps shown, and during the break it says how long is
@@ -329,9 +336,9 @@ private[fe] object BenchView:
           case Some(seconds) => "next test in" -> s"${seconds}s"
           case None          => "reps in this test" -> shown.toString
         Seq(
-          "current test" -> (if index == 0 then s"none of ${plan.size}" else s"$index of ${plan.size}"),
+          "current test" -> (if index == 0 then s"none of $total" else s"$index of $total"),
           progress,
-          "tests completed" -> s"${done.size} of ${plan.size}",
+          "tests completed" -> s"${done.size} of $total",
           "tests passed" -> passed.toString,
           "tests failed" -> (done.size - passed).toString
         )
@@ -345,8 +352,15 @@ private[fe] object BenchView:
       * This is what a failure has to be read from. The final tally says two of six failed; only the rows say it was
       * both bars, or everything lighter, or one figure in both themes -- and those are different diagnoses.
       */
-    val results = outcomes.signal.map: done =>
-      plan.zipWithIndex.map((test, index) => test.shortName -> done.lift(index))
+    val results = outcomes.signal
+      .combineWith(included.signal)
+      .map: (done, ticked) =>
+        catalogue.zipWithIndex.map: (test, at) =>
+          // A result belongs to the catalogue row it was run for, found by where that test sat in the suite.
+          val scored = suite.indexWhere(_._1 == at) match
+            case -1       => None
+            case position => done.lift(position)
+          (at, test.shortName, ticked(at), scored)
 
     /** One line for the end of the suite, where the detail above has stopped changing. */
     val summary = outcomes.signal.map: done =>
@@ -375,8 +389,10 @@ private[fe] object BenchView:
             div(
               cls := "bench-overlay",
               p(
-                "Line the camera up with the four green crosses and start it counting, then begin from the panel " +
-                  f"on the right. ${plan.size} tests, about ${TestPlan.durationSeconds(plan) / 60}%.0f minutes."
+                child.text <-- included.signal.map: ticked =>
+                  val tests = TestPlan.chosen(catalogue, ticked).map(_._2)
+                  "Line the camera up with the four green crosses and start it counting, then begin from the panel " +
+                    f"on the right. ${tests.size} tests, about ${TestPlan.durationSeconds(tests) / 60}%.0f minutes."
               )
             )
           case Stage.Finished => div(cls := "bench-overlay", p(child.text <-- summary))
@@ -435,11 +451,16 @@ private[fe] object BenchView:
           button(
             cls := "bench-control",
             typ := "button",
-            disabled <-- stage.signal.map(_ != Stage.Idle),
+            disabled <-- stage.signal
+              .combineWith(included.signal)
+              .map((current, ticked) => current != Stage.Idle || ticked.isEmpty),
             // One word: the pair share a row, and "Begin the suite" wrapped onto two lines while "Back" sat on one,
             // which is the uneven look this was meant to fix. The panel beside it says what is being begun.
             "Begin",
-            onClick --> (_ => resetThen(0))
+            onClick --> { _ =>
+              suite = TestPlan.chosen(catalogue, included.now())
+              resetThen(0)
+            }
           ),
           button(cls := "bench-control", typ := "button", "Back", onClick --> (_ => onBack())),
           // Only while there is something to abandon. Offered before a suite begins it would be a button that throws
@@ -455,18 +476,33 @@ private[fe] object BenchView:
           cls := "bench-results-table",
           div(
             cls := "bench-result heading",
+            span(cls := "bench-result-pick", ""),
             span(cls := "bench-result-name", "test"),
             span(cls := "bench-result-number", "shown"),
             span(cls := "bench-result-number", "counted"),
             span(cls := "bench-result-number", "off")
           ),
           children <-- results.map: rows =>
-            rows.map: (name, outcome) =>
+            rows.map: (at, name, ticked, outcome) =>
               div(
                 cls := "bench-result",
                 cls("passed") := outcome.exists(_.passed),
                 cls("failed") := outcome.exists(!_.passed),
                 cls("pending") := outcome.isEmpty,
+                cls("excluded") := !ticked && outcome.isEmpty,
+                span(
+                  cls := "bench-result-pick",
+                  input(
+                    typ := "checkbox",
+                    checked := ticked,
+                    aria.label := s"Include $name",
+                    // Only between suites: what is running was fixed when it began.
+                    disabled <-- stage.signal.map(_ != Stage.Idle),
+                    onChange.mapToChecked --> { on =>
+                      included.update(set => if on then set + at else set - at)
+                    }
+                  )
+                ),
                 span(cls := "bench-result-name", name),
                 span(cls := "bench-result-number", outcome.map(_.reference.toString).getOrElse("—")),
                 span(cls := "bench-result-number", outcome.map(_.acquired.toString).getOrElse("—")),

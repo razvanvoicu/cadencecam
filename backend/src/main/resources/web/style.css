@@ -635,7 +635,7 @@ button,
 
 .bench-results-table {
   display: grid;
-  grid-template-columns: 1fr auto auto auto;
+  grid-template-columns: auto 1fr auto auto auto;
   gap: 0.15rem 0.7rem;
   align-content: center;
   font-size: 0.85rem;
@@ -667,6 +667,22 @@ button,
   border-bottom: 1px solid var(--border);
   padding-bottom: 0.2rem;
   margin-bottom: 0.2rem;
+}
+
+.bench-result-pick {
+  display: grid;
+  align-items: center;
+}
+
+.bench-result-pick input {
+  margin: 0;
+}
+
+/* A test left out of the suite stays listed, so it can be ticked back in. */
+.bench-result.excluded .bench-result-name,
+.bench-result.excluded .bench-result-number {
+  text-decoration: line-through;
+  opacity: 0.35;
 }
 
 /* A test still to come holds its place rather than appearing later and shifting everything below it. */

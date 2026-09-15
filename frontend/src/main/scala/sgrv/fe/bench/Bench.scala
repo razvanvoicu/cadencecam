@@ -228,6 +228,13 @@ private[fe] object Painter:
         context.moveTo(pivotX, pivotY)
         context.lineTo(endX, endY)
         context.stroke()
+        // The weight in the hand: a disc the size of the disc test's, centred on the bar's free end, so it starts at
+        // the centre of Q4 and swings through the same 90 degrees about the centre of Q3, in step with the bar.
+        val weight = field * Painter.DiscRadius
+        ink(endX - weight, endY - weight, endX + weight, endY + weight)
+        context.beginPath()
+        context.arc(endX, endY, weight, 0, 2 * math.Pi)
+        context.fill()
       case Figure.Square =>
         val (x, y) = Trajectory.shuttle(phase)
         val side = field * Painter.SquareSide

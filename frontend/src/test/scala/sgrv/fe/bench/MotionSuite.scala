@@ -111,6 +111,16 @@ class MotionSuite extends FunSuite:
     assertEquals(lighter.ink, Grey.Dark)
     assertEquals(lighter.ground, Grey.Light)
 
+  test("a suite runs only the ticked tests, in catalogue order, keeping their catalogue positions"):
+    val catalogue = TestPlan.standard()
+
+    val chosen = TestPlan.chosen(catalogue, Set(4, 1))
+
+    assertEquals(chosen.map(_._1), Seq(1, 4), "catalogue order, not the order they were ticked in")
+    assertEquals(chosen.map(_._2), Seq(catalogue(1), catalogue(4)))
+    assertEquals(TestPlan.chosen(catalogue, catalogue.indices.toSet).map(_._2), catalogue)
+    assertEquals(TestPlan.chosen(catalogue, Set.empty), Seq.empty)
+
   test("a gradient runs from bottom-left to top-right at 45 degrees"):
     // Canvas y grows downwards: bottom-left is the larger y.
     val (x0, y0, x1, y1) = Texture.diagonal(10, 20, 50, 60)
