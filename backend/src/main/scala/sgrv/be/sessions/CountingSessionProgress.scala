@@ -34,18 +34,24 @@ object CountingSessionProgress extends BackendPlugin:
   private final case class Malformed(details: String) extends ProgressFailure
   private final case class WriteFailed(cause: Throwable) extends ProgressFailure
 
-  private def apply(request: Request): ZIO[Requires, Nothing, Response] =
+  private def apply(request: Request): ZIO[Requires & RequestContext, Nothing, Response] =
     record(request).foldZIO(failureResponse, _ => ZIO.succeed(noStore(Response.status(Status.NoContent))))
 
-  private def record(request: Request): ZIO[Requires, ProgressFailure, Unit] =
+  private def record(request: Request): ZIO[Requires & RequestContext, ProgressFailure, Unit] =
     for
-      // The access policy has already established that the session is real; this only asks which record it names.
-      documentId <- ZIO.fromOption(CountingSessionListener.documentId(request)).orElseFail(NoSession)
+      // The session belongs to the account, not to this browser: which record is written comes from who is signed in.
+      email <- ZIO.serviceWithZIO[RequestContext] {
+        case RequestContext.Authenticated(_, user) => ZIO.succeed(user.email)
+        case _                                     => ZIO.fail(NoSession)
+      }
       body <- request.body.asString.mapError(error => Malformed(describe(error)))
       reps <- ZIO.fromEither(CountingSessionProgress.reps(body)).mapError(Malformed.apply)
       firestore <- ZIO.service[Firestore]
+      located <- AccountSessions.active(firestore, email).mapError(WriteFailed.apply)
+      (account, session) <- ZIO.fromOption(located).orElseFail(NoSession)
+      keeper <- AccountSessions.store(firestore)
       now <- Clock.instant
-      _ <- CountingSessionStore(firestore).recordProgress(documentId, reps, now).mapError(WriteFailed.apply)
+      _ <- keeper.counted(account, session, reps, now).mapError(WriteFailed.apply)
     yield ()
 
   /** The count a request body reports, or why it does not report one.

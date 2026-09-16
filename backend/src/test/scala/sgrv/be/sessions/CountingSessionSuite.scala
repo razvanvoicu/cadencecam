@@ -89,7 +89,9 @@ class CountingSessionSuite extends munit.FunSuite:
     val skipped = statuses.collectFirst:
       case PluginStatus.Skipped(LiveRelay.id, _, missing) => missing.map(_.id).toSet
 
-    assertEquals(skipped, Some(Set("session-store")))
+    // Firestore as well as the session store: the relay reads the account's record to answer whether anything is
+    // counting, which the rooms it holds in memory can only answer for connections this instance happens to have.
+    assertEquals(skipped, Some(Set("firestore", "session-store")))
 
   test("the trace route is discovered on the classpath too"):
     // Same reason: a plugin can compile perfectly and still never be reached by the scan.

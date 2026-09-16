@@ -1,5 +1,6 @@
 package sgrv.be.sessions
 
+import com.google.cloud.firestore.Firestore
 import java.security.SecureRandom
 import sgrv.api.{AcquirerPresence, Live, LiveCommand, LiveReading}
 import sgrv.be.BackendCapabilities
@@ -18,25 +19,37 @@ import zio.json.*
   * ask its own account's.
   */
 object LiveRelay extends BackendPlugin:
-  type Requires = SessionStore
+  type Requires = SessionStore & Firestore
 
   override val id = "live-relay"
-  override val requirements: CapabilitySet[Requires] = CapabilitySet.one(BackendCapabilities.sessionStore)
+  override val requirements: CapabilitySet[Requires] =
+    CapabilitySet.one(BackendCapabilities.sessionStore) ++ CapabilitySet.one(BackendCapabilities.firestore)
   override val accessPolicy: AccessPolicy[Requires] = AccessPolicy.Authenticated
   override val routes: Routes[Requires & RequestContext, Nothing] = Routes(
-    Method.GET / "ws" / "acquirer" -> handler(asUser(acquirer)),
+    Method.GET / "ws" / "acquirer" -> handler((request: Request) => asCounter(request)),
     Method.GET / "ws" / "dashboard" -> handler(asUser(dashboard)),
     // Asked before a device takes the role, so displacing another one is a choice rather than a surprise.
     Method.GET / "live" / "acquirer" -> handler(asUser(presence))
   )
 
-  private def presence(email: String): ZIO[Any, Nothing, Response] =
-    LiveSessions.hasAcquirer(email).map(counting => Response.json(AcquirerPresence(counting).toJson))
+  /** Whether this account already has something counting.
+    *
+    * Read from the account's own record rather than from this instance's rooms. The rooms only know about sockets this
+    * process happens to be holding, so with more than one instance a device would be told the account was free whenever
+    * the counter's socket had landed elsewhere -- and two phones would count the same set.
+    */
+  private def presence(email: String): ZIO[Requires, Nothing, Response] =
+    ZIO
+      .serviceWithZIO[Firestore](firestore => AccountSessions.active(firestore, email))
+      .catchAll: error =>
+        ZIO.logWarningCause("Could not read the account's session; reporting nothing counting", Cause.fail(error)) *>
+          ZIO.none
+      .map(active => Response.json(AcquirerPresence(active.isDefined).toJson))
 
   /** Resolves who is connecting before opening the socket, so the account is fixed for the connection's lifetime and
     * never has to be taken from a message.
     */
-  private def asUser(open: String => ZIO[Any, Nothing, Response]): ZIO[RequestContext, Nothing, Response] =
+  private def asUser[R](open: String => ZIO[R, Nothing, Response]): ZIO[R & RequestContext, Nothing, Response] =
     ZIO.serviceWithZIO[RequestContext]:
       case RequestContext.Authenticated(_, user) => open(user.email)
       case _                                     => ZIO.succeed(Response.status(Status.Unauthorized))
@@ -55,23 +68,49 @@ object LiveRelay extends BackendPlugin:
       case Registered => true
       case _          => false
 
-  private def acquirer(email: String): ZIO[Any, Nothing, Response] =
+  /** Takes the counter's role for the browser session connecting, opening the account's session if it has none.
+    *
+    * Idempotent, and a takeover rather than a new session: a second device joining moves the role within the session
+    * the account already has, so the set it was in the middle of is not split in two.
+    */
+  private def takeRole(email: String, browserSession: Option[String]): ZIO[Requires, Nothing, Unit] =
+    browserSession match
+      case None     => ZIO.logWarning(s"An acquirer for $email carries no session cookie; no record opened")
+      case Some(id) =>
+        (for
+          firestore <- ZIO.service[Firestore]
+          name <- AccountKey.of(email)
+          keeper <- AccountSessions.store(firestore)
+          now <- Clock.instant
+          _ <- name match
+            case None        => ZIO.unit
+            case Some(named) => keeper.takeCounting(named, email, id, now).unit
+        yield ()).catchAll(error => ZIO.logWarningCause("Could not take the counting role", Cause.fail(error)))
+
+  private def asCounter(request: Request): ZIO[Requires & RequestContext, Nothing, Response] =
+    ZIO.serviceWithZIO[RequestContext]:
+      case RequestContext.Authenticated(_, user) =>
+        acquirer(user.email, CountingSessionListener.documentId(request))
+      case _ => ZIO.succeed(Response.status(Status.Unauthorized))
+
+  private def acquirer(email: String, browserSession: Option[String]): ZIO[Requires, Nothing, Response] =
     val connection = connectionId()
     Handler
       .webSocket: channel =>
         channel.receiveAll:
           case Ready() =>
-            LiveSessions
-              .acquirerJoined(email, connection, channel)
-              .flatMap:
-                case Some(displaced) =>
-                  // The account already had one. The newest connection is the device the user is looking at, so the
-                  // older is told to stand down and then closed. Telling it first is the point: a device whose socket
-                  // simply died went on showing a count and holding its camera, which is how two phones end up
-                  // counting one set with neither of them saying so.
-                  ZIO.logInfo(s"A second acquirer joined for $email; standing the first down") *>
-                    LiveSessions.send(displaced, LiveCommand.Displaced.toJson).ignore *> displaced.shutdown
-                case None => ZIO.logInfo(s"Acquirer joined for $email")
+            takeRole(email, browserSession) *>
+              LiveSessions
+                .acquirerJoined(email, connection, channel)
+                .flatMap:
+                  case Some(displaced) =>
+                    // The account already had one. The newest connection is the device the user is looking at, so the
+                    // older is told to stand down and then closed. Telling it first is the point: a device whose socket
+                    // simply died went on showing a count and holding its camera, which is how two phones end up
+                    // counting one set with neither of them saying so.
+                    ZIO.logInfo(s"A second acquirer joined for $email; standing the first down") *>
+                      LiveSessions.send(displaced, LiveCommand.Displaced.toJson).ignore *> displaced.shutdown
+                  case None => ZIO.logInfo(s"Acquirer joined for $email")
           case Read(WebSocketFrame.Text(text)) =>
             text.fromJson[LiveReading] match
               case Right(reading) => LiveSessions.publish(email, reading)

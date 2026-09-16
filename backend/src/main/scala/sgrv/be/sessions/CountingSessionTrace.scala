@@ -37,21 +37,27 @@ object CountingSessionTrace extends BackendPlugin:
   private final case class Malformed(details: String) extends TraceFailure
   private final case class WriteFailed(cause: Throwable) extends TraceFailure
 
-  private def apply(request: Request): ZIO[Requires, Nothing, Response] =
+  private def apply(request: Request): ZIO[Requires & RequestContext, Nothing, Response] =
     record(request).foldZIO(failureResponse, id => ZIO.succeed(noStore(Response.json(s"""{"traceId":"$id"}"""))))
 
-  private def record(request: Request): ZIO[Requires, TraceFailure, String] =
+  private def record(request: Request): ZIO[Requires & RequestContext, TraceFailure, String] =
     for
-      documentId <- ZIO.fromOption(CountingSessionListener.documentId(request)).orElseFail(NoSession)
+      email <- ZIO.serviceWithZIO[RequestContext] {
+        case RequestContext.Authenticated(_, user) => ZIO.succeed(user.email)
+        case _                                     => ZIO.fail(NoSession)
+      }
       body <- request.body.asString.mapError(error => Malformed(describe(error)))
       trace <- ZIO.fromEither(CountingSessionTrace.parse(body)).mapError(Malformed.apply)
       firestore <- ZIO.service[Firestore]
+      located <- AccountSessions.active(firestore, email).mapError(WriteFailed.apply)
+      (account, session) <- ZIO.fromOption(located).orElseFail(NoSession)
+      keeper <- AccountSessions.store(firestore)
       now <- Clock.instant
       traceId <- ZIO.succeed(CountingSessionTrace.traceId())
-      _ <- CountingSessionStore(firestore)
-        .recordTrace(documentId, traceId, trace, now)
+      _ <- keeper
+        .recordTrace(account, session, traceId, CountingSessionStore(firestore).traceFields(trace, now))
         .mapError(WriteFailed.apply)
-      _ <- ZIO.logInfo(s"Captured a signal trace of ${trace.samples.size} channels for session $documentId")
+      _ <- ZIO.logInfo(s"Captured a signal trace of ${trace.samples.size} channels for session $session")
     yield traceId
 
   /** The recording a request body carries, or why it does not carry one. */

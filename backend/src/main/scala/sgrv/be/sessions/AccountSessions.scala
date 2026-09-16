@@ -5,7 +5,7 @@ import com.google.cloud.firestore.{DocumentReference, Firestore}
 import java.time.{Duration, Instant}
 import scala.jdk.CollectionConverters.*
 import sgrv.be.store.GoogleFuture
-import zio.{Task, ZIO}
+import zio.{Clock, Task, ZIO}
 
 /** One account, and the counting sessions it has held.
   *
@@ -41,8 +41,8 @@ private[sessions] enum SessionEnd:
 private[sessions] object AccountSessions:
   val idleVariable = "COUNTING_IDLE_MINUTES"
 
-  /** How long a session may go without a rep before it is closed. Ten minutes: long enough to set up between suites
-    * and to argue with a camera, short enough that a session left open overnight is not still open in the morning.
+  /** How long a session may go without a rep before it is closed. Ten minutes: long enough to set up between suites and
+    * to argue with a camera, short enough that a session left open overnight is not still open in the morning.
     */
   val defaultIdle: Duration = Duration.ofMinutes(10)
 
@@ -53,6 +53,27 @@ private[sessions] object AccountSessions:
     */
   def goneQuiet(lastRepAt: Option[Instant], now: Instant, idleAfter: Duration): Boolean =
     lastRepAt.exists(quiet => quiet.isBefore(now.minus(idleAfter)))
+
+  /** The account's store, with the configured timeout. */
+  def store(firestore: Firestore): ZIO[Any, Nothing, AccountSessionStore] =
+    idleAfter.map(AccountSessionStore(firestore, _))
+
+  /** The account document's name and the session in progress, or nothing when neither is available.
+    *
+    * One place where "which session am I writing to" is answered, so no route has to work it out from a cookie: the
+    * session belongs to the account, and the account is whoever is signed in.
+    */
+  def active(firestore: Firestore, email: String): ZIO[Any, Throwable, Option[(String, String)]] =
+    AccountKey
+      .of(email)
+      .flatMap:
+        case None       => ZIO.none
+        case Some(name) =>
+          for
+            keeper <- store(firestore)
+            now <- Clock.instant
+            state <- keeper.state(name, now)
+          yield state.active.map(name -> _)
 
   /** The configured timeout, or the default when it is unset or unreadable. */
   def idleAfter: ZIO[Any, Nothing, Duration] =
@@ -108,7 +129,9 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       AccountSchema.counter -> browserSession
     )
     for
-      _ <- GoogleFuture.fromApiFuture(account(name).collection(AccountSchema.sessions).document(session).create(opened.asJava))
+      _ <- GoogleFuture.fromApiFuture(
+        account(name).collection(AccountSchema.sessions).document(session).create(opened.asJava)
+      )
       _ <- GoogleFuture.fromApiFuture(
         account(name).set(
           Map[String, AnyRef](
@@ -126,7 +149,10 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
     val moved = Map[String, AnyRef](AccountSchema.counter -> browserSession)
     for
       _ <- GoogleFuture.fromApiFuture(
-        account(name).collection(AccountSchema.sessions).document(session).set(moved.asJava, com.google.cloud.firestore.SetOptions.merge())
+        account(name)
+          .collection(AccountSchema.sessions)
+          .document(session)
+          .set(moved.asJava, com.google.cloud.firestore.SetOptions.merge())
       )
       _ <- GoogleFuture.fromApiFuture(account(name).set(moved.asJava, com.google.cloud.firestore.SetOptions.merge()))
     yield ()
@@ -138,13 +164,31 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
         account(name)
           .collection(AccountSchema.sessions)
           .document(session)
-          .set(Map[String, AnyRef]("reps" -> java.lang.Long.valueOf(reps.toLong), "repsAt" -> stamp(now)).asJava,
-            com.google.cloud.firestore.SetOptions.merge())
+          .set(
+            Map[String, AnyRef]("reps" -> java.lang.Long.valueOf(reps.toLong), "repsAt" -> stamp(now)).asJava,
+            com.google.cloud.firestore.SetOptions.merge()
+          )
       )
       _ <- GoogleFuture.fromApiFuture(
-        account(name).set(Map[String, AnyRef](AccountSchema.lastRepAt -> stamp(now)).asJava, com.google.cloud.firestore.SetOptions.merge())
+        account(name).set(
+          Map[String, AnyRef](AccountSchema.lastRepAt -> stamp(now)).asJava,
+          com.google.cloud.firestore.SetOptions.merge()
+        )
       )
     yield ()
+
+  /** Files a captured recording under the session that produced it. */
+  def recordTrace(name: String, session: String, traceId: String, fields: Map[String, AnyRef]): Task[Unit] =
+    GoogleFuture
+      .fromApiFuture(
+        account(name)
+          .collection(AccountSchema.sessions)
+          .document(session)
+          .collection("traces")
+          .document(traceId)
+          .create(fields.asJava)
+      )
+      .unit
 
   /** Ends the session and leaves it as a record. The account keeps its document; only the pointer is cleared. */
   def close(name: String, session: String, why: SessionEnd, now: Instant): Task[Unit] =
@@ -155,7 +199,10 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
     for
       _ <- GoogleFuture
         .fromApiFuture(
-          account(name).collection(AccountSchema.sessions).document(session).set(ended.asJava, com.google.cloud.firestore.SetOptions.merge())
+          account(name)
+            .collection(AccountSchema.sessions)
+            .document(session)
+            .set(ended.asJava, com.google.cloud.firestore.SetOptions.merge())
         )
         .unit
       _ <- GoogleFuture

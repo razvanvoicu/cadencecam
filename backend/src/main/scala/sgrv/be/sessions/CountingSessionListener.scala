@@ -99,11 +99,11 @@ private[sessions] final class CountingSessionStore(firestore: Firestore):
   def recordTrace(id: String, traceId: String, trace: SignalTrace, at: Instant): Task[Unit] =
     GoogleFuture
       .fromApiFuture(
-        document(id).collection(CountingSessionSchema.traces).document(traceId).create(fields(trace, at).asJava)
+        document(id).collection(CountingSessionSchema.traces).document(traceId).create(traceFields(trace, at).asJava)
       )
       .unit
 
-  private def fields(trace: SignalTrace, at: Instant): Map[String, AnyRef] =
+  private[sessions] def traceFields(trace: SignalTrace, at: Instant): Map[String, AnyRef] =
     Map[String, AnyRef](
       CountingSessionSchema.capturedAt -> stamp(at),
       CountingSessionSchema.sampleRateHz -> java.lang.Double.valueOf(trace.sampleRateHz),
@@ -144,18 +144,31 @@ object CountingSessionListener extends SessionListener:
   override val id = "counting-session"
   override val requirements: CapabilitySet[Requires] = CapabilitySet.one(BackendCapabilities.firestore)
 
+  /** Nothing is opened at login.
+    *
+    * A login is not a set. Every device that signs in reaches the same screens, and only one of them counts; the
+    * session is opened when a device takes the counter's role, which is the moment there is something to record.
+    */
   override def onLogin(event: LoginEvent): ZIO[Requires, Throwable, Unit] =
-    for
-      firestore <- ZIO.service[Firestore]
-      _ <- CountingSessionStore(firestore).open(documentId(event.sessionKey), event.user.email, event.at)
-      _ <- ZIO.logInfo(s"Opened counting session for ${event.user.email}")
-    yield ()
+    ZIO.logInfo(s"Signed in: ${event.user.email}")
 
+  /** Logging out anywhere ends the account's counting session.
+    *
+    * From any device, deliberately: the session belongs to the account rather than to the browser that opened it, so
+    * signing out is a statement that the account has finished, wherever it is made.
+    */
   override def onLogout(event: LogoutEvent): ZIO[Requires, Throwable, Unit] =
     for
       firestore <- ZIO.service[Firestore]
-      _ <- CountingSessionStore(firestore).complete(documentId(event.sessionKey), event.at)
-      _ <- ZIO.logInfo(s"Completed counting session for ${event.user.email}")
+      located <- AccountSessions.active(firestore, event.user.email)
+      _ <- located match
+        case None                     => ZIO.logInfo(s"Signed out with nothing counting: ${event.user.email}")
+        case Some((account, session)) =>
+          for
+            keeper <- AccountSessions.store(firestore)
+            _ <- keeper.close(account, session, SessionEnd.LoggedOut, event.at)
+            _ <- ZIO.logInfo(s"Signed out; closed the counting session for ${event.user.email}")
+          yield ()
     yield ()
 
   /** Derives the record's id from the browser session key by hashing, so one login maps to exactly one counting session
