@@ -114,6 +114,42 @@ object AcquirerPresence:
   val Path = "/live/acquirer"
   given JsonCodec[AcquirerPresence] = DeriveJsonCodec.gen[AcquirerPresence]
 
+/** Which end of a peer link a message came from.
+  *
+  * The watching device offers and the counting device answers, rather than either being able to start: a counter with
+  * nobody watching would otherwise post offers no one will ever read.
+  */
+enum PeerRole:
+  case Watcher
+  case Counter
+
+object PeerRole:
+  given JsonCodec[PeerRole] = DeriveJsonCodec.gen[PeerRole]
+
+/** One step of the exchange two browsers need before they can talk to each other directly.
+  *
+  * Carried through storage rather than through the relay, which is the whole point: the two devices must find each
+  * other without landing in the same server process, and a document they both read does not care which instance served
+  * either request. Once the link is up, readings go straight from one browser to the other and the server is out of the
+  * path entirely.
+  *
+  * The body is opaque here -- an offer, an answer or a candidate, as the browser produced it. Nothing on the server
+  * reads it; it files it and hands it to the other end.
+  */
+@jsonNoExtraFields
+final case class PeerSignal(from: PeerRole, kind: String, body: String)
+
+object PeerSignal:
+  val Path = "/live/signal"
+  given JsonCodec[PeerSignal] = DeriveJsonCodec.gen[PeerSignal]
+
+/** What the other end has filed, and where to carry on from next time. */
+@jsonNoExtraFields
+final case class PeerSignals(signals: Seq[PeerSignal] = Seq.empty, cursor: String = "")
+
+object PeerSignals:
+  given JsonCodec[PeerSignals] = DeriveJsonCodec.gen[PeerSignals]
+
 /** A run the bench is throwing away, and everything filed under it.
   *
   * Sent when a suite is abandoned part way. A run interrupted by a phone call, a notification or a misframed camera

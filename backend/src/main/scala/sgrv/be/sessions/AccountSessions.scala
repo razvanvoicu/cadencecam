@@ -190,6 +190,62 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       )
       .unit
 
+  /** Files one step of a peer exchange under the session the two devices are pairing for.
+    *
+    * Under the session rather than the account, so an exchange cannot outlive what it was pairing for: when the session
+    * closes, the offers and candidates that belonged to it go with it.
+    */
+  def postSignal(name: String, session: String, from: String, kind: String, body: String, at: Instant): Task[Unit] =
+    val fields = Map[String, AnyRef](
+      "postedAt" -> stamp(at),
+      "from" -> from,
+      "kind" -> kind,
+      "body" -> body
+    )
+    GoogleFuture
+      .fromApiFuture(
+        account(name)
+          .collection(AccountSchema.sessions)
+          .document(session)
+          .collection("signals")
+          .document()
+          .create(fields.asJava)
+      )
+      .unit
+
+  /** Everything the other end has filed since the cursor, oldest first, with the position to ask from next time.
+    *
+    * Anything older than a couple of minutes is passed over: a link forms in seconds, so an older offer belongs to an
+    * attempt both ends have given up on, and answering one is worse than not answering.
+    */
+  def signalsFor(
+      name: String,
+      session: String,
+      mine: String,
+      since: Option[Instant],
+      now: Instant
+  ): Task[(Seq[(String, String)], String)] =
+    val floor = since.getOrElse(now.minusSeconds(120))
+    val query = account(name)
+      .collection(AccountSchema.sessions)
+      .document(session)
+      .collection("signals")
+      .whereGreaterThan("postedAt", stamp(floor))
+      .orderBy("postedAt", com.google.cloud.firestore.Query.Direction.ASCENDING)
+      .limit(64)
+    GoogleFuture
+      .fromApiFuture(query.get())
+      .map: found =>
+        val documents = found.getDocuments.asScala.toSeq
+        val theirs = documents.filter(document => document.getString("from") != mine).map { document =>
+          (Option(document.getString("kind")).getOrElse(""), Option(document.getString("body")).getOrElse(""))
+        }
+        val newest = documents
+          .flatMap(document => Option(document.getTimestamp("postedAt")).map(_.toDate.toInstant))
+          .maxOption
+          .getOrElse(floor)
+        (theirs, newest.toString)
+
   /** Ends the session and leaves it as a record. The account keeps its document; only the pointer is cleared. */
   def close(name: String, session: String, why: SessionEnd, now: Instant): Task[Unit] =
     val ended = Map[String, AnyRef](
