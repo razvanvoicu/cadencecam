@@ -18,6 +18,22 @@ final class CameraAdjustSuite extends munit.FunSuite:
     assertEquals(found.head.min, 0.26)
     assertEquals(found.head.max, 160000.0)
 
+  test("the exposure slider stops where the frame rate would start dropping frames"):
+    // Exposure runs in hundreds of microseconds: at 30 frames a second, one frame is 333 of them. The camera offers up
+    // to sixteen seconds, and everything past one frame's worth is bought with the sampling rate the detector needs.
+    val capabilities = js.Dynamic.literal("exposureTime" -> range(0.26, 160000.0, 0.1))
+
+    val found = CameraAdjust
+      .adjustable(capabilities, js.Dynamic.literal("exposureTime" -> 83.3, "frameRate" -> 30))
+      .head
+
+    assertEqualsDouble(found.max, 10000.0 / 30, 0.001)
+    assertEqualsDouble(CameraAdjust.ceiling("exposureTime", 160000.0, Some(60)), 10000.0 / 60, 0.001)
+
+  test("without a frame rate the camera's own maximum stands, and other settings are never capped"):
+    assertEqualsDouble(CameraAdjust.ceiling("exposureTime", 160000.0, None), 160000.0, 0.001)
+    assertEqualsDouble(CameraAdjust.ceiling("iso", 5333.0, Some(30)), 5333.0, 0.001)
+
   test("a setting reported as modes rather than a range is not offered"):
     // Safari reports exposure this way when it reports it at all; a slider with no span cannot be moved.
     val capabilities = js.Dynamic.literal("exposureMode" -> js.Array("continuous", "manual"))

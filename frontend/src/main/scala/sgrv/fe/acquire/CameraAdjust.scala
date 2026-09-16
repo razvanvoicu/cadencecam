@@ -45,6 +45,19 @@ private[fe] object CameraAdjust:
     */
   private[fe] val Positions = 1000
 
+  /** Exposure time is counted in hundreds of microseconds, so a second holds ten thousand of them. */
+  private[acquire] val ExposureUnitsPerSecond = 10000.0
+
+  /** The highest exposure worth offering, given the frame rate the camera is running at.
+    *
+    * An exposure longer than one frame's worth cannot be delivered at that frame rate, so the camera slows down to
+    * accommodate it -- which is the sampling rate the detector depends on. The camera's own maximum is sixteen seconds;
+    * almost all of that range costs frames. Where the frame rate is unknown the camera's maximum stands.
+    */
+  private[acquire] def ceiling(setting: String, reported: Double, frameRate: Option[Double]): Double =
+    if setting != "exposureTime" then reported
+    else frameRate.filter(_ > 0).fold(reported)(rate => math.min(reported, ExposureUnitsPerSecond / rate))
+
   /** The smallest value a proportional scale can reach. Zero has no logarithm, and cameras do report zero minimums. */
   private val smallest = 1e-4
 
@@ -79,13 +92,15 @@ private[fe] object CameraAdjust:
   private[fe] def adjustable(capabilities: js.Dynamic, settings: js.Dynamic): Seq[Adjustable] =
     if js.isUndefined(capabilities) || capabilities == null then Seq.empty
     else
+      val frameRate = number(settings.selectDynamic("frameRate"))
       offered.flatMap: (setting, label, logarithmic) =>
         val span = capabilities.selectDynamic(setting)
         val now = settings.selectDynamic(setting)
         for
           range <- Option.when(!js.isUndefined(span) && span != null)(span)
           min <- number(range.selectDynamic("min"))
-          max <- number(range.selectDynamic("max"))
+          reportedMax <- number(range.selectDynamic("max"))
+          max = ceiling(setting, reportedMax, frameRate)
           if max > min
           current <- number(now).orElse(Some(min))
         yield

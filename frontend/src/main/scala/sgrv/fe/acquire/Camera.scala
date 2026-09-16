@@ -176,6 +176,50 @@ private[fe] object Camera:
     */
   private[acquire] val settleBeforeLockMillis = 1500
 
+  /** How often to ask the camera what it is doing while waiting for metering to stop moving. */
+  private[acquire] val steadyPollMillis = 250
+
+  /** How long to wait for metering to settle before pinning whatever it has reached.
+    *
+    * A fixed wait was the fault: the controls were pinned a second and a half in, and a recorded trace shows the
+    * picture still climbing out of the step the figure's arrival caused until about three seconds. What got frozen was
+    * a half-converged value, which is why the view darkened on every handset. Now the wait ends when two consecutive
+    * readings agree instead of when a timer expires, and this is only the point at which it gives up waiting.
+    */
+  private[acquire] val steadyGiveUpMillis = 8000
+
+  /** How far a held value may end up from the value asked for before the hold counts as refused.
+    *
+    * A camera may accept a request, report success, and sit somewhere else entirely. A tenth: sensor values are
+    * quantised, so an exact match is too much to ask, but a picture four stops dark is not a rounding difference.
+    */
+  private[acquire] val honouredWithin = 0.1
+
+  /** Whether the values a camera reports have stopped moving, over the settings actually being held. */
+  private[acquire] def steady(before: js.Dynamic, now: js.Dynamic): Boolean =
+    manualControls
+      .flatMap(_.settings)
+      .forall: setting =>
+        val was = before.selectDynamic(setting)
+        val is = now.selectDynamic(setting)
+        js.isUndefined(was) == js
+          .isUndefined(is) && (js.isUndefined(is) || js.JSON.stringify(was) == js.JSON.stringify(is))
+
+  /** Which of the settings asked for came back materially different, and so were not really held. */
+  private[acquire] def refused(asked: js.Dynamic, got: js.Dynamic, within: Double = honouredWithin): Seq[String] =
+    js.Object
+      .keys(asked.asInstanceOf[js.Object])
+      .toSeq
+      .filter: setting =>
+        val wanted = asked.selectDynamic(setting)
+        val actual = got.selectDynamic(setting)
+        if js.isUndefined(actual) || js.typeOf(wanted) != "number" || js.typeOf(actual) != "number" then false
+        else
+          val a = wanted.asInstanceOf[Double]
+          val b = actual.asInstanceOf[Double]
+          val scale = math.max(math.abs(a), 1e-9)
+          math.abs(a - b) / scale > within
+
   /** Whether to hold the controls still at all. On, with the evidence it was waiting for and the fault it had fixed.
     *
     * The evidence: on one handset the brightness of the whole frame swings harder than the movement does. Measured
@@ -279,9 +323,8 @@ private[fe] object Camera:
         else if js.isUndefined(dynamic.getSettings) then
           Future.successful(ControlOutcome("this browser does not report camera settings"))
         else
-          after(settleBeforeLockMillis).flatMap: _ =>
-            // Read after the settle, not before: what gets pinned should be what automatic metering arrived at.
-            val settled = dynamic.getSettings()
+          whenSteady(dynamic).flatMap: settled =>
+            // Read once metering has stopped moving, not on a timer: what gets pinned is what automatic arrived at.
             val capable = manualCapable(dynamic.getCapabilities())
             val skipped = capable.filter(control => pinning(control, settled).isEmpty).map(_.mode)
             if skipped.nonEmpty then
@@ -308,8 +351,36 @@ private[fe] object Camera:
                 else dom.console.info(s"Camera controls held still: ${locked.mkString(", ")}")
                 // What the camera actually settled on, read back rather than assumed. Held at the darkest end of the
                 // range is indistinguishable from held correctly unless the value itself is recorded.
+                val reported = dynamic.getSettings()
+                // Asked for, and actually got. A camera that accepts a request and then sits somewhere else has not
+                // held anything; keeping such a lock is worse than leaving it automatic, because it is both wrong and
+                // frozen. Those modes go back to continuous.
+                val asked = js.Dynamic.literal()
+                capable.foreach: control =>
+                  pinning(control, settled).foreach: value =>
+                    js.Object
+                      .keys(value.asInstanceOf[js.Object])
+                      .foreach: setting =>
+                        asked.updateDynamic(setting)(value.selectDynamic(setting))
+                val missed = refused(asked, reported)
+                val abandoned = capable.filter(control => control.settings.exists(missed.contains)).map(_.mode)
+                abandoned.foreach: mode =>
+                  val back = js.Dynamic.literal()
+                  back.updateDynamic(mode)("continuous")
+                  val _ = request(back)
+                if abandoned.nonEmpty then
+                  dom.console.info(s"Given back to the camera, which would not hold them: ${abandoned.mkString(", ")}")
                 val after = js.JSON.stringify(dynamic.getSettings())
-                ControlOutcome("attempted", locked, skipped, Some(after))
+                ControlOutcome("attempted", locked.filterNot(abandoned.contains), skipped ++ abandoned, Some(after))
+
+  /** Waits until two consecutive readings of the camera's settings agree, or until the wait is given up on. */
+  private def whenSteady(dynamic: js.Dynamic, waited: Int = 0, before: js.Dynamic = null): Future[js.Dynamic] =
+    val now = dynamic.getSettings()
+    if before != null && steady(before, now) then Future.successful(now)
+    else if waited >= steadyGiveUpMillis then
+      dom.console.info(s"Metering had not settled after ${steadyGiveUpMillis}ms; holding what it had reached")
+      Future.successful(now)
+    else after(steadyPollMillis).flatMap(_ => whenSteady(dynamic, waited + steadyPollMillis, now))
 
   private def after(millis: Int): Future[Unit] =
     val settled = scala.concurrent.Promise[Unit]()

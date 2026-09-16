@@ -196,6 +196,38 @@ class CameraSuite extends FunSuite:
       )
     )
 
+  test("metering is waited on until it stops moving, not for a fixed time"):
+    // The fault this replaces: the controls were pinned on a timer a second and a half in, while a recorded trace
+    // shows the picture still climbing out of the figure's arrival until about three seconds. What got frozen was a
+    // half-converged value, which is why the view darkened on every handset.
+    val climbing = js.Dynamic.literal("exposureTime" -> 40.0, "iso" -> 320)
+    val arrived = js.Dynamic.literal("exposureTime" -> 83.3, "iso" -> 100)
+    val same = js.Dynamic.literal("exposureTime" -> 83.3, "iso" -> 100)
+
+    assert(!Camera.steady(climbing, arrived), "still moving")
+    assert(Camera.steady(arrived, same), "two readings that agree")
+    assert(Camera.steadyGiveUpMillis > Camera.settleBeforeLockMillis)
+    assert(Camera.steadyPollMillis > 0 && Camera.steadyPollMillis < Camera.steadyGiveUpMillis)
+
+  test("a setting the camera reports as absent on both readings counts as steady"):
+    val bare = js.Dynamic.literal("exposureTime" -> 83.3)
+
+    assert(Camera.steady(bare, js.Dynamic.literal("exposureTime" -> 83.3)))
+
+  test("a value the camera would not actually hold is counted as refused"):
+    // Accepting the request and then sitting somewhere else is the failure that cannot be seen from "held":
+    // four stops dark is not a rounding difference, while sensor quantisation is.
+    val asked = js.Dynamic.literal("exposureTime" -> 83.3, "iso" -> 100)
+
+    assertEquals(Camera.refused(asked, js.Dynamic.literal("exposureTime" -> 83.3, "iso" -> 100)), Seq.empty)
+    assertEquals(Camera.refused(asked, js.Dynamic.literal("exposureTime" -> 84.0, "iso" -> 101)), Seq.empty)
+    assertEquals(Camera.refused(asked, js.Dynamic.literal("exposureTime" -> 83.3, "iso" -> 21)), Seq("iso"))
+    assertEquals(Camera.refused(asked, js.Dynamic.literal("exposureTime" -> 8.0, "iso" -> 100)), Seq("exposureTime"))
+
+  test("a setting the camera stops reporting is not counted as refused"):
+    // Absent is not wrong: some browsers report a setting only while it is automatic.
+    assertEquals(Camera.refused(js.Dynamic.literal("colorTemperature" -> 4200), js.Dynamic.literal()), Seq.empty)
+
   test("holding the controls still is switched on"):
     // On, with the evidence it was waiting for: on one handset the brightness of the whole frame -- the part of the
     // signal common to all four quadrants, which no object in any one of them can explain -- swings at 1.6 times the
