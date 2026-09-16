@@ -64,6 +64,14 @@ private[fe] final class PeerLink(
   private var polling: Option[Int] = None
   private var wanted = false
 
+  /** What has already been acted on, so a signal read twice is not acted on twice.
+    *
+    * The window a cursor falls back to is a couple of minutes wide, so an offer can be handed over again long after it
+    * was answered. Answering it a second time renegotiates a link that was working, or builds one against a peer that
+    * has moved on.
+    */
+  private var acted = Set.empty[String]
+
   def isOpen: Boolean = channel.exists(_.readyState.asInstanceOf[String] == "open")
 
   /** Sends over the link, or reports that there is no link to send over. */
@@ -84,8 +92,14 @@ private[fe] final class PeerLink(
   def close(): Unit =
     wanted = false
     stopPolling()
-    channel.foreach(one => try one.close() catch case _: Throwable => ())
-    connection.foreach(one => try one.close() catch case _: Throwable => ())
+    channel.foreach(one =>
+      try one.close()
+      catch case _: Throwable => ()
+    )
+    connection.foreach(one =>
+      try one.close()
+      catch case _: Throwable => ()
+    )
     channel = None
     connection = None
 
@@ -174,9 +188,19 @@ private[fe] final class PeerLink(
         case Left(_) => ()
 
   private def receive(signal: PeerSignal): Unit =
+    val fingerprint = s"${signal.kind}:${signal.body.hashCode}"
+    if acted.contains(fingerprint) then ()
+    else
+      acted = acted + fingerprint
+      apply(signal)
+
+  private def apply(signal: PeerSignal): Unit =
     connection.foreach: peer =>
+      val state = peer.signalingState.asInstanceOf[String]
       signal.kind match
-        case "offer" if role == PeerRole.Counter =>
+        // Only while this end is still waiting to be told: an offer arriving after the description is set belongs to
+        // an attempt that has moved on.
+        case "offer" if role == PeerRole.Counter && state == "stable" =>
           val description = JSON.parse(signal.body).asInstanceOf[js.Dynamic]
           val _ = peer
             .setRemoteDescription(description)
@@ -186,7 +210,7 @@ private[fe] final class PeerLink(
             .flatMap: answer =>
               peer.setLocalDescription(answer).asInstanceOf[js.Promise[js.Any]].toFuture.map(_ => answer)
             .map(answer => file(PeerSignal(role, "answer", JSON.stringify(answer))))
-        case "answer" if role == PeerRole.Watcher =>
+        case "answer" if role == PeerRole.Watcher && state == "have-local-offer" =>
           val description = JSON.parse(signal.body).asInstanceOf[js.Dynamic]
           val _ = peer.setRemoteDescription(description)
         case "candidate" =>

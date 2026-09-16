@@ -240,11 +240,14 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
         val theirs = documents.filter(document => document.getString("from") != mine).map { document =>
           (Option(document.getString("kind")).getOrElse(""), Option(document.getString("body")).getOrElse(""))
         }
-        val newest = documents
+        // Only past what is being handed over. Taking the newest of everything -- this end's own filings included --
+        // advances the cursor past the other end's answer whenever the two are written in the same instant, and that
+        // answer is then never handed on: the exchange stalls with both ends believing they have spoken.
+        val consumed = documents
+          .filter(document => document.getString("from") != mine)
           .flatMap(document => Option(document.getTimestamp("postedAt")).map(_.toDate.toInstant))
           .maxOption
-          .getOrElse(floor)
-        (theirs, newest.toString)
+        (theirs, consumed.getOrElse(floor).toString)
 
   /** Ends the session and leaves it as a record. The account keeps its document; only the pointer is cleared. */
   def close(name: String, session: String, why: SessionEnd, now: Instant): Task[Unit] =
