@@ -81,16 +81,14 @@ class CountingSessionSuite extends munit.FunSuite:
 
     assertEquals(skipped, Some(Set("firestore", "session-store")))
 
-  test("the live relay is discovered on the classpath"):
-    // Its sockets are the only path between the two devices, and a plugin that compiles but is never scanned would
-    // leave a dashboard waiting forever with nothing to say why.
+  test("the presence route is discovered on the classpath"):
+    // What replaced the relay's own presence check. A device asks this before taking the counter's role, and a plugin
+    // that compiles but is never scanned would have every device believe the account was free.
     val statuses = run(RouteDiscovery.discover(CapabilityRegistry.empty))
 
     val skipped = statuses.collectFirst:
-      case PluginStatus.Skipped(LiveRelay.id, _, missing) => missing.map(_.id).toSet
+      case PluginStatus.Skipped(AcquirerPresenceRoute.id, _, missing) => missing.map(_.id).toSet
 
-    // Firestore as well as the session store: the relay reads the account's record to answer whether anything is
-    // counting, which the rooms it holds in memory can only answer for connections this instance happens to have.
     assertEquals(skipped, Some(Set("firestore", "session-store")))
 
   test("the trace route is discovered on the classpath too"):

@@ -174,8 +174,3 @@ final case class DiscardRun(runId: String)
 object DiscardRun:
   val Path = "/test/run/discard"
   given JsonCodec[DiscardRun] = DeriveJsonCodec.gen[DiscardRun]
-
-object Live:
-  /** Where each side connects. Shared so the two ends cannot drift apart. */
-  val AcquirerPath = "/ws/acquirer"
-  val DashboardPath = "/ws/dashboard"

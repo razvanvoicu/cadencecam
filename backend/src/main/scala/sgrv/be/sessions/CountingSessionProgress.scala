@@ -31,6 +31,7 @@ object CountingSessionProgress extends BackendPlugin:
 
   private sealed trait ProgressFailure
   private case object NoSession extends ProgressFailure
+  private case object Displaced extends ProgressFailure
   private final case class Malformed(details: String) extends ProgressFailure
   private final case class WriteFailed(cause: Throwable) extends ProgressFailure
 
@@ -44,6 +45,8 @@ object CountingSessionProgress extends BackendPlugin:
         case RequestContext.Authenticated(_, user) => ZIO.succeed(user.email)
         case _                                     => ZIO.fail(NoSession)
       }
+      // Which browser session is reporting, so a device that has been taken over can be told.
+      mine <- ZIO.fromOption(CountingSessionListener.documentId(request)).orElseFail(NoSession)
       body <- request.body.asString.mapError(error => Malformed(describe(error)))
       reps <- ZIO.fromEither(CountingSessionProgress.reps(body)).mapError(Malformed.apply)
       firestore <- ZIO.service[Firestore]
@@ -51,6 +54,10 @@ object CountingSessionProgress extends BackendPlugin:
       (account, session) <- ZIO.fromOption(located).orElseFail(NoSession)
       keeper <- AccountSessions.store(firestore)
       now <- Clock.instant
+      state <- keeper.state(account, now).mapError(WriteFailed.apply)
+      // Another device has the role: say so rather than recording a count from a device that has been stood down.
+      // With no relay left to tell it, this is how a displaced counter finds out.
+      _ <- ZIO.fail(Displaced).when(state.counter.exists(_ != mine))
       _ <- keeper.counted(account, session, reps, now).mapError(WriteFailed.apply)
     yield ()
 
@@ -67,7 +74,10 @@ object CountingSessionProgress extends BackendPlugin:
 
   private def failureResponse(failure: ProgressFailure): ZIO[Any, Nothing, Response] =
     failure match
-      case NoSession          => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
+      case NoSession => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
+      // Conflict rather than an error: the report was well formed and the device was entitled to send it a moment
+      // ago. It simply no longer holds the role, and this is how it learns.
+      case Displaced          => ZIO.succeed(noStore(Response.status(Status.Conflict)))
       case Malformed(details) =>
         ZIO.logWarning(s"Rejected a counting-session progress report: $details") *>
           ZIO.succeed(noStore(Response.status(Status.BadRequest)))

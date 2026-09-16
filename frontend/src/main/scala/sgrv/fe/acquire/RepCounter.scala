@@ -100,6 +100,23 @@ private[fe] final case class DetectorSettings(
       * rejecting real ones.
       */
     heightMemoryReps: Int = 10,
+    /** How much sooner than the cadence being kept a candidate may arrive and still be a rep.
+      *
+      * Three tenths of slack. A peak arriving closer than that has not been performed: on one camera a quadrant's
+      * brightness rises and falls twice per rep, and the extra peak lands halfway between two real ones, at half the
+      * interval. Nothing about its height, prominence or shape distinguishes it; only its timing does.
+      */
+    cadenceTolerance: Double = 0.7,
+    /** How far back the cadence is measured, in samples.
+      *
+      * Thirty seconds, which is longer than the detector's own analysis window on purpose. The expectation has to be
+      * stable, and a cadence is not steady: the bench swings its own by a fifth either way over twenty seconds, so a
+      * window shorter than that swing lands on one phase of it. Measured across the fifteen-second window, the median
+      * moved between 11.5 and 14.0 samples on one recording depending only on where the window fell -- a drift the same
+      * size as the effect being detected, which made the comparison meaningless. Thirty seconds spans the whole swing
+      * and averages it out.
+      */
+    cadenceMemorySamples: Int = 300,
     /** Samples ignored at the start of a window while the filter settles. A band-pass starting from rest rings when the
       * signal first arrives, and that ringing would otherwise dominate the very statistics used to decide what counts
       * as a peak.
@@ -280,6 +297,17 @@ private[fe] object RepAnalysis:
       .map(_._1)
       .maxOption
 
+  /** The interval to expect between reps, from where this channel's peaks have recently fallen.
+    *
+    * Clamped to the band the detector claims to handle: a cadence quicker than the fastest rep the band admits is not a
+    * cadence, and early in a set, before the movement has settled, that is exactly when a wild estimate can appear and
+    * set the bar for everything after it.
+    */
+  private[acquire] def expectedInterval(peaks: Seq[Int], settings: DetectorSettings): Option[Double] =
+    val quickest = settings.sampleRateHz / settings.highHz
+    val slowest = settings.sampleRateHz / settings.lowHz
+    periodOf(peaks).map(interval => math.min(slowest, math.max(quickest, interval)))
+
   private[acquire] def agree(first: ChannelAnalysis, second: ChannelAnalysis, tolerance: Double): Boolean =
     (first.periodSamples, second.periodSamples) match
       case (Some(a), Some(b)) if a > 0 && b > 0 => math.abs(a - b) / math.max(a, b) <= tolerance
@@ -354,6 +382,15 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
     */
   private var currentNoise: Option[Double] = None
 
+  /** Where this channel's peaks have fallen recently, whether or not they were credited.
+    *
+    * Kept apart from the tallies because the cadence has to be measured from what the movement is doing, not from what
+    * was accepted. An expectation built from acceptances rises every time one is refused, which raises the bar that
+    * refused it, and the count walks itself down to every other rep -- 23 of 37 on a recording with nothing wrong with
+    * it, measured.
+    */
+  private var seen = Map.empty[Quadrant, Vector[Int]]
+
   def reading: RepReading = RepReading(counted, state, currentMargin, currentNoise)
 
   /** The pace of the last few reps, in reps per minute, or zero when too few have been seen to say.
@@ -371,6 +408,7 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
   def reset(): Unit =
     counted = 0
     tallies = Map.empty
+    seen = Map.empty
     recent = Vector.empty
     lastCounted = Map.empty
     authoritative = None
@@ -382,12 +420,29 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
     // was sustained. A peak has to satisfy both before it is a rep.
     val supported = RepAnalysis.sustained(channel.peaks, settings.minimumSustainedPeaks, settings.maximumGapSamples)
     val absolute = supported.map(index => totalSamples - windowLength + index)
-    val fresh = lastCounted.get(channel.quadrant) match
-      case None => absolute
+    // Every peak this channel showed goes into the record, credited or not, and the record reaches back further than
+    // the window the peaks were found in.
+    val remembered = absolute
+      .foldLeft(seen.getOrElse(channel.quadrant, Vector.empty)): (kept, peak) =>
+        if kept.lastOption.forall(last => peak >= last + settings.minimumDistanceSamples) then kept :+ peak else kept
+      .dropWhile(_ < totalSamples - settings.cadenceMemorySamples)
+    seen = seen.updated(channel.quadrant, remembered)
+    val expected = RepAnalysis.expectedInterval(remembered, settings)
+    // Walked in order rather than filtered, because accepting one moves the mark the next is judged against.
+    var mark = lastCounted.get(channel.quadrant)
+    var credited = Vector.empty[Int]
+    for candidate <- absolute do
       // A peak must clear the last counted one by the minimum rep interval, not merely come after it.
       // Re-detecting over a window that has grown or slid can move a peak by a sample, and "later than the
       // last" would then count that same peak a second time.
-      case Some(last) => absolute.filter(_ >= last + settings.minimumDistanceSamples)
+      val clears = mark.forall(last => candidate >= last + settings.minimumDistanceSamples)
+      // And it must not arrive sooner than the cadence allows.
+      val inTime = mark.forall: last =>
+        expected.forall(interval => (candidate - last) >= settings.cadenceTolerance * interval)
+      if clears && inTime then
+        credited = credited :+ candidate
+        mark = Some(candidate)
+    val fresh = credited
     if fresh.nonEmpty then
       tallies = tallies.updated(channel.quadrant, tallies.getOrElse(channel.quadrant, 0) + fresh.size)
       lastCounted = lastCounted.updated(channel.quadrant, fresh.max)

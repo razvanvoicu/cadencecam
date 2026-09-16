@@ -26,9 +26,9 @@ import sgrv.fe.acquire.{
   Sample,
   SignalGraph
 }
-import sgrv.api.{Live, LiveCommand, LiveReading, LiveState, PeerRole}
+import sgrv.api.{LiveCommand, LiveReading, LiveState, PeerRole}
 import sgrv.fe.bench.BenchView
-import sgrv.fe.live.{LiveSocket, PeerLink}
+import sgrv.fe.live.PeerLink
 import sgrv.fe.refreshstate.RefreshStateStore
 import sgrv.fe.refreshstate.SessionRefreshWorker
 import zio.json.*
@@ -303,13 +303,6 @@ object Main:
           case Right(state)  => live.set(Some(state))
           case Left(details) => dom.console.warn(s"Ignoring an unreadable update: $details")
 
-      val relay: LiveSocket = LiveSocket(
-        Live.DashboardPath,
-        readUpdate,
-        onOpen = () => connected.set(true),
-        onClosed = () => connected.set(false)
-      )
-
       /** The direct link to the counting device, which the readings take once it is up.
         *
         * The watcher offers, because it is the one that wants the data. Until the link forms -- and if it never does,
@@ -320,30 +313,22 @@ object Main:
         http,
         PeerRole.Watcher,
         readUpdate,
-        onOpen = () => dom.console.info("Reading the count directly from the counting device"),
-        onClosed = () => dom.console.info("The direct link closed; readings fall back to the relay")
+        onOpen = () => connected.set(true),
+        onClosed = () => connected.set(false)
       )
 
       def ask(instruction: LiveCommand): Unit =
-        // Over the link when there is one: a command that goes straight to the device does not need the two of them
-        // to have landed in the same server process.
-        if !peer.send(instruction.toJson) then
-          val _ = relay.send(instruction.toJson)
+        // Straight to the device. There is no other path: a command travelling through a server would need both
+        // devices served by the same process, which is the thing this replaced.
+        val _ = peer.send(instruction.toJson)
 
       def menuItem(label: String, act: () => Unit): Element =
         button(cls := "menu-item", typ := "button", label, onClick --> (_ => { menuOpen.set(false); act() }))
 
       div(
         cls := "dashboard-view",
-        onMountCallback { _ =>
-          relay.connect()
-          // Both: the relay carries the readings until the direct link forms, and afterwards if it ever drops.
-          peer.connect()
-        },
-        onUnmountCallback { _ =>
-          relay.close()
-          peer.close()
-        },
+        onMountCallback(_ => peer.connect()),
+        onUnmountCallback(_ => peer.close()),
         div(
           cls := "screen dashboard",
           div(
@@ -494,12 +479,9 @@ object Main:
             counting = lock.now().isInstanceOf[LockState.Locked]
           )
         if !lastPublished.contains(reading) then
-          // To whoever is listening, by whichever path exists. The direct link is the one that survives more than one
-          // server instance; the relay is what works before it forms.
-          val state = LiveState(acquiring = true, reading = Some(reading)).toJson
-          val overPeer = peer.send(state)
-          val overRelay = relay.send(reading.toJson)
-          if overPeer || overRelay then lastPublished = Some(reading)
+          // To whoever is watching, over their own link. Nothing is published when nobody is: a count with no
+          // audience is the ordinary case, and there is no server left to tell.
+          if peer.send(LiveState(acquiring = true, reading = Some(reading)).toJson) then lastPublished = Some(reading)
 
       def onSample(sample: Sample): Unit =
         signals.record(sample)
@@ -596,8 +578,6 @@ object Main:
             dom.console.info("Another device is now counting for this account; standing down")
             show(Screen.Selection)
           case Left(details) => dom.console.warn(s"Ignoring an unreadable command: $details")
-
-      lazy val relay: LiveSocket = LiveSocket(Live.AcquirerPath, obey)
 
       /** The counting end of the direct link. It answers offers rather than making them: a counter with nobody watching
         * has nothing to offer, and a watcher appearing is what starts the exchange.
@@ -749,18 +729,19 @@ object Main:
           publish()
         },
         onMountCallback { _ =>
-          relay.connect()
           // Waits to be found: a watching device offers, this end answers. Until one appears there is nothing to
           // pair with, which is why the counter only listens.
           peer.connect()
           startCamera()
           // Reads the total rather than being pushed it, so a tick reports whatever is current at the moment it
           // fires and no report can be left describing a count that has since moved on.
+          // Leaving this screen is what releases the camera; staying would leave a phone counting into a room it no
+          // longer owns, with its own tally still climbing on screen.
+          reporter.onDisplaced = () => show(Screen.Selection)
           reporter.start(() => repCount.now())
         },
         onUnmountCallback { _ =>
           live = false
-          relay.close()
           peer.close()
           reporter.stop()
           release()

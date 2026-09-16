@@ -28,6 +28,13 @@ private[fe] final class RepProgressReporter(
   private var inFlight = false
 
   /** Begins reporting whatever `reps` returns at each tick. Starting twice is a no-op rather than a second timer. */
+  /** Called when the server says another device now holds the counter's role.
+    *
+    * With no relay left to carry a stand-down message, this is how a displaced device learns: its next report is
+    * refused, because the account's record names somebody else as the counter.
+    */
+  var onDisplaced: () => Unit = () => ()
+
   def start(reps: () => Int): Unit =
     if handle.isEmpty then handle = Some(dom.window.setInterval(() => report(reps()), intervalMillis.toDouble))
 
@@ -51,6 +58,10 @@ private[fe] final class RepProgressReporter(
           outcome match
             // Failure is not escalated and the timer keeps running: the next tick reports the same total, so a lost
             // report costs nothing. A 401 is already handled by the HTTP boundary, which ends the session.
+            case Success(response) if response.status == 409 =>
+              dom.console.info("Another device is now counting for this account; standing down")
+              stop()
+              onDisplaced()
             case Success(response) if !response.ok && response.status != 401 =>
               dom.console.warn(s"Reporting the rep count returned HTTP ${response.status}")
             case Failure(error) =>

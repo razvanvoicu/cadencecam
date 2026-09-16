@@ -2,9 +2,9 @@ package sgrv.fe.bench
 
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
-import sgrv.api.{DiscardRun, Live, LiveCommand, LiveState, PeerRole, TestEvent}
+import sgrv.api.{DiscardRun, LiveCommand, LiveState, PeerRole, TestEvent}
 import sgrv.fe.acquire.StatusLine
-import sgrv.fe.live.{LiveSocket, PeerLink}
+import sgrv.fe.live.PeerLink
 import sgrv.fe.{Device, HttpService, Readouts}
 import zio.json.*
 
@@ -82,25 +82,23 @@ private[fe] object BenchView:
           if !state.acquiring then statusText.set("No device is counting yet")
         case Left(details) => dom.console.warn(s"Ignoring an unreadable update: $details")
 
-    val relay: LiveSocket = LiveSocket(
-      Live.DashboardPath,
-      readUpdate,
-      onOpen = () => connected.set(true),
-      onClosed = () => connected.set(false)
-    )
-
     /** The bench watches a counting device exactly as a dashboard does, so it takes the same direct link.
       *
       * It matters more here than on a dashboard: a suite is scored by comparing what was shown against what was
       * counted, and every hop between the two devices is time the comparison has to allow for.
       */
-    val peer: PeerLink = PeerLink(http, PeerRole.Watcher, readUpdate)
+    val peer: PeerLink =
+      PeerLink(
+        http,
+        PeerRole.Watcher,
+        readUpdate,
+        onOpen = () => connected.set(true),
+        onClosed = () => connected.set(false)
+      )
 
     /** Asks the counting device to do something, by whichever path exists. */
     def instruct(command: LiveCommand): Unit =
-      val text = command.toJson
-      if !peer.send(text) then
-        val _ = relay.send(text)
+      val _ = peer.send(command.toJson)
 
     /** Sends one observation to be recorded. Fire and forget: a lost report costs a line in a log, and blocking the
       * animation to be sure of it would corrupt the very thing being measured.
@@ -385,14 +383,12 @@ private[fe] object BenchView:
     div(
       cls := "bench-view",
       onMountCallback { _ =>
-        relay.connect()
         peer.connect()
         sizeCanvas()
         val _ = dom.window.requestAnimationFrame(now => loop(now))
       },
       onUnmountCallback { _ =>
         running = false
-        relay.close()
         peer.close()
       },
       windowEvents(_.onResize) --> (_ => sizeCanvas()),
