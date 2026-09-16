@@ -12,6 +12,7 @@ val appConfigFile = LocalConfigBuild.requiredPath(localConfigDir, appConfigPathP
 val supportedAppConfigKeys = Set(
   "OAUTH_CONFIG_PATH",
   "ADMIN_PASSWORD_PATH",
+  "ACCOUNT_KEY_PATH",
   "LOCAL_BASE_URL",
   "ARTIFACT_BASE_URL",
   "PUBLIC_BASE_URL",
@@ -87,6 +88,9 @@ lazy val appBuildConfig = taskKey[AppConfigBuild.Config]("Read and validate the 
 lazy val localOAuthConfigFile = taskKey[File]("Resolve OAUTH_CONFIG_PATH from the shared application configuration")
 lazy val localAdminPasswordFile = taskKey[Option[File]](
   "Resolve the optional ADMIN_PASSWORD_PATH from the shared application configuration"
+)
+lazy val localAccountKeyFile = taskKey[Option[File]](
+  "Resolve the optional ACCOUNT_KEY_PATH from the shared application configuration"
 )
 lazy val optionalDebugPluginJar = taskKey[Option[File]](
   "Build the Debug plugin JAR when ADMIN_PASSWORD_PATH is configured"
@@ -356,13 +360,15 @@ lazy val backend = (project in file("backend"))
     appBuildConfig := AppConfigBuild.load(appConfigFile, supportedAppConfigKeys),
     localOAuthConfigFile := appBuildConfig.value.requiredPath("OAUTH_CONFIG_PATH"),
     localAdminPasswordFile := appBuildConfig.value.optionalPath("ADMIN_PASSWORD_PATH"),
+    localAccountKeyFile := appBuildConfig.value.optionalPath("ACCOUNT_KEY_PATH"),
     run / envVars ++= {
       val config = appBuildConfig.value
       parseEnvFile((Compile / resourceDirectory).value / "test.env") ++
         AppConfigBuild.gcpRuntimeEnv(config) ++
         OAuthBuild.configEnv(localOAuthConfigFile.value) ++
         PublicBaseUrlBuild.localConfigEnv("LOCAL_BASE_URL", config.required("LOCAL_BASE_URL")) ++
-        localAdminPasswordFile.value.fold(Map.empty[String, String])(AdminBuild.configEnv)
+        localAdminPasswordFile.value.fold(Map.empty[String, String])(AdminBuild.configEnv) ++
+        localAccountKeyFile.value.fold(Map.empty[String, String])(AccountKeyBuild.configEnv)
     },
     optionalDebugPluginJar := Def.taskDyn {
       if (localAdminPasswordFile.value.nonEmpty)
@@ -685,6 +691,7 @@ lazy val root = {
 
           val generatedEnv = OAuthBuild.configEnv(oauthConfig) ++
             (backend / localAdminPasswordFile).value.fold(Map.empty[String, String])(AdminBuild.configEnv) ++
+            (backend / localAccountKeyFile).value.fold(Map.empty[String, String])(AccountKeyBuild.configEnv) ++
             deploymentEnv
 
           // Stage the Docker build context: app.jar, lib/*.jar, a secret-bearing prod.env, runApp (the image's
@@ -751,6 +758,7 @@ lazy val root = {
           // so Google client libraries use the service's workload identity.
           val runtimeEnv = OAuthBuild.configEnv(oauthConfig) ++
             (backend / localAdminPasswordFile).value.fold(Map.empty[String, String])(AdminBuild.configEnv) ++
+            (backend / localAccountKeyFile).value.fold(Map.empty[String, String])(AccountKeyBuild.configEnv) ++
             deploymentEnv
 
           val dockerDir = outputDir / "docker-gcloud"
