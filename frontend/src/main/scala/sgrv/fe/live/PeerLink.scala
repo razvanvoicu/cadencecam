@@ -72,6 +72,17 @@ private[fe] final class PeerLink(
     */
   private var acted = Set.empty[String]
 
+  /** Candidates that arrived before there was a description to attach them to.
+    *
+    * `setRemoteDescription` resolves a promise, and the candidates for a link usually arrive in the same batch as the
+    * offer or answer they belong to. Adding one before that promise settles is rejected -- there is no remote
+    * description yet -- so every candidate was being dropped, and a handshake that read perfectly produced a link that
+    * never came up, because neither end had an address to try.
+    */
+  private var waitingCandidates = Vector.empty[js.Dynamic]
+
+  private var remoteReady = false
+
   def isOpen: Boolean = channel.exists(_.readyState.asInstanceOf[String] == "open")
 
   /** Sends over the link, or reports that there is no link to send over. */
@@ -152,6 +163,22 @@ private[fe] final class PeerLink(
       if wanted then poll(pollWhileIdleMillis)
     }: js.Function1[js.Dynamic, Unit]
 
+  /** Hands over everything that was waiting for a description, and lets later ones through directly. */
+  private def flush(peer: js.Dynamic): Unit =
+    remoteReady = true
+    val held = waitingCandidates
+    waitingCandidates = Vector.empty
+    held.foreach(candidate => add(peer, candidate))
+
+  private def add(peer: js.Dynamic, candidate: js.Dynamic): Unit =
+    try
+      val _ = peer
+        .addIceCandidate(candidate)
+        .asInstanceOf[js.Promise[js.Any]]
+        .toFuture
+        .recover { case error => dom.console.warn(s"A candidate was refused: ${error.getMessage}") }
+    catch case _: Throwable => dom.console.warn("A candidate could not be added")
+
   private def file(outgoing: PeerSignal): Unit =
     // Serialised before the request is built: inside the initialiser, `signal` names its own AbortSignal field.
     val payload = outgoing.toJson
@@ -206,14 +233,19 @@ private[fe] final class PeerLink(
             .setRemoteDescription(description)
             .asInstanceOf[js.Promise[js.Any]]
             .toFuture
+            .map(_ => flush(peer))
             .flatMap(_ => peer.createAnswer().asInstanceOf[js.Promise[js.Dynamic]].toFuture)
             .flatMap: answer =>
               peer.setLocalDescription(answer).asInstanceOf[js.Promise[js.Any]].toFuture.map(_ => answer)
             .map(answer => file(PeerSignal(role, "answer", JSON.stringify(answer))))
         case "answer" if role == PeerRole.Watcher && state == "have-local-offer" =>
           val description = JSON.parse(signal.body).asInstanceOf[js.Dynamic]
-          val _ = peer.setRemoteDescription(description)
+          val _ = peer
+            .setRemoteDescription(description)
+            .asInstanceOf[js.Promise[js.Any]]
+            .toFuture
+            .map(_ => flush(peer))
         case "candidate" =>
           val candidate = JSON.parse(signal.body).asInstanceOf[js.Dynamic]
-          val _ = peer.addIceCandidate(candidate)
+          if remoteReady then add(peer, candidate) else waitingCandidates = waitingCandidates :+ candidate
         case _ => ()
