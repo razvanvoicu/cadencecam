@@ -2,9 +2,9 @@ package sgrv.fe.bench
 
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
-import sgrv.api.{DiscardRun, Live, LiveCommand, LiveState, TestEvent}
+import sgrv.api.{DiscardRun, Live, LiveCommand, LiveState, PeerRole, TestEvent}
 import sgrv.fe.acquire.StatusLine
-import sgrv.fe.live.LiveSocket
+import sgrv.fe.live.{LiveSocket, PeerLink}
 import sgrv.fe.{Device, HttpService, Readouts}
 import zio.json.*
 
@@ -68,24 +68,39 @@ private[fe] object BenchView:
     val countingDevice = Var(Option.empty[String])
     val benchDevice = Device.describe()
 
+    def readUpdate(text: String): Unit =
+      text.fromJson[LiveState] match
+        case Right(state) =>
+          state.reading.foreach: latest =>
+            acquired.set(latest.reps)
+            statusText.set(latest.status)
+            latest.device.foreach(name => countingDevice.set(Some(name)))
+            // A zero from the counting device is how a reset is known to have landed. It announces one whether or
+            // not anything else changed, so the absence of this is real evidence that the command went missing.
+            if latest.reps == 0 then resetConfirmed = true
+            hasCadence.set(latest.counting)
+          if !state.acquiring then statusText.set("No device is counting yet")
+        case Left(details) => dom.console.warn(s"Ignoring an unreadable update: $details")
+
     val relay: LiveSocket = LiveSocket(
       Live.DashboardPath,
-      text =>
-        text.fromJson[LiveState] match
-          case Right(state) =>
-            state.reading.foreach: latest =>
-              acquired.set(latest.reps)
-              statusText.set(latest.status)
-              latest.device.foreach(name => countingDevice.set(Some(name)))
-              // A zero from the counting device is how a reset is known to have landed. It announces one whether or
-              // not anything else changed, so the absence of this is real evidence that the command went missing.
-              if latest.reps == 0 then resetConfirmed = true
-              hasCadence.set(latest.counting)
-            if !state.acquiring then statusText.set("No device is counting yet")
-          case Left(details) => dom.console.warn(s"Ignoring an unreadable update: $details"),
+      readUpdate,
       onOpen = () => connected.set(true),
       onClosed = () => connected.set(false)
     )
+
+    /** The bench watches a counting device exactly as a dashboard does, so it takes the same direct link.
+      *
+      * It matters more here than on a dashboard: a suite is scored by comparing what was shown against what was
+      * counted, and every hop between the two devices is time the comparison has to allow for.
+      */
+    val peer: PeerLink = PeerLink(http, PeerRole.Watcher, readUpdate)
+
+    /** Asks the counting device to do something, by whichever path exists. */
+    def instruct(command: LiveCommand): Unit =
+      val text = command.toJson
+      if !peer.send(text) then
+        val _ = relay.send(text)
 
     /** Sends one observation to be recorded. Fire and forget: a lost report costs a line in a log, and blocking the
       * animation to be sure of it would corrupt the very thing being measured.
@@ -147,7 +162,7 @@ private[fe] object BenchView:
       */
     def resetThen(index: Int, attempt: Int = 1): Unit =
       resetConfirmed = false
-      val _ = relay.send(LiveCommand.Reset.toJson)
+      instruct(LiveCommand.Reset)
       val _ = dom.window.setTimeout(
         () =>
           if resetConfirmed then beginAt(index)
@@ -188,7 +203,7 @@ private[fe] object BenchView:
       stall = StallWatch()
       lastComparison = Comparison(0, 0, 0.0, withinTolerance = true)
       statusText.set(StatusLine.Waiting)
-      val _ = relay.send(LiveCommand.Reset.toJson)
+      instruct(LiveCommand.Reset)
       val init = new dom.RequestInit:
         method = dom.HttpMethod.POST
         headers = js.Dictionary("Content-Type" -> "application/json")
@@ -205,7 +220,7 @@ private[fe] object BenchView:
       val rig = Rig.describe(rigDevice.now(), rigCamera.now())
       val capture: LiveCommand =
         LiveCommand.CaptureTrace(Some(s"bench $runId, test ${suite(index)._1 + 1}: ${plan(index).name}, $rig"))
-      val _ = relay.send(capture.toJson)
+      instruct(capture)
       report("trace-requested", TestPlan.PauseSeconds.toDouble, Some(plan(index).name))
       val _ = dom.window.setTimeout(() => resetThen(index + 1), Bench.CaptureBeforeResetMillis.toDouble)
 
@@ -371,12 +386,14 @@ private[fe] object BenchView:
       cls := "bench-view",
       onMountCallback { _ =>
         relay.connect()
+        peer.connect()
         sizeCanvas()
         val _ = dom.window.requestAnimationFrame(now => loop(now))
       },
       onUnmountCallback { _ =>
         running = false
         relay.close()
+        peer.close()
       },
       windowEvents(_.onResize) --> (_ => sizeCanvas()),
       div(
@@ -416,6 +433,14 @@ private[fe] object BenchView:
           child.text <-- statusText.signal
             .combineWith(connected.signal)
             .map((text, live) => if live then text else "Connecting…")
+        ),
+        p(
+          cls := "link-state",
+          child.text <-- peer.phase.signal.map:
+            case "direct"     => "Reading the count directly from the counting device"
+            case "connecting" => "Linking to the counting device…"
+            case "failed"     => "No direct link; reading through the server"
+            case _            => "Reading through the server"
         ),
         div(
           cls := "bench-progress",
