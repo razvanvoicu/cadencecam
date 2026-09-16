@@ -122,7 +122,16 @@ private[fe] final class PeerLink(
       if candidate != null && !js.isUndefined(candidate) then
         val _ = file(PeerSignal(role, "candidate", JSON.stringify(candidate.toJSON())))
     }: js.Function1[js.Dynamic, Unit]
+    // Filed rather than only logged. These devices are a phone and a laptop on a bench; reading a console on either
+    // is awkward, and what the link is doing is the one thing that cannot be worked out from the outside.
+    peer.oniceconnectionstatechange = { (_: js.Dynamic) =>
+      report(peer, "ice")
+    }: js.Function1[js.Dynamic, Unit]
+    peer.onicegatheringstatechange = { (_: js.Dynamic) =>
+      report(peer, "gathering")
+    }: js.Function1[js.Dynamic, Unit]
     peer.onconnectionstatechange = { (_: js.Dynamic) =>
+      report(peer, "connection")
       peer.connectionState.asInstanceOf[String] match
         case "failed" | "closed" | "disconnected" =>
           onClosed()
@@ -162,6 +171,20 @@ private[fe] final class PeerLink(
       onClosed()
       if wanted then poll(pollWhileIdleMillis)
     }: js.Function1[js.Dynamic, Unit]
+
+  /** Files what the link is doing, so a pairing that fails can be read afterwards rather than watched live. */
+  private def report(peer: js.Dynamic, what: String): Unit =
+    val note = js.Dynamic.literal(
+      what = what,
+      connection = peer.connectionState,
+      ice = peer.iceConnectionState,
+      gathering = peer.iceGatheringState,
+      signalling = peer.signalingState,
+      channel = channel.map(_.readyState).getOrElse("none").asInstanceOf[js.Any],
+      offered = acted.size,
+      held = waitingCandidates.size
+    )
+    file(PeerSignal(role, "state", JSON.stringify(note)))
 
   /** Hands over everything that was waiting for a description, and lets later ones through directly. */
   private def flush(peer: js.Dynamic): Unit =
@@ -225,6 +248,7 @@ private[fe] final class PeerLink(
     connection.foreach: peer =>
       val state = peer.signalingState.asInstanceOf[String]
       signal.kind match
+        case "state" => ()
         // Only while this end is still waiting to be told: an offer arriving after the description is set belongs to
         // an attempt that has moved on.
         case "offer" if role == PeerRole.Counter && state == "stable" =>
