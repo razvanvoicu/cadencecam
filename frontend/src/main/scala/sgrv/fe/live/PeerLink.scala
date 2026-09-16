@@ -1,5 +1,6 @@
 package sgrv.fe.live
 
+import com.raquo.airstream.state.Var
 import org.scalajs.dom
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.scalajs.js
@@ -9,45 +10,37 @@ import sgrv.api.{PeerRole, PeerSignal, PeerSignals}
 import sgrv.fe.HttpService
 import zio.json.*
 
-/** A direct link between the two browsers, with the server used only to introduce them.
+/** Direct links between the counting browser and whichever browsers are watching it.
   *
-  * The counting device and the watching one are on the same network, so what they have to say to each other need not
-  * travel to a server and back at all. It goes through one while the link is being set up -- an offer, an answer and a
-  * handful of candidates, filed under the account's session -- and after that the readings go straight across.
+  * The devices are on the same network, so what they have to say to each other need not travel to a server and back. It
+  * goes through one while they are being introduced -- an offer, an answer and a handful of candidates, filed under the
+  * account's session -- and after that the readings go straight across.
   *
-  * That removes the problem the relay could not solve: a room held in one server process requires both devices to land
-  * in that same process, which nothing about scaling guarantees. Two browsers that have exchanged candidates do not
-  * care which instance introduced them, or whether it is still running.
+  * That is what removes the problem a relay could not solve: a room held in one server process requires both devices to
+  * land in that same process, which nothing about scaling guarantees. Two browsers that have exchanged candidates do
+  * not care which instance introduced them, or whether it is still running.
   */
 private[fe] object PeerLink:
 
-  /** How often to ask for what the other end has filed, while a link is being set up.
-    *
-    * Only while connecting. Once the channel opens the polling stops, so the cost is a handful of requests per pairing
-    * rather than anything standing.
-    */
+  /** How often to ask for what the other end has filed while a link is being set up. Stops once one is open. */
   val pollWhileConnectingMillis = 500
 
-  /** How often the counter looks for a watcher that has appeared since, with no link up.
-    *
-    * Slower, because nothing is waiting on it: a dashboard opening has to be noticed within a few seconds, and until
-    * one does the counter has nobody to talk to.
-    */
+  /** How often a counter looks for a watcher that has appeared since. Slower: nothing is waiting on it. */
   val pollWhileIdleMillis = 3000
 
-  /** No servers configured, deliberately.
-    *
-    * Both devices are on the same network, so the candidates each browser finds for itself are enough. A STUN server
-    * only helps across networks, and TURN means relaying through a server -- which is the thing being escaped.
+  /** No servers configured, deliberately. Both devices are on the same network, so the candidates each browser finds
+    * for itself are enough; TURN would relay through a server, which is the thing being escaped.
     */
   private[live] val configuration: js.Dynamic = js.Dynamic.literal(iceServers = js.Array())
 
-  /** The name of the one channel a link carries. Both ends must agree on it. */
   private[live] val channelLabel = "cadencecam"
 
-  /** Whether a browser can do this at all. Safari on iOS can; a browser without it falls back to the relay. */
   def available: Boolean =
     !js.isUndefined(js.Dynamic.global.RTCPeerConnection) && js.Dynamic.global.RTCPeerConnection != null
+
+  /** A name for one watching device, so its exchange can be told from another's. */
+  private[live] def newPeerId(): String =
+    f"${js.Math.floor(js.Math.random() * 0x1000000).toLong}%06x${js.Math.floor(js.Math.random() * 0x1000000).toLong}%06x"
 
 private[fe] final class PeerLink(
     http: HttpService,
@@ -58,155 +51,162 @@ private[fe] final class PeerLink(
 ):
   import PeerLink.*
 
-  private var connection: Option[js.Dynamic] = None
-  private var channel: Option[js.Dynamic] = None
+  /** What this end is doing, for a screen to show. */
+  val phase: Var[String] = Var("off")
+
+  /** How many watching devices are reading directly. Always one or none at a watcher. */
+  val watchers: Var[Int] = Var(0)
+
+  /** One connection to one other browser.
+    *
+    * A counter keeps one of these per watching device: WebRTC connects two ends, so three dashboards are three
+    * connections, and an offer, an answer and a set of candidates belong to exactly one of them.
+    */
+  private final class Link(val peerId: String):
+    var connection: Option[js.Dynamic] = None
+    var channel: Option[js.Dynamic] = None
+    var waiting = Vector.empty[js.Dynamic]
+    var remoteReady = false
+    var acted = Set.empty[String]
+
+  private var links = Map.empty[String, Link]
   private var cursor: Option[String] = None
   private var polling: Option[Int] = None
   private var wanted = false
 
-  /** What has already been acted on, so a signal read twice is not acted on twice.
-    *
-    * The window a cursor falls back to is a couple of minutes wide, so an offer can be handed over again long after it
-    * was answered. Answering it a second time renegotiates a link that was working, or builds one against a peer that
-    * has moved on.
-    */
-  private var acted = Set.empty[String]
+  /** A watcher's own name, fixed for the life of this link; a counter answers to whatever names arrive. */
+  private val mine = newPeerId()
 
-  /** Candidates that arrived before there was a description to attach them to.
-    *
-    * `setRemoteDescription` resolves a promise, and the candidates for a link usually arrive in the same batch as the
-    * offer or answer they belong to. Adding one before that promise settles is rejected -- there is no remote
-    * description yet -- so every candidate was being dropped, and a handshake that read perfectly produced a link that
-    * never came up, because neither end had an address to try.
-    */
-  private var waitingCandidates = Vector.empty[js.Dynamic]
+  def isOpen: Boolean = links.values.exists(link => link.channel.exists(_.readyState.asInstanceOf[String] == "open"))
 
-  private var remoteReady = false
-
-  def isOpen: Boolean = channel.exists(_.readyState.asInstanceOf[String] == "open")
-
-  /** Sends over the link, or reports that there is no link to send over. */
+  /** Sends to every open link. A counter says the same thing to each dashboard; a watcher has only the one. */
   def send(text: String): Boolean =
-    channel match
-      case Some(open) if isOpen =>
-        try
-          open.send(text)
-          true
-        catch case _: Throwable => false
-      case _ => false
-
-  /** What this end is doing, for a screen to show: the link is worth reporting while it is being attempted. */
-  val phase: com.raquo.airstream.state.Var[String] = com.raquo.airstream.state.Var("off")
+    val open = links.values.flatMap(_.channel).filter(_.readyState.asInstanceOf[String] == "open")
+    open.foldLeft(false): (sent, channel) =>
+      try
+        channel.send(text)
+        true
+      catch case _: Throwable => sent
 
   def connect(): Unit =
-    // Also guarded on the connection itself. Two peers on one end is the failure this had: one carries ICE and DTLS
-    // while the other answers, so the far side waits on a channel that belongs to neither.
-    if PeerLink.available && !wanted && connection.isEmpty then
+    if PeerLink.available && !wanted then
       wanted = true
       phase.set("connecting")
-      start()
+      role match
+        case PeerRole.Watcher =>
+          // The watcher offers, under its own name; a counter with nobody watching has nothing to offer.
+          val _ = start(mine)
+          poll(pollWhileConnectingMillis)
+        case PeerRole.Counter => poll(pollWhileIdleMillis)
 
   def close(): Unit =
     wanted = false
     phase.set("off")
     stopPolling()
-    channel.foreach(one =>
+    links.values.foreach(shutDown)
+    links = Map.empty
+    watchers.set(0)
+
+  private def shutDown(link: Link): Unit =
+    link.channel.foreach(one =>
       try one.close()
       catch case _: Throwable => ()
     )
-    connection.foreach(one =>
+    link.connection.foreach(one =>
       try one.close()
       catch case _: Throwable => ()
     )
-    channel = None
-    connection = None
 
-  private def start(): Unit =
-    // Never two at once. A second connection built while the first is live answers with its own fingerprint, and the
-    // far end finds itself connected to the half that has no channel.
-    connection.foreach(one =>
-      try one.close()
-      catch case _: Throwable => ()
-    )
-    val peer = js.Dynamic.newInstance(js.Dynamic.global.RTCPeerConnection)(configuration)
-    connection = Some(peer)
-    peer.onicecandidate = { (event: js.Dynamic) =>
-      val candidate = event.candidate
-      if candidate != null && !js.isUndefined(candidate) then
-        val _ = file(PeerSignal(role, "candidate", JSON.stringify(candidate.toJSON())))
-    }: js.Function1[js.Dynamic, Unit]
-    // Filed rather than only logged. These devices are a phone and a laptop on a bench; reading a console on either
-    // is awkward, and what the link is doing is the one thing that cannot be worked out from the outside.
-    peer.oniceconnectionstatechange = { (_: js.Dynamic) =>
-      report(peer, "ice")
-    }: js.Function1[js.Dynamic, Unit]
-    peer.onicegatheringstatechange = { (_: js.Dynamic) =>
-      report(peer, "gathering")
-    }: js.Function1[js.Dynamic, Unit]
-    peer.onconnectionstatechange = { (_: js.Dynamic) =>
-      report(peer, "connection")
-      peer.connectionState.asInstanceOf[String] match
-        case "failed" | "closed" | "disconnected" =>
-          phase.set("failed")
-          onClosed()
-          // Left to the caller to decide whether to try again: a watcher will, a counter waits to be found.
-          ()
-        case _ => ()
-    }: js.Function1[js.Dynamic, Unit]
+  /** The link to one other browser, built on first mention of its name and never twice.
+    *
+    * Two connections at one end is the failure this had before names existed: one carried ICE and DTLS while the other
+    * answered, and the far side attached to the half that had no channel.
+    */
+  private def start(peerId: String): Link =
+    links.get(peerId) match
+      case Some(existing) => existing
+      case None           =>
+        val link = Link(peerId)
+        val peer = js.Dynamic.newInstance(js.Dynamic.global.RTCPeerConnection)(configuration)
+        link.connection = Some(peer)
+        links = links.updated(peerId, link)
 
-    role match
-      case PeerRole.Watcher =>
-        // The watcher creates the channel and offers; a counter with nobody watching has nothing to offer.
-        val created = peer.createDataChannel(channelLabel)
-        adopt(created)
-        val _ = peer
-          .createOffer()
-          .asInstanceOf[js.Promise[js.Dynamic]]
-          .toFuture
-          .flatMap: offer =>
-            peer.setLocalDescription(offer).asInstanceOf[js.Promise[js.Any]].toFuture.map(_ => offer)
-          .map(offer => file(PeerSignal(role, "offer", JSON.stringify(offer))))
-      case PeerRole.Counter =>
-        peer.ondatachannel = { (event: js.Dynamic) => adopt(event.channel) }: js.Function1[js.Dynamic, Unit]
+        peer.onicecandidate = { (event: js.Dynamic) =>
+          val candidate = event.candidate
+          if candidate != null && !js.isUndefined(candidate) then
+            file(PeerSignal(role, "candidate", JSON.stringify(candidate.toJSON()), peerId))
+        }: js.Function1[js.Dynamic, Unit]
+        peer.oniceconnectionstatechange = { (_: js.Dynamic) => report(link, "ice") }: js.Function1[js.Dynamic, Unit]
+        peer.onicegatheringstatechange = { (_: js.Dynamic) => report(link, "gathering") }: js.Function1[
+          js.Dynamic,
+          Unit
+        ]
+        peer.onconnectionstatechange = { (_: js.Dynamic) =>
+          report(link, "connection")
+          peer.connectionState.asInstanceOf[String] match
+            case "failed" | "closed" | "disconnected" => forget(link)
+            case _                                    => ()
+        }: js.Function1[js.Dynamic, Unit]
 
-    poll(if role == PeerRole.Watcher then pollWhileConnectingMillis else pollWhileIdleMillis)
+        role match
+          case PeerRole.Watcher =>
+            adopt(link, peer.createDataChannel(channelLabel))
+            val _ = peer
+              .createOffer()
+              .asInstanceOf[js.Promise[js.Dynamic]]
+              .toFuture
+              .flatMap(offer =>
+                peer.setLocalDescription(offer).asInstanceOf[js.Promise[js.Any]].toFuture.map(_ => offer)
+              )
+              .map(offer => file(PeerSignal(role, "offer", JSON.stringify(offer), peerId)))
+          case PeerRole.Counter =>
+            peer.ondatachannel = { (event: js.Dynamic) => adopt(link, event.channel) }: js.Function1[js.Dynamic, Unit]
+        link
 
-  private def adopt(created: js.Dynamic): Unit =
-    channel = Some(created)
+  private def forget(link: Link): Unit =
+    shutDown(link)
+    links = links - link.peerId
+    watchers.set(links.values.count(one => one.channel.exists(_.readyState.asInstanceOf[String] == "open")))
+    if !isOpen then
+      phase.set(if wanted then "connecting" else "off")
+      onClosed()
+      // A counter goes back to watching for whoever appears next; a watcher tries again under the same name.
+      if wanted then poll(if role == PeerRole.Counter then pollWhileIdleMillis else pollWhileConnectingMillis)
+
+  private def adopt(link: Link, created: js.Dynamic): Unit =
+    link.channel = Some(created)
     created.onopen = { (_: js.Dynamic) =>
-      // Nothing more to introduce: the two ends are talking, so the server is left out of it from here.
-      stopPolling()
+      watchers.set(links.values.count(one => one.channel.exists(_.readyState.asInstanceOf[String] == "open")))
       phase.set("direct")
+      // A counter keeps looking: another dashboard may still want a link of its own.
+      if role == PeerRole.Watcher then stopPolling() else poll(pollWhileIdleMillis)
       onOpen()
     }: js.Function1[js.Dynamic, Unit]
-    created.onmessage = { (event: js.Dynamic) =>
-      onMessage(event.data.asInstanceOf[String])
-    }: js.Function1[js.Dynamic, Unit]
-    created.onclose = { (_: js.Dynamic) =>
-      phase.set("connecting")
-      onClosed()
-      if wanted then poll(pollWhileIdleMillis)
-    }: js.Function1[js.Dynamic, Unit]
+    created.onmessage = { (event: js.Dynamic) => onMessage(event.data.asInstanceOf[String]) }: js.Function1[
+      js.Dynamic,
+      Unit
+    ]
+    created.onclose = { (_: js.Dynamic) => forget(link) }: js.Function1[js.Dynamic, Unit]
 
-  /** Files what the link is doing, so a pairing that fails can be read afterwards rather than watched live. */
-  private def report(peer: js.Dynamic, what: String): Unit =
-    val note = js.Dynamic.literal(
-      what = what,
-      connection = peer.connectionState,
-      ice = peer.iceConnectionState,
-      gathering = peer.iceGatheringState,
-      signalling = peer.signalingState,
-      channel = channel.map(_.readyState).getOrElse("none").asInstanceOf[js.Any],
-      offered = acted.size,
-      held = waitingCandidates.size
-    )
-    file(PeerSignal(role, "state", JSON.stringify(note)))
+  /** Files what a link is doing, so a pairing that fails can be read afterwards rather than watched live. */
+  private def report(link: Link, what: String): Unit =
+    link.connection.foreach: peer =>
+      val note = js.Dynamic.literal(
+        what = what,
+        connection = peer.connectionState,
+        ice = peer.iceConnectionState,
+        gathering = peer.iceGatheringState,
+        signalling = peer.signalingState,
+        channel = link.channel.map(_.readyState).getOrElse("none").asInstanceOf[js.Any],
+        links = links.size,
+        held = link.waiting.size
+      )
+      file(PeerSignal(role, "state", JSON.stringify(note), link.peerId))
 
-  /** Hands over everything that was waiting for a description, and lets later ones through directly. */
-  private def flush(peer: js.Dynamic): Unit =
-    remoteReady = true
-    val held = waitingCandidates
-    waitingCandidates = Vector.empty
+  private def flush(link: Link, peer: js.Dynamic): Unit =
+    link.remoteReady = true
+    val held = link.waiting
+    link.waiting = Vector.empty
     held.foreach(candidate => add(peer, candidate))
 
   private def add(peer: js.Dynamic, candidate: js.Dynamic): Unit =
@@ -229,13 +229,7 @@ private[fe] final class PeerLink(
 
   private def poll(everyMillis: Int): Unit =
     stopPolling()
-    if wanted then
-      polling = Some(
-        dom.window.setInterval(
-          () => collect(),
-          everyMillis.toDouble
-        )
-      )
+    if wanted then polling = Some(dom.window.setInterval(() => collect(), everyMillis.toDouble))
 
   private def stopPolling(): Unit =
     polling.foreach(dom.window.clearInterval)
@@ -254,38 +248,41 @@ private[fe] final class PeerLink(
         case Left(_) => ()
 
   private def receive(signal: PeerSignal): Unit =
-    val fingerprint = s"${signal.kind}:${signal.body.hashCode}"
-    if acted.contains(fingerprint) then ()
-    else
-      acted = acted + fingerprint
-      apply(signal)
+    // A watcher hears only about its own exchange; a counter about each of them in turn.
+    val forMe = role == PeerRole.Counter || signal.peer == mine
+    if forMe && signal.kind != "state" then
+      val link = if role == PeerRole.Counter then start(signal.peer) else links.get(signal.peer).orNull
+      if link != null then
+        val fingerprint = s"${signal.kind}:${signal.body.hashCode}"
+        if !link.acted.contains(fingerprint) then
+          link.acted = link.acted + fingerprint
+          apply(link, signal)
 
-  private def apply(signal: PeerSignal): Unit =
-    connection.foreach: peer =>
+  private def apply(link: Link, signal: PeerSignal): Unit =
+    link.connection.foreach: peer =>
       val state = peer.signalingState.asInstanceOf[String]
       signal.kind match
-        case "state" => ()
-        // Only while this end is still waiting to be told: an offer arriving after the description is set belongs to
-        // an attempt that has moved on.
+        // Only while this end is still waiting to be told: one arriving later belongs to an attempt that has moved on.
         case "offer" if role == PeerRole.Counter && state == "stable" =>
           val description = JSON.parse(signal.body).asInstanceOf[js.Dynamic]
           val _ = peer
             .setRemoteDescription(description)
             .asInstanceOf[js.Promise[js.Any]]
             .toFuture
-            .map(_ => flush(peer))
+            .map(_ => flush(link, peer))
             .flatMap(_ => peer.createAnswer().asInstanceOf[js.Promise[js.Dynamic]].toFuture)
-            .flatMap: answer =>
+            .flatMap(answer =>
               peer.setLocalDescription(answer).asInstanceOf[js.Promise[js.Any]].toFuture.map(_ => answer)
-            .map(answer => file(PeerSignal(role, "answer", JSON.stringify(answer))))
+            )
+            .map(answer => file(PeerSignal(role, "answer", JSON.stringify(answer), link.peerId)))
         case "answer" if role == PeerRole.Watcher && state == "have-local-offer" =>
           val description = JSON.parse(signal.body).asInstanceOf[js.Dynamic]
           val _ = peer
             .setRemoteDescription(description)
             .asInstanceOf[js.Promise[js.Any]]
             .toFuture
-            .map(_ => flush(peer))
+            .map(_ => flush(link, peer))
         case "candidate" =>
           val candidate = JSON.parse(signal.body).asInstanceOf[js.Dynamic]
-          if remoteReady then add(peer, candidate) else waitingCandidates = waitingCandidates :+ candidate
+          if link.remoteReady then add(peer, candidate) else link.waiting = link.waiting :+ candidate
         case _ => ()

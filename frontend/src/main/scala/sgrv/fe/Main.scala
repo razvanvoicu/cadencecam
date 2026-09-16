@@ -805,11 +805,14 @@ object Main:
           ),
           p(
             cls := "link-state",
-            child.text <-- peer.phase.signal.map:
-              case "direct"     => "A watching device is reading directly"
-              case "connecting" => "Waiting for a watching device…"
-              case "failed"     => "No direct link; reporting through the server"
-              case _            => "Reporting through the server"
+            child.text <-- peer.phase.signal
+              .combineWith(peer.watchers.signal)
+              .map:
+                case ("direct", 1)     => "One watching device is reading directly"
+                case ("direct", many)  => s"$many watching devices are reading directly"
+                case ("connecting", _) => "Waiting for a watching device…"
+                case ("failed", _)     => "No direct link; reporting through the server"
+                case _                 => "Reporting through the server"
           ),
           Readouts.reading(repCount.signal.map(_.toString), "reps"),
           Readouts.controls(statusText, () => resetCount(), signalMargin.signal, noiseLevel.signal),

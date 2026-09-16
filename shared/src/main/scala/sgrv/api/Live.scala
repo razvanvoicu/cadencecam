@@ -137,7 +137,18 @@ object PeerRole:
   * reads it; it files it and hands it to the other end.
   */
 @jsonNoExtraFields
-final case class PeerSignal(from: PeerRole, kind: String, body: String)
+final case class PeerSignal(
+    from: PeerRole,
+    kind: String,
+    body: String,
+    /** Which watching device this belongs to.
+      *
+      * A counter may be watched by several dashboards at once, and each needs its own connection: an offer, an answer
+      * and a set of candidates belong to one pair of ends, not to the account. Without it a second dashboard consumes
+      * the first one's answer and neither link forms.
+      */
+    peer: String = ""
+)
 
 object PeerSignal:
   val Path = "/live/signal"

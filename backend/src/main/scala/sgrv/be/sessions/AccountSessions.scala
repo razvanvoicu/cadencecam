@@ -195,12 +195,23 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
     * Under the session rather than the account, so an exchange cannot outlive what it was pairing for: when the session
     * closes, the offers and candidates that belonged to it go with it.
     */
-  def postSignal(name: String, session: String, from: String, kind: String, body: String, at: Instant): Task[Unit] =
+  def postSignal(
+      name: String,
+      session: String,
+      from: String,
+      kind: String,
+      body: String,
+      peer: String,
+      at: Instant
+  ): Task[Unit] =
     val fields = Map[String, AnyRef](
       "postedAt" -> stamp(at),
       "from" -> from,
       "kind" -> kind,
-      "body" -> body
+      "body" -> body,
+      // Which watching device this belongs to. A counter may be watched by several at once, and an offer, an answer
+      // and a set of candidates belong to one pair of ends rather than to the account.
+      "peer" -> peer
     )
     GoogleFuture
       .fromApiFuture(
@@ -224,7 +235,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       mine: String,
       since: Option[Instant],
       now: Instant
-  ): Task[(Seq[(String, String)], String)] =
+  ): Task[(Seq[(String, String, String)], String)] =
     val floor = since.getOrElse(now.minusSeconds(120))
     val query = account(name)
       .collection(AccountSchema.sessions)
@@ -238,7 +249,11 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       .map: found =>
         val documents = found.getDocuments.asScala.toSeq
         val theirs = documents.filter(document => document.getString("from") != mine).map { document =>
-          (Option(document.getString("kind")).getOrElse(""), Option(document.getString("body")).getOrElse(""))
+          (
+            Option(document.getString("kind")).getOrElse(""),
+            Option(document.getString("body")).getOrElse(""),
+            Option(document.getString("peer")).getOrElse("")
+          )
         }
         // Only past what is being handed over. Taking the newest of everything -- this end's own filings included --
         // advances the cursor past the other end's answer whenever the two are written in the same instant, and that
