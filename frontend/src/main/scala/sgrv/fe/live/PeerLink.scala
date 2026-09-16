@@ -95,13 +95,20 @@ private[fe] final class PeerLink(
         catch case _: Throwable => false
       case _ => false
 
+  /** What this end is doing, for a screen to show: the link is worth reporting while it is being attempted. */
+  val phase: com.raquo.airstream.state.Var[String] = com.raquo.airstream.state.Var("off")
+
   def connect(): Unit =
-    if !wanted && PeerLink.available then
+    // Also guarded on the connection itself. Two peers on one end is the failure this had: one carries ICE and DTLS
+    // while the other answers, so the far side waits on a channel that belongs to neither.
+    if PeerLink.available && !wanted && connection.isEmpty then
       wanted = true
+      phase.set("connecting")
       start()
 
   def close(): Unit =
     wanted = false
+    phase.set("off")
     stopPolling()
     channel.foreach(one =>
       try one.close()
@@ -115,6 +122,12 @@ private[fe] final class PeerLink(
     connection = None
 
   private def start(): Unit =
+    // Never two at once. A second connection built while the first is live answers with its own fingerprint, and the
+    // far end finds itself connected to the half that has no channel.
+    connection.foreach(one =>
+      try one.close()
+      catch case _: Throwable => ()
+    )
     val peer = js.Dynamic.newInstance(js.Dynamic.global.RTCPeerConnection)(configuration)
     connection = Some(peer)
     peer.onicecandidate = { (event: js.Dynamic) =>
@@ -134,6 +147,7 @@ private[fe] final class PeerLink(
       report(peer, "connection")
       peer.connectionState.asInstanceOf[String] match
         case "failed" | "closed" | "disconnected" =>
+          phase.set("failed")
           onClosed()
           // Left to the caller to decide whether to try again: a watcher will, a counter waits to be found.
           ()
@@ -162,12 +176,14 @@ private[fe] final class PeerLink(
     created.onopen = { (_: js.Dynamic) =>
       // Nothing more to introduce: the two ends are talking, so the server is left out of it from here.
       stopPolling()
+      phase.set("direct")
       onOpen()
     }: js.Function1[js.Dynamic, Unit]
     created.onmessage = { (event: js.Dynamic) =>
       onMessage(event.data.asInstanceOf[String])
     }: js.Function1[js.Dynamic, Unit]
     created.onclose = { (_: js.Dynamic) =>
+      phase.set("connecting")
       onClosed()
       if wanted then poll(pollWhileIdleMillis)
     }: js.Function1[js.Dynamic, Unit]

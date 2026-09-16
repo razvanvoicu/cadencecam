@@ -1088,3 +1088,11 @@ button,
   font-size: 0.85rem;
   cursor: pointer;
 }
+
+/* What the direct link is doing. Small and quiet: it matters while it is being established and never afterwards. */
+.link-state {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-align: center;
+}

@@ -362,6 +362,14 @@ object Main:
           child <-- menuOpen.signal.map:
             case false => emptyNode
             case true  => div(cls := "menu-backdrop", onClick --> (_ => menuOpen.set(false))),
+          p(
+            cls := "link-state",
+            child.text <-- peer.phase.signal.map:
+              case "direct"     => "Reading directly from the counting device"
+              case "connecting" => "Linking to the counting device…"
+              case "failed"     => "No direct link; reading through the server"
+              case _            => "Reading through the server"
+          ),
           Readouts.reading(reps.map(_.toString), "reps"),
           Readouts.controls(status, () => ask(LiveCommand.Reset)),
           Readouts.reading(Readouts.perMinute(pace), "reps/min"),
@@ -794,6 +802,14 @@ object Main:
                   p(cls := "error", message),
                   button(cls := "back-button", typ := "button", "Try again", onClick --> (_ => startCamera()))
                 )
+          ),
+          p(
+            cls := "link-state",
+            child.text <-- peer.phase.signal.map:
+              case "direct"     => "A watching device is reading directly"
+              case "connecting" => "Waiting for a watching device…"
+              case "failed"     => "No direct link; reporting through the server"
+              case _            => "Reporting through the server"
           ),
           Readouts.reading(repCount.signal.map(_.toString), "reps"),
           Readouts.controls(statusText, () => resetCount(), signalMargin.signal, noiseLevel.signal),
