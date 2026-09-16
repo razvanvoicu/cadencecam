@@ -430,14 +430,6 @@ private[fe] object BenchView:
             .combineWith(connected.signal)
             .map((text, live) => if live then text else "Connecting…")
         ),
-        p(
-          cls := "link-state",
-          child.text <-- peer.phase.signal.map:
-            case "direct"     => "Reading the count directly from the counting device"
-            case "connecting" => "Linking to the counting device…"
-            case "failed"     => "No direct link; reading through the server"
-            case _            => "Reading through the server"
-        ),
         div(
           cls := "bench-progress",
           children <-- stats.map: figures =>

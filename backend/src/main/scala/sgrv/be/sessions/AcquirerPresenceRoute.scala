@@ -31,7 +31,10 @@ object AcquirerPresenceRoute extends BackendPlugin:
         ZIO
           .serviceWithZIO[Firestore](firestore => AccountSessions.active(firestore, user.email))
           .catchAll: error =>
-            ZIO.logWarningCause("Could not read the account's session; reporting nothing counting", Cause.fail(error)) *>
+            ZIO.logWarningCause(
+              "Could not read the account's session; reporting nothing counting",
+              Cause.fail(error)
+            ) *>
               ZIO.none
           .map(active => noStore(Response.json(AcquirerPresence(active.isDefined).toJson)))
       case _ => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
