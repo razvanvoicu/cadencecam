@@ -28,7 +28,7 @@ private[sessions] object AccountKey:
         ZIO.logErrorCause(s"Could not read $variable", Cause.fail(error)).as(None)
       .flatMap:
         case Some(secret) if secret.trim.nonEmpty => ZIO.succeed(Some(name(email, secret.trim)))
-        case _ =>
+        case _                                    =>
           ZIO
             .logWarning(s"$variable is not configured; counting sessions cannot be opened")
             .as(None)

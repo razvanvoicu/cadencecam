@@ -74,22 +74,6 @@ object Main:
     lazy val http: HttpService = HttpService(() => handleUnauthorized())
     lazy val worker: SessionRefreshWorker = SessionRefreshWorker(http)
 
-    val initialSession = http.get("/me").flatMap(sessionState)
-    initialSession.onComplete:
-      case Success(MeResult(session @ SignedIn(email, _), countingSessionId)) =>
-        stateStore.update: current =>
-          current.copy(
-            user = session,
-            // A different account signing in on this device starts at the role picker rather than inheriting
-            // whichever role the previous account left behind.
-            screen = if stateStore.restoredUserEmail.contains(email) then current.screen else Screen.Selection,
-            countingSessionId = countingSessionId
-          )
-        refreshStateStore.update(_.copy(expired = false))
-        worker.enable()
-      case Success(MeResult(session, _)) => updateUser(session)
-      case Failure(error)                => updateUser(AuthenticationFailed(errorMessage(error)))
-
     // Asked once, at the start: Chrome on Android keeps the handset's model out of its user agent, and the only way
     // to learn it is an explicit request that answers later.
     Device.learn()
@@ -104,11 +88,35 @@ object Main:
       */
     val takeoverPending = Var(false)
 
+    /** Whether this account already has a device counting, as far as the last answer from the server goes.
+      *
+      * Decides what a fresh login is shown. With nothing counting there is nothing to choose between -- the account
+      * needs a counter before a dashboard has anything to watch -- so the device goes straight to counting. With a
+      * counter already running, the choice is real and worth making deliberately.
+      */
+    val accountCounting = Var(false)
+
     /** Becomes the acquirer, asking first if the account already has one.
       *
       * The check can fail -- an offline device, a signed-out session -- and a failure here must not stand between
       * someone and their camera, so it proceeds. The relay still guarantees there is only one.
       */
+    /** Where a fresh login lands: counting if the account has no counter, the choice of roles if it has.
+      *
+      * The check can fail -- an offline device, a session that has just expired -- and a failure must not stand between
+      * someone and their camera, so it counts. Taking the role is what settles it either way.
+      */
+    def startByPresence(): Unit =
+      http
+        .get(AcquirerPresence.Path)
+        .flatMap(response => response.text())
+        .map(_.fromJson[AcquirerPresence])
+        .onComplete:
+          case Success(Right(AcquirerPresence(true))) => accountCounting.set(true)
+          case _                                      =>
+            accountCounting.set(false)
+            show(Screen.Acquirer)
+
     def acquireRole(): Unit =
       http
         .get(AcquirerPresence.Path)
@@ -117,6 +125,25 @@ object Main:
         .onComplete:
           case Success(Right(AcquirerPresence(true))) => takeoverPending.set(true)
           case _                                      => show(Screen.Acquirer)
+
+    val initialSession = http.get("/me").flatMap(sessionState)
+    initialSession.onComplete:
+      case Success(MeResult(session @ SignedIn(email, _), countingSessionId)) =>
+        stateStore.update: current =>
+          current.copy(
+            user = session,
+            // A different account signing in on this device starts at the role picker rather than inheriting
+            // whichever role the previous account left behind.
+            screen = if stateStore.restoredUserEmail.contains(email) then current.screen else Screen.Selection,
+            countingSessionId = countingSessionId
+          )
+        refreshStateStore.update(_.copy(expired = false))
+        worker.enable()
+        // Only for a login that has just landed on the picker: a device returning to the role it already held keeps
+        // it, and must not be sent to the camera because some other device happens to be free.
+        if !stateStore.restoredUserEmail.contains(email) then startByPresence()
+      case Success(MeResult(session, _)) => updateUser(session)
+      case Failure(error)                => updateUser(AuthenticationFailed(errorMessage(error)))
 
     def openAbout(): Unit =
       val signedIn = stateStore.current.user match
@@ -191,15 +218,30 @@ object Main:
       div(
         cls := "selection",
         h1(cls := "welcome", s"Hello, $displayName!"),
-        p(cls := "selection-prompt", "Choose what this device does in the next session."),
+        p(
+          cls := "selection-prompt",
+          child.text <-- accountCounting.signal.map: counting =>
+            if counting then "Another device is counting for this account. Choose what this one does."
+            else "Choose what this device does in the next session."
+        ),
         div(
           cls := "mode-choices",
-          roleChoice(
-            "mode-acquirer",
-            Screen.Acquirer,
-            "Counter",
-            "Aim this device's camera at the movement and let it count the reps."
-          ),
+          child <-- accountCounting.signal.map: counting =>
+            if counting then
+              roleChoice(
+                "mode-acquirer",
+                Screen.Acquirer,
+                "Take over counting",
+                "Count on this device instead. The device counting now returns to its home screen and releases its camera."
+              )
+            else
+              roleChoice(
+                "mode-acquirer",
+                Screen.Acquirer,
+                "Counter",
+                "Aim this device's camera at the movement and let it count the reps."
+              )
+          ,
           roleChoice(
             "mode-dashboard",
             Screen.Dashboard,
