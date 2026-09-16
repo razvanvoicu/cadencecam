@@ -760,9 +760,16 @@ object Main:
             cls := "camera",
             frame,
             child <-- cameraState.signal.map:
-              case CameraState.Idle                 => emptyNode
-              case CameraState.Starting             => p(cls := "camera-status", "Waiting for camera permission…")
-              case CameraState.Streaming(_, _)      => emptyNode
+              case CameraState.Idle     => emptyNode
+              case CameraState.Starting => p(cls := "camera-status", "Waiting for camera permission…")
+              // One bullet per device reading this counter directly, where the resolution used to be: a counter may
+              // be read by several at once, and each is its own connection rather than a shared one.
+              case CameraState.Streaming(_, _) =>
+                div(
+                  cls := "watcher-dots",
+                  children <-- peer.watchers.signal.map: many =>
+                    Seq.fill(many)(span(cls := "watcher-dot", aria.hidden := true))
+                )
               case CameraState.Unavailable(message) =>
                 div(
                   cls := "camera-status",

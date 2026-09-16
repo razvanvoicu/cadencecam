@@ -1089,3 +1089,21 @@ button,
   cursor: pointer;
 }
 
+/* One bullet per device reading this counter directly, where the capture resolution used to be. Orange against the
+   green trace and the blue and purple of the quadrant markers, so it reads as its own thing. */
+.watcher-dots {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.35rem;
+  /* The height the resolution line had, so the picture above does not shift as devices come and go. */
+  min-height: 1.2em;
+  pointer-events: none;
+}
+
+.watcher-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #f97316;
+}
