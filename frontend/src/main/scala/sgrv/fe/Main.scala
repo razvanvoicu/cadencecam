@@ -665,20 +665,12 @@ object Main:
             state.reading.foreach(mark)
           case Left(details) => dom.console.warn(s"Ignoring an unreadable update: $details")
 
-      /** Notes a reading in the pace window, but only when it carries reps the window has not seen.
-        *
-        * Readings arrive about once a second whether or not anything was counted, so recording every one would make the
-        * window a second of history rather than ten reps of it. A count that has gone backwards is a reset at the other
-        * end, and the reps before it belong to a set that is over.
-        */
       def mark(latest: LiveReading): Unit =
         window.update: marks =>
-          marks.lastOption match
-            case Some(previous) if latest.reps < previous.reps  => Vector.empty
-            case Some(previous) if latest.reps == previous.reps => marks
-            case _                                              =>
-              val noted = Effort.RepMark(latest.reps, latest.lastRepSeconds, latest.cadenceSum)
-              (marks :+ noted).takeRight(Effort.PaceWindowReps)
+          Effort.noting(
+            marks,
+            Effort.RepMark(latest.reps, latest.lastRepSeconds, latest.cadenceSum)
+          )
 
       /** The direct link to the counting device, which the readings travel over.
         *

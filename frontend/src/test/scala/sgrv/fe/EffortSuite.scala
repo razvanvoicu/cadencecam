@@ -1,7 +1,8 @@
 package sgrv.fe
 
 import munit.FunSuite
-import sgrv.api.{AccountSettings, CountsBy, ExerciseType}
+import sgrv.api.{AccountSettings, CountsBy, ExerciseType, LiveReading}
+import zio.json.*
 
 class EffortSuite extends FunSuite:
 
@@ -61,7 +62,11 @@ class EffortSuite extends FunSuite:
     assertEqualsDouble(faster - steady, 20.0, 1e-9)
 
   private def marks(gapSeconds: Double, count: Int, from: Double = 0.0) =
-    (0 until count).map(i => Effort.RepMark(i + 1, from + i * gapSeconds, (i * 1.0 / gapSeconds))).toVector
+    (0 until count)
+      .map(i => Effort.RepMark(i + 1, from + i * gapSeconds, i * 1.0 / gapSeconds))
+      .toVector
+
+  private def mark(reps: Int, at: Double, sum: Double = 0.0) = Effort.RepMark(reps, at, sum)
 
   test("the pace is the last ten reps, not the whole session"):
     // Eleven marks a second and a half apart: ten reps over fifteen seconds is forty a minute.
@@ -72,26 +77,26 @@ class EffortSuite extends FunSuite:
   test("the pace answers within a rep of the cadence changing"):
     // A window that has just taken in one much faster rep must move, which is what "instantaneous" has to mean.
     val steady = marks(2.0, Effort.PaceWindowReps)
-    val quickened = steady.dropRight(1) :+ Effort.RepMark(steady.last.reps, steady.last.atSeconds - 1.0, 0.0)
+    val quickened = steady.dropRight(1) :+ mark(steady.last.reps, steady.last.atSeconds - 1.0)
 
     assert(Effort.pace(quickened).get > Effort.pace(steady).get * 1.05)
 
   test("a window is read from its ends, so a batch of reps counted at once is not a slow set"):
     // The detector confirms its first run all at once, so one reading can carry five reps. Counting marks rather
     // than reps would report a fifth of the true pace at the start of every set.
-    val batched = Vector(Effort.RepMark(5, 0.0, 0.0), Effort.RepMark(6, 2.0, 0.0), Effort.RepMark(10, 8.0, 0.0))
+    val batched = Vector(mark(5, 0.0), mark(6, 2.0), mark(10, 8.0))
 
     assertEqualsDouble(Effort.pace(batched).get, (10 - 5) * 60.0 / 8.0, 1e-9)
 
   test("a window with nothing to measure over reports nothing rather than a number"):
     assertEquals(Effort.pace(Vector.empty), None)
-    assertEquals(Effort.pace(Vector(Effort.RepMark(1, 3.0, 0.0))), None)
+    assertEquals(Effort.pace(Vector(mark(1, 3.0))), None)
     // Two marks at the same instant: a span of zero is not a pace of infinity.
-    assertEquals(Effort.pace(Vector(Effort.RepMark(1, 3.0, 0.0), Effort.RepMark(2, 3.0, 0.0))), None)
+    assertEquals(Effort.pace(Vector(mark(1, 3.0), mark(2, 3.0))), None)
 
   test("calories are paced over the same window as the reps"):
     val settings = exercise(CountsBy.Frequency, 1.0)
-    val window = Vector(Effort.RepMark(1, 0.0, 0.0), Effort.RepMark(11, 15.0, 8.0))
+    val window = Vector(mark(1, 0.0), mark(11, 15.0, sum = 8.0))
     val burned = Effort.calories(11, 8.0, settings) - Effort.calories(1, 0.0, settings)
 
     assertEqualsDouble(Effort.burn(window, settings).get, burned * 60.0 / 15.0, 1e-9)
@@ -157,6 +162,46 @@ class EffortSuite extends FunSuite:
 
   test("a factor survives a round trip of nudges"):
     assertEqualsDouble(Effort.nudged(Effort.nudged(1.25, up = true), up = false), 1.25, 1e-9)
+
+  test("a reading from a counter that predates rep times still arrives, without one"):
+    // Why this matters: the two ends are the same bundle, but not at the same moment. A phone left counting across a
+    // deploy sends the older shape, and because the newer field has a default the reading parses perfectly -- so reps
+    // and calories carry on while everything measured over rep times quietly has nothing to measure over.
+    val fromAnOlderBuild =
+      """{"reps":57,"repsPerMinute":32.0,"status":"Counting","device":"Pixel","counting":true,""" +
+        """"elapsedSeconds":110.0,"cadenceSum":29.4}"""
+
+    val parsed = fromAnOlderBuild.fromJson[LiveReading]
+
+    assertEquals(parsed.map(_.reps), Right(57))
+    assertEquals(parsed.map(_.cadenceSum), Right(29.4))
+    assertEquals(parsed.map(_.lastRepSeconds), Right(0.0))
+
+  test("the window takes a reading only when it carries reps it has not seen"):
+    // Readings arrive about once a second whether or not anything was counted. Recording each would make this a
+    // second of history rather than ten reps of it, and the pace would then be measured over the wrong thing.
+    val once = Effort.noting(Vector.empty, mark(5, 4.0))
+    val again = Effort.noting(once, mark(5, 4.0))
+    val moved = Effort.noting(again, mark(6, 6.0))
+
+    assertEquals(once.size, 1)
+    assertEquals(again, once)
+    assertEquals(moved.size, 2)
+
+  test("the window holds eleven marks and no more"):
+    val filled = (1 to 40).foldLeft(Vector.empty[Effort.RepMark]): (w, i) =>
+      Effort.noting(w, mark(i, i * 2.0))
+
+    assertEquals(filled.size, Effort.PaceWindowReps)
+    assertEquals(filled.last.reps, 40)
+    assertEquals(filled.head.reps, 40 - Effort.PaceWindowReps + 1)
+
+  test("a count that has gone backwards starts the window over"):
+    // A reset at the counting end. The reps before it belong to a set that is over, and a pace measured across the
+    // gap would be a negative number of reps over a positive stretch of time.
+    val before = (1 to 6).foldLeft(Vector.empty[Effort.RepMark])((w, i) => Effort.noting(w, mark(i, i * 2.0)))
+
+    assertEquals(Effort.noting(before, mark(1, 0.0)), Vector.empty)
 
   test("a total is grouped, so its leading digit is not read as something standing on its own"):
     assertEquals(Effort.grouped(1236.0), "1,236")

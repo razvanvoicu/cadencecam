@@ -59,6 +59,18 @@ private[fe] object Effort:
     */
   final case class RepMark(reps: Int, atSeconds: Double, cadenceSum: Double)
 
+  /** Notes a reading in the window, when it carries reps the window has not seen.
+    *
+    * Readings arrive about once a second whether or not anything was counted, so recording every one would make this a
+    * second of history rather than ten reps of it. A count that has gone backwards is a reset at the other end, and
+    * what came before it belongs to a set that is over.
+    */
+  def noting(window: Vector[RepMark], mark: RepMark): Vector[RepMark] =
+    window.lastOption match
+      case Some(previous) if mark.reps < previous.reps  => Vector.empty
+      case Some(previous) if mark.reps == previous.reps => window
+      case _                                            => (window :+ mark).takeRight(PaceWindowReps)
+
   /** The pace over the window, in reps per minute, or nothing until it holds two marks a moment apart. */
   def pace(window: Seq[RepMark]): Option[Double] = rateOver(window, mark => mark.reps.toDouble)
 
@@ -75,11 +87,11 @@ private[fe] object Effort:
     for
       first <- window.headOption
       last <- window.lastOption
-      span = last.atSeconds - first.atSeconds
-      if span > 0
+      covered = last.atSeconds - first.atSeconds
+      if covered > 0
       grown = of(last) - of(first)
       if grown.isFinite
-    yield grown * 60.0 / span
+    yield grown * 60.0 / covered
 
   /** A rate per minute over a whole session, or nothing while there is no clock to divide by. */
   def perMinute(total: Double, elapsedMinutes: Double): Option[Double] =
