@@ -252,25 +252,19 @@ object Main:
         )
       )
 
-    /** The About link on its own, for the login screen: there is no account to log out of yet. */
-    def aboutOnly: Element =
+    /** The login screen's menu: the same sheet the app's other screens open, minus everything that needs an account.
+      *
+      * A menu rather than the bare About link it replaces, because the two documents belong in front of someone who has
+      * not signed in yet -- that is the moment they are deciding whether to -- and a row of links across the top of a
+      * phone is not where anybody would look for them.
+      */
+    def guestMenu: Element =
+      val open = Var(false)
       div(
         cls := "user-actions",
-        a(cls := "about-link", href := "/about", onClick.preventDefault --> (_ => openAbout()), "About")
-      )
-
-    /** The two documents, linked wherever someone might want to read them before or after signing in.
-      *
-      * A new tab every time, and deliberately: they are static pages of their own, and following one in place would
-      * unload a running camera and whatever it had counted. `noopener` because the opened page has no business reaching
-      * back into this one.
-      */
-    def documentLinks: Element =
-      div(
-        cls := "document-links",
-        a(cls := "document-link", href := "/privacy.html", target := "_blank", rel := "noopener noreferrer", "Privacy"),
-        span(cls := "document-separator", "·"),
-        a(cls := "document-link", href := "/tos.html", target := "_blank", rel := "noopener noreferrer", "Terms")
+        Menu.toggle(open),
+        Menu.backdrop(open),
+        Menu.sheet(open, Menu.item(open, "About", () => openAbout()), Menu.documentItems(open))
       )
 
     def roleChoice(modifier: String, screen: Screen, title: String, description: String): Element =
@@ -702,8 +696,7 @@ object Main:
       def ask(instruction: LiveCommand): Unit =
         val _ = peer.send(instruction.toJson)
 
-      def menuItem(label: String, act: () => Unit): Element =
-        button(cls := "menu-item", typ := "button", label, onClick --> (_ => { menuOpen.set(false); act() }))
+      def menuItem(label: String, act: () => Unit): Element = Menu.item(menuOpen, label, act)
 
       /** One of the two cards: a headline figure, and the two smaller ones that qualify it.
         *
@@ -767,20 +760,10 @@ object Main:
             div(
               cls := "dashboard-clock",
               span(cls := "clock-value", child.text <-- elapsedSeconds.map(Effort.elapsedClock)),
-              button(
-                cls := "menu-button",
-                typ := "button",
-                aria.label := "Menu",
-                aria.expanded <-- menuOpen.signal,
-                "\u2630",
-                onClick --> (_ => menuOpen.update(open => !open))
-              )
+              Menu.toggle(menuOpen)
             )
           ),
-          // A backdrop so a tap anywhere else dismisses the menu, which is what a phone expects.
-          child <-- menuOpen.signal.map:
-            case false => emptyNode
-            case true  => div(cls := "menu-backdrop", onClick --> (_ => menuOpen.set(false))),
+          Menu.backdrop(menuOpen),
           div(
             cls := "figure-cards",
             card("reps-card", "Reps", reps.map(_.toString), repsPerMinute, repsAtBoundary),
@@ -798,12 +781,12 @@ object Main:
             ),
             p(cls := "lock-state", child.text <-- status)
           ),
-          div(
-            cls := "acquirer-actions",
-            cls("open") <-- menuOpen.signal,
+          Menu.sheet(
+            menuOpen,
             menuItem("Settings", () => settingsOpen.set(true)),
             menuItem("Capture signal trace", () => ask(LiveCommand.CaptureTrace())),
             menuItem("About", () => openAbout()),
+            Menu.documentItems(menuOpen),
             menuItem("Back", () => show(Screen.Selection)),
             menuItem("Logout", () => logout())
           )
@@ -1170,9 +1153,7 @@ object Main:
           }
         )
 
-      /** One entry in the menu. Choosing closes it, so the picture is not left obscured. */
-      def menuItem(label: String, act: () => Unit): Element =
-        button(cls := "menu-item", typ := "button", label, onClick --> (_ => { menuOpen.set(false); act() }))
+      def menuItem(label: String, act: () => Unit): Element = Menu.item(menuOpen, label, act)
 
       div(
         cls := "acquirer-view",
@@ -1206,19 +1187,9 @@ object Main:
           div(
             cls := "acquirer-header",
             h1(cls := "screen-title", "Counter"),
-            button(
-              cls := "menu-button",
-              typ := "button",
-              aria.label := "Menu",
-              aria.expanded <-- menuOpen.signal,
-              "\u2630",
-              onClick --> (_ => menuOpen.update(open => !open))
-            )
+            Menu.toggle(menuOpen)
           ),
-          // A backdrop so a tap anywhere else dismisses the menu, which is what a phone expects.
-          child <-- menuOpen.signal.map:
-            case false => emptyNode
-            case true  => div(cls := "menu-backdrop", onClick --> (_ => menuOpen.set(false))),
+          Menu.backdrop(menuOpen),
           div(
             cls := "camera",
             frame,
@@ -1242,9 +1213,8 @@ object Main:
           ),
           Readouts.reading(repCount.signal.map(_.toString), "reps"),
           Readouts.controls(statusText, () => resetCount(), signalMargin.signal),
-          div(
-            cls := "acquirer-actions",
-            cls("open") <-- menuOpen.signal,
+          Menu.sheet(
+            menuOpen,
             // Shown only when there is somewhere to switch to.
             child <-- devices.signal
               .combineWith(currentDevice.signal)
@@ -1289,6 +1259,7 @@ object Main:
             ,
             menuItem("Settings", () => settingsOpen.set(true)),
             menuItem("About", () => openAbout()),
+            Menu.documentItems(menuOpen),
             menuItem("Back", () => show(Screen.Selection)),
             menuItem("Logout", () => logout())
           )
@@ -1382,7 +1353,7 @@ object Main:
             case Shell.SignedIn(_, _)                => userActions
             // Reachable before signing in as well. Which build a browser is running is exactly the thing one wants
             // to check on a device that will not behave, and being signed out is no reason not to be able to look.
-            case Shell.Login | Shell.AuthenticationFailed(_) => aboutOnly
+            case Shell.Login | Shell.AuthenticationFailed(_) => guestMenu
             case _                                           => emptyNode,
         div(
           cls := "content",
@@ -1398,8 +1369,7 @@ object Main:
                 // Before authentication has been attempted, offer the only thing an anonymous visitor can do.
                 div(
                   cls := "home",
-                  a(cls := "login-button", href := "/auth/login", "Login with Google"),
-                  documentLinks
+                  a(cls := "login-button", href := "/auth/login", "Login with Google")
                 )
               case Shell.AuthenticationFailed(message) =>
                 div(cls := "home", p(cls := "error", s"Authentication failed: $message"))
@@ -1475,8 +1445,7 @@ object Main:
                   // locally, and waiting on a request to say who is signed in would be backwards.
                   account
                     .fold(emptyNode)(email => dl(cls := "about-details about-account", dt("Signed in as"), dd(email))),
-                  content,
-                  documentLinks
+                  content
                 )
               )
         ,

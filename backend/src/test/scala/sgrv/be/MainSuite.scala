@@ -3,6 +3,7 @@ package sgrv.be
 import com.google.gson.JsonParser
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets.UTF_8
+import sgrv.api.Documents
 import zio.{Runtime, Task, Unsafe, ZIO}
 import zio.http.{Header, MediaType, Request, Status, URL}
 
@@ -172,7 +173,7 @@ class MainSuite extends munit.FunSuite:
     // neither may depend on the app's bundle having loaded. A reference to it here would be the whole point missed.
     val routes = run(ZIO.succeed(Main.staticRoutes(testStaticCacheControl)))
 
-    Seq("privacy.html", "tos.html").foreach: fileName =>
+    Documents.All.foreach: fileName =>
       val response = run(ZIO.scoped(routes.runZIO(Request.get(URL.decode(s"/$fileName").toOption.get))))
       val document = run(response.body.asString)
 
@@ -189,8 +190,8 @@ class MainSuite extends munit.FunSuite:
     def served(fileName: String) =
       run(ZIO.scoped(routes.runZIO(Request.get(URL.decode(s"/$fileName").toOption.get))).flatMap(_.body.asString))
 
-    assert(served("privacy.html").contains("/tos.html"))
-    assert(served("tos.html").contains("/privacy.html"))
+    assert(served(Documents.Privacy).contains(Documents.path(Documents.Terms)))
+    assert(served(Documents.Terms).contains(Documents.path(Documents.Privacy)))
 
   test("packages and serves the favicon as a cached Microsoft icon"):
     val packaged = resourceBytes("web/favicon.ico")

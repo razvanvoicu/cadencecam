@@ -97,6 +97,7 @@ button,
   min-height: 2.75rem;
 }
 
+
 .about-link,
 .logout-link {
   color: var(--fg);
@@ -980,7 +981,7 @@ button,
   text-align: center;
 }
 
-.acquirer-actions {
+.menu-sheet {
   position: absolute;
   z-index: 1000;
   top: 3.5rem;
@@ -996,11 +997,14 @@ button,
   box-shadow: 0 0.5rem 1.5rem var(--shadow);
 }
 
-.acquirer-actions.open {
+.menu-sheet.open {
   display: flex;
 }
 
 .menu-item {
+  /* Buttons and links share this class: an entry that opens a page and one that runs an action are the same thing
+     to whoever is reading the menu, so the underline that marks one of them as a link has to go. */
+  text-decoration: none;
   padding: 0.7rem 0.9rem;
   background: transparent;
   border: 0;
@@ -1034,7 +1038,7 @@ button,
   }
 }
 
-.acquirer-actions .back-button {
+.menu-sheet .back-button {
   align-self: auto;
 }
 
