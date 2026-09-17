@@ -1518,3 +1518,23 @@ button,
   border-color: #262e31;
   color: inherit;
 }
+
+/* The privacy and terms links. Quiet by design: they belong on the login screen and in the About panel because
+   people look for them there, not because they are somewhere anyone should be sent. */
+.document-links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+}
+
+.document-link {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.document-separator {
+  color: var(--muted);
+  font-size: 0.85rem;
+}

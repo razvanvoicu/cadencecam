@@ -259,6 +259,20 @@ object Main:
         a(cls := "about-link", href := "/about", onClick.preventDefault --> (_ => openAbout()), "About")
       )
 
+    /** The two documents, linked wherever someone might want to read them before or after signing in.
+      *
+      * A new tab every time, and deliberately: they are static pages of their own, and following one in place would
+      * unload a running camera and whatever it had counted. `noopener` because the opened page has no business reaching
+      * back into this one.
+      */
+    def documentLinks: Element =
+      div(
+        cls := "document-links",
+        a(cls := "document-link", href := "/privacy.html", target := "_blank", rel := "noopener noreferrer", "Privacy"),
+        span(cls := "document-separator", "·"),
+        a(cls := "document-link", href := "/tos.html", target := "_blank", rel := "noopener noreferrer", "Terms")
+      )
+
     def roleChoice(modifier: String, screen: Screen, title: String, description: String): Element =
       button(
         cls := s"mode-button $modifier",
@@ -1382,7 +1396,11 @@ object Main:
               case Shell.Blank => emptyNode
               case Shell.Login =>
                 // Before authentication has been attempted, offer the only thing an anonymous visitor can do.
-                div(cls := "home", a(cls := "login-button", href := "/auth/login", "Login with Google"))
+                div(
+                  cls := "home",
+                  a(cls := "login-button", href := "/auth/login", "Login with Google"),
+                  documentLinks
+                )
               case Shell.AuthenticationFailed(message) =>
                 div(cls := "home", p(cls := "error", s"Authentication failed: $message"))
               case Shell.SignedIn(displayName, screen) => signedInView(displayName, screen)
@@ -1457,7 +1475,8 @@ object Main:
                   // locally, and waiting on a request to say who is signed in would be backwards.
                   account
                     .fold(emptyNode)(email => dl(cls := "about-details about-account", dt("Signed in as"), dd(email))),
-                  content
+                  content,
+                  documentLinks
                 )
               )
         ,

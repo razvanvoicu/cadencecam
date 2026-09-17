@@ -167,6 +167,31 @@ class MainSuite extends munit.FunSuite:
     assertEquals(index.headers.get(Header.CacheControl), Some(Header.CacheControl.NoCache))
     assertEquals(productionResponse.headers.get(Header.CacheControl), Some(Header.CacheControl.MaxAge(86400)))
 
+  test("serves the privacy policy and the terms as standalone HTML"):
+    // Standalone matters: both are read by people deciding whether to sign in, and by reviewers who never will, so
+    // neither may depend on the app's bundle having loaded. A reference to it here would be the whole point missed.
+    val routes = run(ZIO.succeed(Main.staticRoutes(testStaticCacheControl)))
+
+    Seq("privacy.html", "tos.html").foreach: fileName =>
+      val response = run(ZIO.scoped(routes.runZIO(Request.get(URL.decode(s"/$fileName").toOption.get))))
+      val document = run(response.body.asString)
+
+      assertEquals(response.status, Status.Ok, fileName)
+      assertEquals(response.headers.get(Header.ContentType), Some(Header.ContentType(MediaType.text.html)), fileName)
+      assertEquals(response.headers.get(Header.CacheControl), Some(testStaticCacheControl), fileName)
+      assert(!document.contains("main.js"), s"$fileName must not pull in the app's bundle")
+      assert(!document.contains("style.css"), s"$fileName must not pull in the app's stylesheet")
+      assert(!document.contains("<script"), s"$fileName must not carry a script")
+      assert(document.contains("raz@raz.sg"), s"$fileName must say where to write")
+
+  test("the two documents point at each other, so either can be reached from the other"):
+    val routes = run(ZIO.succeed(Main.staticRoutes(testStaticCacheControl)))
+    def served(fileName: String) =
+      run(ZIO.scoped(routes.runZIO(Request.get(URL.decode(s"/$fileName").toOption.get))).flatMap(_.body.asString))
+
+    assert(served("privacy.html").contains("/tos.html"))
+    assert(served("tos.html").contains("/privacy.html"))
+
   test("packages and serves the favicon as a cached Microsoft icon"):
     val packaged = resourceBytes("web/favicon.ico")
     val routes = run(ZIO.succeed(Main.staticRoutes(testStaticCacheControl)))
