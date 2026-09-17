@@ -54,8 +54,8 @@ private[fe] object Effort:
   /** What the total reaches at the next boundary if the pace so far is kept.
     *
     * Proportional to the average rather than built from the pace of the last few reps: those two are the same
-    * arithmetic when the rate used is the average, and using the recent pace instead would make the projection lurch
-    * by hundreds every time someone paused for breath.
+    * arithmetic when the rate used is the average, and using the recent pace instead would make the projection lurch by
+    * hundreds every time someone paused for breath.
     */
   def atBoundary(total: Double, elapsedMinutes: Double): Option[Double] =
     Option.when(elapsedMinutes * 60.0 >= MinimumProjectionSeconds && total.isFinite):
@@ -63,15 +63,16 @@ private[fe] object Effort:
 
   /** Energy, by whichever of the two measures the chosen exercise is counted by.
     *
-    * Both are the account's own formula applied literally, weight in kilograms and the exercise's factor as set. What
-    * they produce is not a calorie in any standard sense until the factor has been calibrated against something, which
-    * is the whole reason the factor is a setting and starts at one.
+    * Both are the account's own formula applied literally, weight in kilograms and the exercise's factor as set, over
+    * the hundred that puts a factor on a readable scale. What they produce is a kilocalorie only in so far as the
+    * factor has been calibrated to make it one, which is the whole reason the factor is a setting.
     */
   def calories(reps: Int, cadenceSum: Double, settings: AccountSettings): Double =
     val measure = settings.countsBy match
       case CountsBy.RepCount  => reps.toDouble
       case CountsBy.Frequency => cadenceSum
-    if !measure.isFinite then 0.0 else measure * settings.weightKilograms * settings.factor
+    if !measure.isFinite then 0.0
+    else measure * settings.weightKilograms * settings.factor / AccountSettings.Divisor
 
   /** A whole number with its thousands grouped, which is what stops "1 236" reading as a stray digit beside a total. */
   def grouped(value: Double): String =
@@ -82,6 +83,27 @@ private[fe] object Effort:
 
   /** A rate, to one decimal: it moves with every rep, and a second decimal would only ever be watched changing. */
   def rate(value: Double): String = f"$value%.1f"
+
+  /** A factor, to two decimals: the scale it now lives on runs from about half to two, and a step is a twentieth. */
+  def factorText(value: Double): String = f"$value%.2f"
+
+  /** A factor moved one step, kept on the step grid and never taken to zero.
+    *
+    * Snapped to the grid rather than added to, so a factor typed as 1.23 becomes 1.25 rather than 1.28 and a column of
+    * them stays comparable. Zero is excluded because it makes every figure on the dashboard zero for ever, so a value
+    * below one step can only move up.
+    *
+    * Counted in whole hundredths rather than in the factor itself. A twentieth is not exact in binary: 1.25 / 0.05 is
+    * 24.999999999999996, so a floor taken on that quotient leaves the value where it was -- and "more" did nothing at
+    * all at 0.15, which is a control that looks broken because it is.
+    */
+  def nudged(value: Double, up: Boolean): Double =
+    val step = math.max(1L, math.round(AccountSettings.FactorStep * 100))
+    if !value.isFinite || value <= 0 then step / 100.0
+    else
+      val hundredths = math.round(value * 100)
+      val moved = if up then (hundredths / step + 1) * step else (hundredths - 1) / step * step
+      math.max(step, moved) / 100.0
 
   /** What a figure reads as before there is anything to say. An em dash rather than a zero, which would be a claim. */
   val Absent = "—"

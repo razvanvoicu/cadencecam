@@ -30,9 +30,23 @@ class AccountSettingsSuite extends munit.FunSuite:
     assertEquals(AccountSettingsRoute.parse(settings.toJson), Right(settings))
 
   test("an account that has never said anything has settings, and they are the ones it started with"):
-    assertEquals(AccountSettings.Initial.defaultFactor, 1.0)
     assertEquals(AccountSettings.Initial.countsBy, CountsBy.RepCount)
     assert(AccountSettings.Initial.weightKilograms > 0)
+
+  test("the starting factor lands a half-hour set in the range a half-hour set actually costs"):
+    // Calibrated rather than left at one, which reported the formula's raw product -- some tens of thousands of
+    // "calories" for half an hour. The reference session: 1000 reps in 31.5 minutes at 98 kg, which a stair machine
+    // at top sustainable effort puts at eleven to thirteen METs, so 594 to 702 kcal.
+    val cadenceSum = 999 / (31.5 * 60 / 1000.0)
+    val reported = cadenceSum * 98.0 * AccountSettings.Initial.defaultFactor / AccountSettings.Divisor
+
+    assert(reported > 550 && reported < 750, f"the reference session reports $reported%.0f kcal")
+
+  test("a factor sits on a scale a person can read and step through"):
+    // The hundred in the formula is what puts it there. Without it the same calibration is 0.0125: correct, and
+    // impossible to nudge or compare.
+    assert(AccountSettings.Initial.defaultFactor >= 0.5 && AccountSettings.Initial.defaultFactor <= 2.0)
+    assertEqualsDouble(AccountSettings.FactorStep, 0.05, 1e-9)
 
   test("a weight or a factor of zero is refused rather than stored"):
     // Either of them makes every figure on the dashboard zero for ever, which reads as the counter being broken

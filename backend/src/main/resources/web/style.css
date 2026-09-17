@@ -1404,10 +1404,9 @@ button,
   cursor: pointer;
 }
 
-.stepper-value {
-  min-width: 3.2rem;
-  font-size: 1.3rem;
-  font-variant-numeric: tabular-nums;
+.settings-factor {
+  width: 5rem;
+  font-size: 1.2rem;
   text-align: center;
 }
 

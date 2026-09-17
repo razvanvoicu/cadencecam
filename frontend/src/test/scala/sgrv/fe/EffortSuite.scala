@@ -64,17 +64,29 @@ class EffortSuite extends FunSuite:
     assertEquals(Effort.atBoundary(2.0, 4.0 / 60.0), None)
     assert(Effort.atBoundary(2.0, Effort.MinimumProjectionSeconds / 60.0).isDefined)
 
-  test("counting by reps multiplies the count by the weight and the factor"):
-    assertEqualsDouble(Effort.calories(100, 999.0, exercise(CountsBy.RepCount, 1.5)), 100 * 80.0 * 1.5, 1e-9)
+  test("counting by reps multiplies the count by the weight and the factor, over the hundred"):
+    assertEqualsDouble(Effort.calories(100, 999.0, exercise(CountsBy.RepCount, 1.5)), 100 * 80.0 * 1.5 / 100, 1e-9)
 
   test("counting by frequency uses the accumulator instead, and ignores the count"):
-    assertEqualsDouble(Effort.calories(100, 40.0, exercise(CountsBy.Frequency, 2.0)), 40.0 * 80.0 * 2.0, 1e-9)
+    assertEqualsDouble(Effort.calories(100, 40.0, exercise(CountsBy.Frequency, 2.0)), 40.0 * 80.0 * 2.0 / 100, 1e-9)
+
+  test("the reference session lands where the research put it"):
+    // 1000 reps in 31.5 minutes at 98 kg, which a stair machine at top sustainable effort puts at about twelve METs
+    // -- 648 kcal. The starting factor is what makes the frequency formula say so.
+    val settings = AccountSettings(
+      weightKilograms = 98.0,
+      exercises = Seq(ExerciseType("stairs", "Stair climber", None, CountsBy.Frequency)),
+      selected = Some("stairs")
+    )
+    val cadenceSum = 999 / (31.5 * 60 / 1000.0)
+
+    assertEqualsDouble(Effort.calories(1000, cadenceSum, settings), 648.0, 10.0)
 
   test("an account that has chosen no exercise counts reps at its default factor"):
     val settings = AccountSettings(weightKilograms = 80.0, defaultFactor = 3.0)
 
     assertEquals(settings.countsBy, CountsBy.RepCount)
-    assertEqualsDouble(Effort.calories(10, 5.0, settings), 10 * 80.0 * 3.0, 1e-9)
+    assertEqualsDouble(Effort.calories(10, 5.0, settings), 10 * 80.0 * 3.0 / 100, 1e-9)
 
   test("a selection naming an exercise that is not there falls back rather than reporting nothing"):
     val settings = exercise(CountsBy.Frequency, 2.0).copy(selected = Some("gone"))
@@ -82,6 +94,37 @@ class EffortSuite extends FunSuite:
     assertEquals(settings.selectedExercise, None)
     assertEquals(settings.countsBy, CountsBy.RepCount)
     assertEqualsDouble(settings.factor, 1.0, 1e-9)
+
+  test("a factor is shown to two decimals, which is the scale it lives on"):
+    assertEquals(Effort.factorText(1.25), "1.25")
+    assertEquals(Effort.factorText(0.5), "0.50")
+    assertEquals(Effort.factorText(2.0), "2.00")
+
+  test("a tap moves a factor one step, and onto the step grid"):
+    assertEqualsDouble(Effort.nudged(1.25, up = true), 1.30, 1e-9)
+    assertEqualsDouble(Effort.nudged(1.25, up = false), 1.20, 1e-9)
+    // A typed value between steps is snapped rather than offset, so a column of factors stays comparable.
+    assertEqualsDouble(Effort.nudged(1.23, up = true), 1.25, 1e-9)
+    assertEqualsDouble(Effort.nudged(1.23, up = false), 1.20, 1e-9)
+
+  test("nudging a factor down never reaches zero, which would make every figure zero for ever"):
+    val floored = Iterator.iterate(1.0)(Effort.nudged(_, up = false)).drop(100).next()
+
+    assert(floored > 0, s"a factor nudged down a hundred times reached $floored")
+
+  test("every step of the grid moves in the direction it was asked to"):
+    // A grid of hundredths against a step that is not exact in binary: 1.25 / 0.05 is 24.999999999999996, and a floor
+    // taken on that would make "more" mean "no change" at exactly the value the app starts on.
+    var value = 0.05
+    while value < 3.0 do
+      val up = Effort.nudged(value, up = true)
+      val down = Effort.nudged(value, up = false)
+      assert(up > value, f"$value%.2f did not go up: $up%.4f")
+      assert(down < value || value <= 0.05, f"$value%.2f did not go down: $down%.4f")
+      value = up
+
+  test("a factor survives a round trip of nudges"):
+    assertEqualsDouble(Effort.nudged(Effort.nudged(1.25, up = true), up = false), 1.25, 1e-9)
 
   test("a total is grouped, so its leading digit is not read as something standing on its own"):
     assertEquals(Effort.grouped(1236.0), "1,236")

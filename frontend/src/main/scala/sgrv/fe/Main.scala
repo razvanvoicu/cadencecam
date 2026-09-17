@@ -371,20 +371,25 @@ object Main:
         * Rejecting rather than clamping: a half-typed "0.", or a field someone has just emptied to retype, is not a
         * statement that their weight is nothing, and writing one into the draft would make the field fight the typing.
         */
-      def numberField(value: Double, decimals: Int, onValue: Double => Unit, extra: Modifier[HtmlElement]*): Element =
+      def numberField(shown: String, onValue: Double => Unit, extra: Modifier[HtmlElement]*): Element =
         input(
           cls := "settings-number",
           typ := "number",
           stepAttr := "any",
           minAttr := "0",
-          defaultValue := (if decimals == 0 then math.round(value).toString else f"$value%.1f"),
+          defaultValue := shown,
           onInput.mapToValue --> { entered =>
             entered.trim.toDoubleOption.filter(parsed => parsed > 0 && parsed.isFinite).foreach(onValue)
           },
           extra
         )
 
-      def stepper(value: Signal[Double], onChange: Double => Unit, current: () => Double): Element =
+      /** A factor, typed or nudged.
+        *
+        * Typed, because a factor calibrated against a real machine is a number like 0.0125 and no amount of tapping
+        * gets there from one. Nudged proportionally, because the same control also has to serve a factor of two.
+        */
+      def factorField(value: Signal[Double], onChange: Double => Unit, current: () => Double): Element =
         div(
           cls := "settings-stepper",
           button(
@@ -392,16 +397,21 @@ object Main:
             typ := "button",
             aria.label := "Less",
             "–",
-            // A tenth at a time, and never through zero: a factor of zero makes every figure on the dashboard zero.
-            onClick --> (_ => onChange(math.max(0.1, math.round((current() - 0.1) * 10) / 10.0)))
+            onClick --> (_ => onChange(Effort.nudged(current(), up = false)))
           ),
-          span(cls := "stepper-value", child.text <-- value.map(factor => f"$factor%.1f")),
+          // Redrawn on the value the buttons put there, so a nudge is reflected in the field while typing into it is
+          // not fought by a redraw of what is being typed.
+          child <-- value
+            .map(Effort.factorText)
+            .distinct
+            .map: shown =>
+              numberField(shown, onChange, cls := "settings-factor"),
           button(
             cls := "stepper-button",
             typ := "button",
             aria.label := "More",
             "+",
-            onClick --> (_ => onChange(math.round((current() + 0.1) * 10) / 10.0))
+            onClick --> (_ => onChange(Effort.nudged(current(), up = true)))
           )
         )
 
@@ -461,7 +471,7 @@ object Main:
           div(
             cls := "exercise-field",
             span(cls := "field-label", "Factor"),
-            stepper(updates.map(_.factor), factor => edit(_.copy(factor = factor)), () => now().factor)
+            factorField(updates.map(_.factor), factor => edit(_.copy(factor = factor)), () => now().factor)
           ),
           button(
             cls := "exercise-remove",
@@ -514,8 +524,7 @@ object Main:
                     .distinct
                     .map: unit =>
                       numberField(
-                        WeightUnit.show(draft.now().weightKilograms, unit),
-                        1,
+                        f"${WeightUnit.show(draft.now().weightKilograms, unit)}%.1f",
                         entered => draft.update(_.copy(weightKilograms = WeightUnit.toKilograms(entered, unit)))
                       ),
                   div(
@@ -536,7 +545,7 @@ object Main:
               div(
                 cls := "settings-field",
                 span(cls := "field-label", "Default factor"),
-                stepper(
+                factorField(
                   draft.signal.map(_.defaultFactor),
                   factor => draft.update(_.copy(defaultFactor = factor)),
                   () => draft.now().defaultFactor
@@ -715,7 +724,7 @@ object Main:
                   val how = settings.countsBy match
                     case CountsBy.RepCount  => "rep count"
                     case CountsBy.Frequency => "frequency"
-                  f"factor ${settings.factor}%.2g · $how"
+                  s"factor ${Effort.factorText(settings.factor)} · $how"
               )
             ),
             div(

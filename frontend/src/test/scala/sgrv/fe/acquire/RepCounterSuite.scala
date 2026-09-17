@@ -299,8 +299,8 @@ class RepCounterSuite extends FunSuite:
     // and would then be reporting the threshold rather than the signal.
     val floor = DetectorSettings().prominenceFloor
 
-    assertEqualsDouble(SignalStrength.StrongAbove * floor, 12.5, 0.001)
-    assertEqualsDouble(SignalStrength.AdequateAbove * floor, 7.5, 0.001)
+    assertEqualsDouble(SignalStrength.StrongAbove * floor, 8.0, 0.001)
+    assertEqualsDouble(SignalStrength.AdequateAbove * floor, 6.0, 0.001)
 
   test("a rep of ordinary size still clears the raised floor"):
     val reading = run(rotating(1.0, 60.0, amplitude = 6.0))

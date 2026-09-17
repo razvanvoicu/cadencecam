@@ -5,13 +5,20 @@ import munit.FunSuite
 class SignalStrengthSuite extends FunSuite:
 
   test("the bands are set where counting was measured to degrade"):
-    // Real figures from four phones running a movement of known cadence. Every disc reading counted every rep;
-    // every bar reading lost reps and was slow to find the cadence.
-    val discs = Seq(4.41, 3.39, 4.70, 4.17)
-    val bars = Seq(1.42, 1.76, 1.96, 1.54)
+    // From replaying the detector over 452 recorded bench tests. Above a margin of two the count lands within two reps
+    // of the truth 93% of the time and does not improve with a stronger signal; below one and a half it is 57%.
+    val counted = Seq(2.05, 2.72, 3.11, 4.69, 8.4, 12.0)
+    val marginal = Seq(1.54, 1.76, 1.96)
+    val failing = Seq(1.42, 1.20, 0.9)
 
-    assert(discs.forall(SignalStrength.of(_) == SignalStrength.Strong), "a movement that counted must read strong")
-    assert(bars.forall(SignalStrength.of(_) != SignalStrength.Strong), "a movement that lost reps must not read strong")
+    assert(counted.forall(SignalStrength.of(_) == SignalStrength.Strong), "a signal that counted must read strong")
+    assert(marginal.forall(SignalStrength.of(_) == SignalStrength.Adequate), "the thin band between the two")
+    assert(failing.forall(SignalStrength.of(_) == SignalStrength.Weak), "a signal that lost reps must read weak")
+
+  test("a stronger signal is not a better one, past the point where counting works"):
+    // The rate is flat from two upwards, so there is nothing above that the badge could usefully distinguish -- and
+    // a gauge that kept promising improvement would invite moving the camera closer for no gain.
+    assertEquals(SignalStrength.of(2.1), SignalStrength.of(15.0))
 
   test("the boundaries belong to the better band"):
     assertEquals(SignalStrength.of(SignalStrength.StrongAbove), SignalStrength.Strong)

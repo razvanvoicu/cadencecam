@@ -9,11 +9,11 @@ import zio.json.{DeriveJsonCodec, JsonCodec, jsonNoExtraFields}
   * are going round. Counting frequency says the opposite, and the exercise decides which is the honest one.
   */
 enum CountsBy:
-  /** `Reps x Weight x Factor`. */
+  /** `Reps x Weight x Factor / 100`. */
   case RepCount
 
   /** Every rep from the second adds `1 / (its time - the previous rep's time)` to a running sum, and that sum takes the
-    * place of the rep count: `Sum x Weight x Factor`. A rep performed twice as fast is worth twice as much.
+    * place of the rep count: `Sum x Weight x Factor / 100`. A rep performed twice as fast is worth twice as much.
     */
   case Frequency
 
@@ -57,7 +57,7 @@ final case class ExerciseType(
     name: String,
     equipment: Option[String] = None,
     countsBy: CountsBy = CountsBy.RepCount,
-    /** What a rep, or a unit of cadence, is worth for this exercise. */
+    /** What a rep, or a unit of cadence, is worth for this exercise, in hundredths. See [[AccountSettings.Divisor]]. */
     factor: Double = AccountSettings.InitialFactor
 )
 
@@ -77,9 +77,9 @@ final case class AccountSettings(
     /** What a new exercise starts at until it is given its own. */
     defaultFactor: Double = AccountSettings.InitialFactor,
     exercises: Seq[ExerciseType] = Seq.empty,
-    /** Which exercise the dashboard is reporting. `None` while the account has none, or while the one it named has
-      * been deleted -- in which case the dashboard falls back to counting reps at the default factor rather than
-      * showing nothing.
+    /** Which exercise the dashboard is reporting. `None` while the account has none, or while the one it named has been
+      * deleted -- in which case the dashboard falls back to counting reps at the default factor rather than showing
+      * nothing.
       */
     selected: Option[String] = None
 ):
@@ -91,10 +91,30 @@ final case class AccountSettings(
   def factor: Double = selectedExercise.fold(defaultFactor)(_.factor)
 
 object AccountSettings:
-  /** One, as asked: a factor of one means the formula reports its own raw product, and every exercise is calibrated
-    * against that rather than against a number someone guessed at.
+  /** The hundred that puts a factor on a scale a person can work with.
+    *
+    * Without it a calibrated factor is a number like 0.0125: correct, unreadable, impossible to nudge, and three
+    * leading zeros away from telling anyone whether one exercise is harder than another. Dividing the formula by a
+    * hundred moves every factor into roughly half to two, where 1.25 and 1.30 are visibly different numbers and a step
+    * of 0.05 is a real adjustment.
     */
-  val InitialFactor = 1.0
+  val Divisor = 100.0
+
+  /** Calibrated against a real machine rather than left at a placeholder.
+    *
+    * For the frequency formula: a half-hour set at top sustainable effort is about twelve METs, which for a 98 kg
+    * exerciser is 648 kcal over 31.5 minutes. A thousand reps at that pace accumulate 529 reciprocal seconds, so the
+    * factor is 648 x 100 / (529 x 98).
+    *
+    * It is a starting point and not a measurement of anyone. The honest way to set it is to run a session, compare this
+    * figure with what a heart-rate monitor says, and scale.
+    */
+  val InitialFactor = 1.25
+
+  /** How far a tap moves a factor. A twentieth, over a range of about half to two: fine enough to calibrate against a
+    * heart-rate monitor, coarse enough that the number keeps two decimal places and stays legible.
+    */
+  val FactorStep = 0.05
 
   /** A starting weight rather than a claim about anyone. Nothing can be calculated from zero, and an account that has
     * not been through settings yet should still show a figure that moves.
