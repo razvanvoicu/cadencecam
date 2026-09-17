@@ -30,7 +30,17 @@ object CountingSessionProgress extends BackendPlugin:
     Routes(Method.POST / "countingSession" / "reps" -> handler((request: Request) => apply(request)))
 
   private sealed trait ProgressFailure
-  private case object NoSession extends ProgressFailure
+
+  /** Nobody is signed in. The only failure here that may answer 401: the frontend's HTTP boundary reads that status as
+    * the session having gone, and ends it everywhere in the app. A report that arrives a moment after the account
+    * stopped counting is not that, and answering 401 to it signed people out of a perfectly good login.
+    */
+  private case object Unauthenticated extends ProgressFailure
+
+  /** Signed in, but the account has nothing counting: it was never opened, or it has since closed. Either way this
+    * device is no longer the counter and should stand down, which is what a conflict says.
+    */
+  private case object NotCounting extends ProgressFailure
   private case object Displaced extends ProgressFailure
   private final case class Malformed(details: String) extends ProgressFailure
   private final case class WriteFailed(cause: Throwable) extends ProgressFailure
@@ -43,15 +53,15 @@ object CountingSessionProgress extends BackendPlugin:
       // The session belongs to the account, not to this browser: which record is written comes from who is signed in.
       email <- ZIO.serviceWithZIO[RequestContext] {
         case RequestContext.Authenticated(_, user) => ZIO.succeed(user.email)
-        case _                                     => ZIO.fail(NoSession)
+        case _                                     => ZIO.fail(Unauthenticated)
       }
       // Which browser session is reporting, so a device that has been taken over can be told.
-      mine <- ZIO.fromOption(CountingSessionListener.documentId(request)).orElseFail(NoSession)
+      mine <- ZIO.fromOption(CountingSessionListener.documentId(request)).orElseFail(NotCounting)
       body <- request.body.asString.mapError(error => Malformed(describe(error)))
       reps <- ZIO.fromEither(CountingSessionProgress.reps(body)).mapError(Malformed.apply)
       firestore <- ZIO.service[Firestore]
       located <- AccountSessions.active(firestore, email).mapError(WriteFailed.apply)
-      (account, session) <- ZIO.fromOption(located).orElseFail(NoSession)
+      (account, session) <- ZIO.fromOption(located).orElseFail(NotCounting)
       keeper <- AccountSessions.store(firestore)
       now <- Clock.instant
       state <- keeper.state(account, now).mapError(WriteFailed.apply)
@@ -74,11 +84,11 @@ object CountingSessionProgress extends BackendPlugin:
 
   private def failureResponse(failure: ProgressFailure): ZIO[Any, Nothing, Response] =
     failure match
-      case NoSession => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
+      case Unauthenticated => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
       // Conflict rather than an error: the report was well formed and the device was entitled to send it a moment
       // ago. It simply no longer holds the role, and this is how it learns.
-      case Displaced          => ZIO.succeed(noStore(Response.status(Status.Conflict)))
-      case Malformed(details) =>
+      case NotCounting | Displaced => ZIO.succeed(noStore(Response.status(Status.Conflict)))
+      case Malformed(details)      =>
         ZIO.logWarning(s"Rejected a counting-session progress report: $details") *>
           ZIO.succeed(noStore(Response.status(Status.BadRequest)))
       case WriteFailed(error) =>

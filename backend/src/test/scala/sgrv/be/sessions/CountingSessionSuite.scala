@@ -1,10 +1,10 @@
 package sgrv.be.sessions
 
-import sgrv.api.{CountingSession, RepProgress, SignalTrace}
+import sgrv.api.{AcquirerPresence, CountingSession, RepProgress, SignalTrace}
 import sgrv.be.auth.SessionUser
 import sgrv.be.core.{CapabilityRegistry, CurrentUserContributors, PluginStatus, RequestContext, RouteDiscovery}
 import zio.*
-import zio.http.{Cookie, Request, URL}
+import zio.http.{Cookie, Method, Path, Request, URL}
 import zio.json.*
 import zio.json.ast.Json
 
@@ -90,6 +90,15 @@ class CountingSessionSuite extends munit.FunSuite:
       case PluginStatus.Skipped(AcquirerPresenceRoute.id, _, missing) => missing.map(_.id).toSet
 
     assertEquals(skipped, Some(Set("firestore", "session-store")))
+
+  test("the account's session is both asked about and taken on the same path"):
+    // Taking the role is what opens the account's session, and it used to be done by the relay's socket. When the
+    // relay went, nothing opened a session at all: every later request that needed one found none, which reached the
+    // frontend as an unauthorised report and signed people out about ten seconds after they had signed in.
+    val patterns = AcquirerPresenceRoute.routes.routes.map(_.routePattern)
+
+    assert(patterns.exists(_.matches(Method.GET, Path(AcquirerPresence.Path))), "asked about")
+    assert(patterns.exists(_.matches(Method.POST, Path(AcquirerPresence.Path))), "taken")
 
   test("the trace route is discovered on the classpath too"):
     // Same reason: a plugin can compile perfectly and still never be reached by the scan.

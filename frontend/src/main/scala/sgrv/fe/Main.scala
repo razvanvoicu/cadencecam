@@ -126,6 +126,27 @@ object Main:
           case Success(Right(AcquirerPresence(true))) => takeoverPending.set(true)
           case _                                      => show(Screen.Acquirer)
 
+    /** Claims the counter's role, which is also what opens the account's session when it has none.
+      *
+      * Sent as the camera view appears rather than when the role is chosen, because the view is arrived at by more than
+      * one route -- a fresh login going straight to counting, a deliberate takeover, a device returning to the role it
+      * already held -- and every one of them means this device is the counter from here.
+      *
+      * A failure is left as a warning. Nothing downstream can be faked without a session, and the device finds out soon
+      * enough: its first progress report is refused and it stands down, which is the truthful outcome.
+      */
+    def takeCounterRole(): Unit =
+      val init = new dom.RequestInit:
+        method = dom.HttpMethod.POST
+      http
+        .send(AcquirerPresence.Path, init)
+        .onComplete:
+          case Success(response) if response.ok => ()
+          case Success(response)                =>
+            dom.console.warn(s"Could not take the counting role: HTTP ${response.status}")
+          case Failure(error) =>
+            dom.console.warn(s"Could not take the counting role: ${errorMessage(error)}")
+
     val initialSession = http.get("/me").flatMap(sessionState)
     initialSession.onComplete:
       case Success(MeResult(session @ SignedIn(email, _), countingSessionId)) =>
@@ -724,6 +745,9 @@ object Main:
           // Waits to be found: a watching device offers, this end answers. Until one appears there is nothing to
           // pair with, which is why the counter only listens.
           peer.connect()
+          // Before anything is reported: a report carries a count into the account's session, and until the role is
+          // taken there is no session to carry it into.
+          takeCounterRole()
           startCamera()
           // Reads the total rather than being pushed it, so a tick reports whatever is current at the moment it
           // fires and no report can be left describing a count that has since moved on.
