@@ -69,10 +69,3 @@ private[fe] object Readouts:
         )
       )
     )
-
-  /** A pace, in whole reps or calories per minute.
-    *
-    * Rounded rather than given to a decimal: the figure moves with every rep, and a trailing digit that changes
-    * constantly reads as noise rather than as information.
-    */
-  def perMinute(value: Signal[Double]): Signal[String] = value.map(rate => math.round(rate).toString)

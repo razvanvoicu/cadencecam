@@ -26,7 +26,20 @@ final case class LiveReading(
       * first fifteen seconds of every set the count is legitimately zero while the detector works out what it is
       * looking at, and colouring that as a discrepancy paints the normal opening of every set as a fault.
       */
-    counting: Boolean = false
+    counting: Boolean = false,
+    /** How long the set has been running, measured from its first counted rep rather than from the camera opening.
+      *
+      * The fifteen seconds a detector spends working out what it is looking at are not exercise, and a rate divided by
+      * a clock that included them would report the app's warm-up as the exerciser's slow start.
+      */
+    elapsedSeconds: Double = 0.0,
+    /** The frequency accumulator: every rep from the second adds the reciprocal of the gap since the one before it.
+      *
+      * Sent rather than the calories it feeds, because the counter has no business knowing what anyone weighs. This is
+      * the part only the counting device can measure -- when each rep happened -- and the account's own settings turn
+      * it into energy at the other end.
+      */
+    cadenceSum: Double = 0.0
 )
 
 object LiveReading:

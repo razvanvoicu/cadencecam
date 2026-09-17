@@ -12,10 +12,6 @@
   --accent: #7aa2ff;
   --backdrop: rgb(0 0 0 / 65%);
   --shadow: rgb(0 0 0 / 45%);
-  /* The calorie panel keeps its colour in both themes: it is a deliberate field rather than part of the surface,
-     and a panel that inverted with the theme would read as a different element rather than the same one. */
-  --calorie-bg: #16233a;
-  /* The card's inner padding, named so the calorie panel can cancel exactly it and reach the frame's edge. */
   --screen-padding: 1.25rem;
 }
 
@@ -382,9 +378,10 @@ button,
   line-height: 1.4;
 }
 
-/* The dashboard occupies the same frame as the acquirer, and for the same reason: it is one screen on a phone,
-   sized to the viewport rather than to its contents. Both are columns of rows, so a landscape arrangement later is a
-   change of direction here rather than a different layout. */
+/* The dashboard has a palette of its own, and deliberately not the one the rest of the app is painted in.
+   It is read from across a room rather than held at arm's length, usually on a tablet propped against something, and
+   what it has to do at that distance is separate two figures at a glance. Amber is the movement and cyan the energy;
+   everything else on the screen is greyscale so that neither has anything to compete with. */
 .dashboard-view {
   display: flex;
   flex-direction: column;
@@ -392,39 +389,190 @@ button,
   height: 100dvh;
   min-height: 0;
   box-sizing: border-box;
+
+  --dash-bg: #0b0d0f;
+  --dash-panel: #111517;
+  --dash-line: #1d2326;
+  --dash-fg: #e9edec;
+  --dash-muted: #798887;
+  --dash-reps: #e8b04b;
+  --dash-calories: #5ec8d8;
 }
 
 .screen.dashboard {
   display: flex;
   flex-direction: column;
   flex: 1;
-  /* So the panel below can be told to take what is left, rather than being pushed past the bottom. */
+  gap: 1.25rem;
+  /* So the cards below can be told to take what is left, rather than being pushed past the bottom. */
+  min-height: 0;
+  background: var(--dash-bg);
+  border-color: var(--dash-line);
+  color: var(--dash-fg);
+}
+
+.dashboard-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.dashboard-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.dashboard .screen-title {
+  font-size: 1.05rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  /* A long exercise name must not push the clock off the screen. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-basis {
+  color: var(--dash-muted);
+  font-size: 0.8rem;
+}
+
+.dashboard-clock {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.clock-value {
+  color: var(--dash-fg);
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Two cards, side by side when there is width for them and stacked when there is not. The dashboard runs on a tablet
+   that gets turned over, so this is the one place the layout genuinely has to answer to the shape of the screen --
+   and auto-fit does it from the available width rather than from a guess about which device is in use. */
+.figure-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+  flex: 1;
   min-height: 0;
 }
 
-/* Takes the height the readouts above leave it, and the full width of the frame. */
-.calorie-panel {
+/* Stacked when the tablet is stood up, from the orientation itself rather than from a width threshold: a portrait
+   tablet is wide enough for two columns and should still not use them, because two tall narrow cards give a figure
+   less room than one wide short one does. */
+@media (orientation: portrait) {
+  .figure-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.figure-card {
   display: flex;
   flex-direction: column;
-  /* Spread rather than bunched: the panel is deliberately tall, and two readings centred together in it would
-     leave most of the height empty above and below them. */
-  justify-content: space-evenly;
+  min-height: 0;
+  /* So the figure inside can be sized against the card it has to fit in rather than against the window. A calorie
+     total is routinely six characters wide -- reps times a body weight times a factor -- and a numeral sized from
+     the viewport alone ran off the side of its own card at exactly the moment the figure got interesting. */
+  container-type: inline-size;
+  padding: 1.4rem 1.5rem;
+  background: var(--dash-panel);
+  border: 1px solid var(--dash-line);
+  border-radius: 18px;
+}
+
+.figure-label {
+  color: var(--dash-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+/* Sized from the viewport rather than in rem: the whole point of this screen is to be legible from further away than
+   a phone is held, and on a tablet in landscape that is a much larger number than any fixed size would give.
+   Centred in whatever the label and the footnotes leave, rather than sitting under the label with the rest of the
+   card empty beneath it -- which is what a card stretched to the height of a tablet does to a number of its own size. */
+.figure-value {
+  display: flex;
+  align-items: center;
   flex: 1;
   min-height: 0;
-  /* Full width of the frame rather than of the card's contents: the horizontal padding is cancelled so the panel
-     reaches both edges, and the bottom one too so it finishes flush with the card. */
-  margin: 0.5rem calc(-1 * var(--screen-padding)) calc(-1 * var(--screen-padding));
-  padding: 2vh;
-  box-sizing: border-box;
-  /* Square at the sides, and matching the card's own curve where it meets the corners. */
-  border-radius: 0 0 11px 11px;
-  background: var(--calorie-bg);
-  /* Re-scoped rather than overridden per element: the readouts inside are the same builders used on the light
-     surface above, and they read these tokens. Setting them here recolours the whole panel's contents at once, and
-     keeps working if either theme changes. */
-  --fg: #eef2ff;
-  --muted: #9fb3d9;
-  color: var(--fg);
+  font-size: clamp(4rem, 17vmin, 13rem);
+  /* Second, so a browser that does not know container units keeps the line above. */
+  font-size: min(clamp(4rem, 18vmin, 13rem), 20cqi);
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  line-height: 1.02;
+}
+
+.reps-card .figure-value {
+  color: var(--dash-reps);
+}
+
+.calories-card .figure-value {
+  color: var(--dash-calories);
+}
+
+.figure-footnotes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  /* At the foot of the card, so the two cards' footnotes sit on one line however tall the numerals above them have
+     been drawn. */
+  padding-top: 1.2rem;
+}
+
+.figure-footnote {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.figure-footnote + .figure-footnote {
+  padding-left: 1rem;
+  border-left: 1px solid var(--dash-line);
+}
+
+.footnote-label {
+  color: var(--dash-muted);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.footnote-value {
+  font-size: clamp(1.35rem, 3.5vmin, 2.4rem);
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboard-status {
+  display: grid;
+  grid-template-columns: var(--control-size) minmax(0, 1fr) var(--control-size);
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.dashboard-status .lock-state {
+  margin: 0;
+  color: var(--dash-muted);
+  text-align: center;
+}
+
+.dashboard .reset-button {
+  border-color: var(--dash-line);
+  color: var(--dash-fg);
 }
 
 /* The bench is the one screen built for a desktop in landscape: the canvas is what a camera on a tripod frames, so
@@ -1083,4 +1231,291 @@ button,
   height: 0.5rem;
   border-radius: 50%;
   background: #f97316;
+}
+
+
+/* The settings panel, over whatever screen asked for it. It borrows the dashboard's palette rather than the app's:
+   these are the numbers that dashboard reports, and reading them against a different background than the screen they
+   govern makes two things out of one. */
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom));
+  background: var(--backdrop);
+  box-sizing: border-box;
+}
+
+.settings-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: min(60rem, 100%);
+  max-height: 100%;
+  padding: 1.5rem;
+  box-sizing: border-box;
+  background: #0b0d0f;
+  border: 1px solid #1d2326;
+  border-radius: 18px;
+  box-shadow: 0 18px 48px var(--shadow);
+  color: #e9edec;
+
+  --dash-panel: #111517;
+  --dash-line: #1d2326;
+  --dash-muted: #798887;
+  --dash-accent: #e8b04b;
+}
+
+.settings-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.settings-note {
+  flex: 1;
+  color: var(--dash-muted);
+  font-size: 0.8rem;
+}
+
+/* The one part that scrolls. The header and the actions stay put, so Save is reachable without hunting for it at the
+   bottom of a long list of exercises. */
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 1.25rem;
+  background: var(--dash-panel);
+  border: 1px solid var(--dash-line);
+  border-radius: 14px;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.field-label {
+  color: var(--dash-muted);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.field-hint {
+  margin: 0;
+  color: var(--dash-muted);
+  font-size: 0.8rem;
+}
+
+.settings-weight {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.settings-number,
+.settings-text {
+  min-height: 2.9rem;
+  padding: 0 0.9rem;
+  background: #0b0d0f;
+  border: 1px solid #262e31;
+  border-radius: 10px;
+  color: inherit;
+  font: inherit;
+}
+
+.settings-number {
+  width: 7rem;
+  font-size: 1.3rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-text {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.settings-equipment {
+  font-size: 0.85rem;
+}
+
+.settings-toggle {
+  display: flex;
+  overflow: hidden;
+  background: #0b0d0f;
+  border: 1px solid #262e31;
+  border-radius: 10px;
+}
+
+.toggle-option {
+  min-width: 3.4rem;
+  min-height: 2.9rem;
+  padding: 0 0.9rem;
+  background: transparent;
+  border: 0;
+  color: var(--dash-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.toggle-option.on {
+  background: var(--dash-accent);
+  color: #12150f;
+  font-weight: 600;
+}
+
+.settings-stepper {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.stepper-button {
+  width: 2.9rem;
+  height: 2.9rem;
+  background: transparent;
+  border: 1px solid #262e31;
+  border-radius: 10px;
+  color: inherit;
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.stepper-value {
+  min-width: 3.2rem;
+  font-size: 1.3rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.settings-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.add-exercise {
+  padding: 0.4rem 0.2rem;
+  background: transparent;
+  border: 0;
+  color: var(--dash-accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.exercise-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* Wraps rather than scrolling sideways: a tablet in portrait has room for the name and then for the two fields
+   beneath it, and a row that had to be dragged horizontally would hide the factor -- which is the field most likely
+   to be the reason the screen was opened. */
+.exercise-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem;
+  padding: 1rem;
+  background: #14171a;
+  border: 1px solid var(--dash-line);
+  border-radius: 14px;
+  cursor: pointer;
+}
+
+.exercise-row.chosen {
+  border-color: var(--dash-accent);
+}
+
+.exercise-identity {
+  display: flex;
+  flex: 1 1 14rem;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.exercise-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.exercise-remove {
+  width: 2.4rem;
+  height: 2.4rem;
+  background: transparent;
+  border: 0;
+  color: var(--dash-muted);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.settings-explainer {
+  margin: 0;
+  color: var(--dash-muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.settings-error {
+  margin: 0;
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+/* Plain buttons rather than the tall role cards the class is shaped for, for the same reason the takeover dialog's
+   are: one line each, and at card height they would read as a menu of modes rather than as Cancel and Save. */
+.settings-actions .mode-button {
+  display: block;
+  min-height: 0;
+  padding: 0.75rem 1.6rem;
+  background: var(--dash-accent);
+  border-color: var(--dash-accent);
+  color: #12150f;
+  font-weight: 600;
+  text-align: center;
+}
+
+.settings-actions .mode-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.settings-actions .back-button {
+  align-self: auto;
+  min-height: 0;
+  padding: 0.75rem 1.4rem;
+  border-color: #262e31;
+  color: inherit;
 }

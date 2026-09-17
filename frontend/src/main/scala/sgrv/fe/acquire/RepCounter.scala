@@ -141,7 +141,11 @@ private[fe] final case class ChannelAnalysis(
 private[fe] final case class RepReading(
     count: Int,
     lock: LockState,
-    margin: Option[Double] = None
+    margin: Option[Double] = None,
+    /** The frequency accumulator behind the calorie figure. See [[RepCounter.cadenceSum]]. */
+    cadenceSum: Double = 0.0,
+    /** How long the set has been running, from its first counted rep. */
+    elapsedSeconds: Double = 0.0
 )
 
 private[fe] object RepAnalysis:
@@ -342,7 +346,43 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
     */
   private var currentMargin: Option[Double] = None
 
-  def reading: RepReading = RepReading(counted, state, currentMargin)
+  /** Where the leading channel's counted reps fell, in absolute sample positions: the first, and the most recent.
+    *
+    * The first is what the set's clock is measured from. Not the camera opening, which precedes the exercise by however
+    * long the detector took to recognise it, and not the page load, which precedes it by however long someone spent
+    * propping up a phone.
+    */
+  private var firstRepAt: Option[Int] = None
+  private var lastRepAt: Option[Int] = None
+
+  /** The most recent sample the counter has been shown, which is what the set's clock is read against. */
+  private var latestSample = 0
+
+  /** The frequency accumulator: the sum of `1 / gap` over every counted rep from the second onwards, in reciprocal
+    * seconds.
+    *
+    * Accumulated as reps are counted rather than derived afterwards, because the gaps it is made of are only knowable
+    * while the peaks that produced them are still in the buffer. Taken from the leading channel's own peak train, the
+    * same train the pace is measured over: the corroborated total can differ from it by a rep or two at the edges of a
+    * set, and choosing the channel that actually has timings over the number that does not is the honest trade.
+    */
+  private var cadenceSum = 0.0
+
+  def reading: RepReading = RepReading(counted, state, currentMargin, cadenceSum, elapsedSeconds)
+
+  /** How long the set has been running: from its first counted rep to now.
+    *
+    * To now rather than to the last rep counted, which is a clock that stops whenever the exercise does. A rest is part
+    * of a workout and it is exactly what a projection has to account for -- someone resting half the time will not
+    * reach the half-hour figure of someone who is not, and a clock that ran only while reps arrived would promise they
+    * would. It also means a dashboard left in front of a phone nobody is using decays towards the truth instead of
+    * holding the last rate it saw for ever.
+    *
+    * The sample count is the clock. Samples arrive at a fixed rate whether or not anything moves, so counting them is
+    * measuring the wall, and it needs no second source of time to drift against.
+    */
+  def elapsedSeconds: Double =
+    firstRepAt.fold(0.0)(first => math.max(0.0, (latestSample - first).toDouble / settings.sampleRateHz))
 
   /** The pace of the last few reps, in reps per minute, or zero when too few have been seen to say.
     *
@@ -362,6 +402,10 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
     recent = Vector.empty
     lastCounted = Map.empty
     authoritative = None
+    firstRepAt = None
+    lastRepAt = None
+    latestSample = 0
+    cadenceSum = 0.0
     state = LockState.Acquiring(0, settings.minimumSamplesForLock)
 
   /** Folds one channel's fresh peaks into that channel's own tally, returning where it has counted up to. */
@@ -380,6 +424,16 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
       tallies = tallies.updated(channel.quadrant, tallies.getOrElse(channel.quadrant, 0) + fresh.size)
       lastCounted = lastCounted.updated(channel.quadrant, fresh.max)
       if authoritative.contains(channel.quadrant) then
+        fresh.sorted.foreach: position =>
+          lastRepAt match
+            case None =>
+              // The first rep of the set starts its clock and adds nothing: there is no gap behind it to take the
+              // reciprocal of, which is exactly what "from the second rep" means.
+              firstRepAt = Some(position)
+            case Some(previous) =>
+              val gapSeconds = (position - previous).toDouble / settings.sampleRateHz
+              if gapSeconds > 0 then cadenceSum += 1.0 / gapSeconds
+          lastRepAt = Some(position)
         recent = (recent ++ fresh.sorted).takeRight(settings.paceWindowReps)
 
   /** Folds one window of per-quadrant samples into the running count.
@@ -388,6 +442,7 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
     * survives the buffer wrapping — without it, a peak would be recounted every time the window slid.
     */
   def update(window: Map[Quadrant, Seq[Double]], totalSamples: Int): RepReading =
+    latestSample = totalSamples
     val lengths = window.values.map(_.size)
     val windowLength = if lengths.isEmpty then 0 else lengths.min
 

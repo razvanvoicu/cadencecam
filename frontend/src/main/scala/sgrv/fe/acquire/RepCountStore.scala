@@ -13,10 +13,27 @@ import scala.util.control.NonFatal
   * away.
   */
 @jsonNoExtraFields
-private[fe] final case class SavedRepCount(count: Int, atMillis: Double)
+private[fe] final case class SavedRepCount(
+    count: Int,
+    atMillis: Double,
+    /** The frequency accumulator that goes with the count. Carried for the same reason the count is: a reload halfway
+      * through a set must not halve the calories any more than it may halve the reps.
+      */
+    cadenceSum: Double = 0.0,
+    /** How long the set had been running. Carried so the rates and the projection resume rather than restarting from a
+      * clock that says the exercise began at the reload.
+      */
+    elapsedSeconds: Double = 0.0
+)
 
 private[fe] object SavedRepCount:
   given JsonCodec[SavedRepCount] = DeriveJsonCodec.gen[SavedRepCount]
+
+/** What a run resumes from after a page load: nothing at all, or everything that was measured before it. */
+private[fe] final case class ResumedRun(count: Int, cadenceSum: Double, elapsedSeconds: Double)
+
+private[fe] object ResumedRun:
+  val Nothing: ResumedRun = ResumedRun(0, 0.0, 0.0)
 
 /** Carries the rep total across a page load, so a reload mid-workout resumes the count instead of starting over.
   *
@@ -33,12 +50,16 @@ private[fe] final class RepCountStore(
     retentionMillis: Double = RepCountStore.DefaultRetentionMillis
 ):
 
-  /** The total to start from, or zero when nothing recent enough was saved. */
-  def restore(nowMillis: Double): Int =
+  /** What to start from, or nothing when no recent enough reading was saved. */
+  def restore(nowMillis: Double): ResumedRun =
     RepCountStore.resumable(read(), nowMillis, retentionMillis)
 
-  def save(count: Int, atMillis: Double): Unit =
-    try storage.setItem(RepCountStore.StorageKey, SavedRepCount(count, atMillis).toJson)
+  def save(count: Int, atMillis: Double, cadenceSum: Double = 0.0, elapsedSeconds: Double = 0.0): Unit =
+    try
+      storage.setItem(
+        RepCountStore.StorageKey,
+        SavedRepCount(count, atMillis, cadenceSum, elapsedSeconds).toJson
+      )
     catch
       case NonFatal(error) =>
         dom.console.warn(s"Could not persist the rep count: ${RepCountStore.message(error)}")
@@ -63,7 +84,7 @@ private[fe] final class RepCountStore(
         None
 
 private[fe] object RepCountStore:
-  private val StorageKey = "sgrv.rep-count.v1"
+  private val StorageKey = "sgrv.rep-count.v2"
 
   /** How recently a total must have changed to be resumed. An hour comfortably covers a session including its rests,
     * while still leaving tomorrow's workout to start from zero.
@@ -76,11 +97,15 @@ private[fe] object RepCountStore:
     * far into the future it is. A device clock that has been corrected by a few seconds should not cost the user their
     * count, and one that is wrong by more than the retention window should not preserve it indefinitely.
     */
-  private[acquire] def resumable(saved: Option[SavedRepCount], nowMillis: Double, retentionMillis: Double): Int =
+  private[acquire] def resumable(
+      saved: Option[SavedRepCount],
+      nowMillis: Double,
+      retentionMillis: Double
+  ): ResumedRun =
     saved
       .filter(_.count > 0)
       .filter(reading => math.abs(nowMillis - reading.atMillis) < retentionMillis)
-      .fold(0)(_.count)
+      .fold(ResumedRun.Nothing)(reading => ResumedRun(reading.count, reading.cadenceSum, reading.elapsedSeconds))
 
   private def message(error: Throwable): String =
     Option(error.getMessage).map(_.trim).filter(_.nonEmpty).getOrElse(error.getClass.getSimpleName)

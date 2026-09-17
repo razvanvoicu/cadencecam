@@ -55,6 +55,65 @@ class RepCounterSuite extends FunSuite:
       val floor = cycles - settlingLoss(hz) - returnLoss(hz) - 2
       assert(reading.count >= floor, f"$hz%.3f Hz counted ${reading.count}, below the tolerable $floor%.1f")
 
+  test("the frequency accumulator adds each rep's own rate, from the second rep onwards"):
+    // The account's formula, applied to what the detector actually saw: every rep from the second adds the
+    // reciprocal of the gap behind it. At a steady cadence that is the cadence itself, once per rep, so the sum comes
+    // to the frequency times one fewer than the reps counted.
+    Seq(0.556, 1.0, 1.5).foreach: hz =>
+      val reading = run(rotating(hz, 40.0, amplitude = 6.0))
+      val gaps = math.max(0, reading.count - 1)
+
+      assert(reading.cadenceSum > 0, f"$hz%.3f Hz accumulated nothing over ${reading.count} reps")
+      // Generous, because the sum is taken over the leading channel's own peaks while the count is corroborated by
+      // another, and the two can differ by a rep at the edges of a set. What is being checked is that the sum is the
+      // cadence rather than the rep count, which a factor of two in either direction would not survive.
+      assertEqualsDouble(reading.cadenceSum / gaps, hz, hz * 0.25)
+
+  test("a faster set accumulates more than a slower one of the same length"):
+    // The whole point of counting by frequency: the same twenty seconds of work is worth more done quickly.
+    val slow = run(rotating(0.6, 60.0, amplitude = 6.0))
+    val fast = run(rotating(1.6, 60.0, amplitude = 6.0))
+
+    assert(fast.cadenceSum > slow.cadenceSum * 2, s"${fast.cadenceSum} against ${slow.cadenceSum}")
+
+  test("the set's clock runs from its first counted rep, not from the camera opening"):
+    // The seconds the detector spends working out what it is looking at are not exercise, and a rate divided by a
+    // clock that included them would report the app's warm-up as a slow start.
+    val reading = run(rotating(1.0, 60.0, amplitude = 6.0))
+
+    assert(reading.elapsedSeconds > 0, "a counted set has a duration")
+    assert(reading.elapsedSeconds < 60.0, f"${reading.elapsedSeconds}%.1fs covers more than the recording itself")
+    // Only the filter's settling window and the moment before the first peak are outside it.
+    assert(reading.elapsedSeconds > 50.0, f"${reading.elapsedSeconds}%.1fs is short of the set it covers")
+
+  test("the clock keeps running when the reps stop, because a rest is part of the workout"):
+    // A clock that stopped with the exercise would let someone resting half the time be projected as though they had
+    // not rested at all -- and would leave a dashboard in front of an abandoned phone reporting its last rate for ever.
+    val moving = rotating(1.0, 40.0, amplitude = 6.0)
+    val resting = Quadrant.All.map(quadrant => quadrant -> (moving(quadrant) ++ still(20.0))).toMap
+
+    val worked = run(moving)
+    val rested = run(resting)
+
+    // The rest adds twenty seconds of clock and next to no reps: what it does add is the tail of the set itself,
+    // whose last peaks could not be judged until the movement had come back down from them.
+    assert(rested.count - worked.count <= 3, s"the rest was counted: ${worked.count} became ${rested.count}")
+    assert(
+      rested.elapsedSeconds > worked.elapsedSeconds + 15.0,
+      f"the clock gained only ${rested.elapsedSeconds - worked.elapsedSeconds}%.1fs over a 20s rest"
+    )
+
+  test("a reset leaves nothing of the previous set behind"):
+    val counter = RepCounter()
+    val before = run(rotating(1.0, 40.0, amplitude = 6.0), counter)
+    assert(before.count > 0 && before.cadenceSum > 0)
+
+    counter.reset()
+
+    assertEquals(counter.reading.count, 0)
+    assertEqualsDouble(counter.reading.cadenceSum, 0.0, 0.0)
+    assertEqualsDouble(counter.reading.elapsedSeconds, 0.0, 0.0)
+
   test("the error stays constant as a session runs on, rather than accumulating"):
     // Proportional error would mean each cycle is miscounted; a constant one means only the opening is missed.
     val shortRun = run(rotating(1.0, 40.0, amplitude = 6.0)).count

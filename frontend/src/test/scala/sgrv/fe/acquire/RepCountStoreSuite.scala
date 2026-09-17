@@ -9,12 +9,26 @@ class RepCountStoreSuite extends FunSuite:
   private val now = 1_700_000_000_000.0
 
   private def resumable(saved: Option[SavedRepCount], at: Double = now, retention: Double = hour): Int =
+    RepCountStore.resumable(saved, at, retention).count
+
+  private def resumedRun(saved: Option[SavedRepCount], at: Double = now, retention: Double = hour): ResumedRun =
     RepCountStore.resumable(saved, at, retention)
 
   test("round-trips a saved reading through its browser-storage representation"):
-    val original = SavedRepCount(57, now)
+    val original = SavedRepCount(57, now, cadenceSum = 31.5, elapsedSeconds = 184.0)
 
     assertEquals(original.toJson.fromJson[SavedRepCount], Right(original))
+
+  test("a reload resumes the whole run, not only its reps"):
+    // Reps, calories and the clock are one measurement of one set. Resuming the count while restarting the other two
+    // would show a workout that had done two hundred reps in no time at all and burned nothing doing it.
+    val saved = SavedRepCount(57, now - 1000, cadenceSum = 31.5, elapsedSeconds = 184.0)
+
+    assertEquals(resumedRun(Some(saved)), ResumedRun(57, 31.5, 184.0))
+
+  test("nothing worth resuming resumes nothing, rather than a clock with no reps against it"):
+    assertEquals(resumedRun(None), ResumedRun.Nothing)
+    assertEquals(resumedRun(Some(SavedRepCount(57, now - 24 * hour, 31.5, 184.0))), ResumedRun.Nothing)
 
   test("resumes a total saved within the retention window"):
     assertEquals(resumable(Some(SavedRepCount(57, now - 1000))), 57)

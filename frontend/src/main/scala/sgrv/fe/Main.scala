@@ -16,6 +16,7 @@ import sgrv.fe.acquire.{
   LockState,
   RepCounter,
   RepCountStore,
+  ResumedRun,
   RepProgressReporter,
   RestPhase,
   StatusLine,
@@ -26,7 +27,7 @@ import sgrv.fe.acquire.{
   Sample,
   SignalGraph
 }
-import sgrv.api.{LiveCommand, LiveReading, LiveState, PeerRole}
+import sgrv.api.{AccountSettings, CountsBy, ExerciseType, LiveCommand, LiveReading, LiveState, PeerRole, WeightUnit}
 import sgrv.fe.bench.BenchView
 import sgrv.fe.live.PeerLink
 import sgrv.fe.refreshstate.RefreshStateStore
@@ -96,6 +97,37 @@ object Main:
       */
     val accountCounting = Var(false)
 
+    /** What this account has set, as last read from its record.
+      *
+      * Held here rather than in the dashboard, because more than one screen asks and because a screen that fetched its
+      * own copy on every mount would show the defaults for as long as the request took -- which on the dashboard means
+      * a calorie figure that is wrong first and right a moment later.
+      *
+      * Starts at the defaults rather than at nothing: every figure that depends on these has a sensible value from the
+      * first paint, and the account's own numbers replace them when they arrive.
+      */
+    val accountSettings = Var(AccountSettings.Initial)
+
+    /** Whether the settings panel is up. Deliberately not in [[FrontendState]]: it is a panel over whatever screen is
+      * running, and persisting it would reopen it on a reload -- over a camera that then keeps counting behind it.
+      */
+    val settingsOpen = Var(false)
+
+    /** Reads the account's settings. Called when a session is confirmed, which is what "on every login" means here.
+      *
+      * A failure leaves the defaults in place and says so in the console only. There is nothing a person can do about
+      * it from the dashboard, and refusing to draw the screen over it would turn a wrong factor into no screen at all.
+      */
+    def loadSettings(): Unit =
+      http
+        .get(AccountSettings.Path)
+        .flatMap(response => response.text())
+        .map(_.fromJson[AccountSettings])
+        .onComplete:
+          case Success(Right(settings)) => accountSettings.set(settings)
+          case Success(Left(details))   => dom.console.warn(s"Ignoring unreadable account settings: $details")
+          case Failure(error) => dom.console.warn(s"Could not read the account settings: ${errorMessage(error)}")
+
     /** Becomes the acquirer, asking first if the account already has one.
       *
       * The check can fail -- an offline device, a signed-out session -- and a failure here must not stand between
@@ -160,6 +192,7 @@ object Main:
           )
         refreshStateStore.update(_.copy(expired = false))
         worker.enable()
+        loadSettings()
         // Only for a login that has just landed on the picker: a device returning to the role it already held keeps
         // it, and must not be sent to the camera because some other device happens to be free.
         if !stateStore.restoredUserEmail.contains(email) then startByPresence()
@@ -295,6 +328,267 @@ object Main:
       * absolutely and no row has a fixed height, so a landscape arrangement later is a change of direction on the
       * container rather than a rewrite.
       */
+    /** The settings panel: a weight, a default factor, and the exercises this account counts.
+      *
+      * Edited against a copy and written back only on Save, so leaving by Cancel leaves nothing behind. The copy is
+      * taken when the panel opens rather than held permanently, which is what makes Cancel a real undo of everything
+      * done inside it.
+      */
+    def settingsPanel(): Element =
+      val draft = Var(accountSettings.now())
+      val saving = Var(false)
+      val failed = Var(Option.empty[String])
+
+      def close(): Unit =
+        settingsOpen.set(false)
+
+      def commit(): Unit =
+        if !saving.now() then
+          saving.set(true)
+          failed.set(None)
+          val next = draft.now()
+          val init = new dom.RequestInit:
+            method = dom.HttpMethod.PUT
+            headers = js.Dictionary("Content-Type" -> "application/json")
+            body = next.toJson
+          http
+            .send(AccountSettings.Path, init)
+            .onComplete: outcome =>
+              saving.set(false)
+              outcome match
+                case Success(response) if response.ok =>
+                  // From the draft rather than from the response body, which says the same thing: the screens behind
+                  // this one should show the new figures the moment it closes, not one round trip later.
+                  accountSettings.set(next)
+                  close()
+                case Success(response) =>
+                  failed.set(Some(s"The server would not save these settings (HTTP ${response.status})."))
+                case Failure(error) =>
+                  failed.set(Some(errorMessage(error)))
+
+      /** A number the user types, taken only when it parses and is above zero.
+        *
+        * Rejecting rather than clamping: a half-typed "0.", or a field someone has just emptied to retype, is not a
+        * statement that their weight is nothing, and writing one into the draft would make the field fight the typing.
+        */
+      def numberField(value: Double, decimals: Int, onValue: Double => Unit, extra: Modifier[HtmlElement]*): Element =
+        input(
+          cls := "settings-number",
+          typ := "number",
+          stepAttr := "any",
+          minAttr := "0",
+          defaultValue := (if decimals == 0 then math.round(value).toString else f"$value%.1f"),
+          onInput.mapToValue --> { entered =>
+            entered.trim.toDoubleOption.filter(parsed => parsed > 0 && parsed.isFinite).foreach(onValue)
+          },
+          extra
+        )
+
+      def stepper(value: Signal[Double], onChange: Double => Unit, current: () => Double): Element =
+        div(
+          cls := "settings-stepper",
+          button(
+            cls := "stepper-button",
+            typ := "button",
+            aria.label := "Less",
+            "–",
+            // A tenth at a time, and never through zero: a factor of zero makes every figure on the dashboard zero.
+            onClick --> (_ => onChange(math.max(0.1, math.round((current() - 0.1) * 10) / 10.0)))
+          ),
+          span(cls := "stepper-value", child.text <-- value.map(factor => f"$factor%.1f")),
+          button(
+            cls := "stepper-button",
+            typ := "button",
+            aria.label := "More",
+            "+",
+            onClick --> (_ => onChange(math.round((current() + 0.1) * 10) / 10.0))
+          )
+        )
+
+      def exerciseRow(id: String, initial: ExerciseType, updates: Signal[ExerciseType]): Element =
+        def edit(change: ExerciseType => ExerciseType): Unit =
+          draft.update(current =>
+            current.copy(exercises = current.exercises.map(one => if one.id == id then change(one) else one))
+          )
+        def now(): ExerciseType = draft.now().exercises.find(_.id == id).getOrElse(initial)
+
+        div(
+          cls := "exercise-row",
+          cls("chosen") <-- draft.signal.map(_.selected.contains(id)),
+          // The whole row selects, because "which exercise is this dashboard reporting" is the question the screen is
+          // mostly opened to answer, and a radio button hidden among the fields answers it too quietly.
+          onClick --> (_ => draft.update(current => current.copy(selected = Some(id)))),
+          div(
+            cls := "exercise-identity",
+            input(
+              cls := "settings-text",
+              typ := "text",
+              placeholder := "Exercise",
+              defaultValue := initial.name,
+              onInput.mapToValue --> (entered => edit(_.copy(name = entered)))
+            ),
+            input(
+              cls := "settings-text settings-equipment",
+              typ := "text",
+              placeholder := "Equipment, setting, weight…",
+              defaultValue := initial.equipment.getOrElse(""),
+              onInput.mapToValue --> { entered =>
+                edit(_.copy(equipment = Option(entered.trim).filter(_.nonEmpty)))
+              }
+            )
+          ),
+          div(
+            cls := "exercise-field",
+            span(cls := "field-label", "Counts by"),
+            div(
+              cls := "settings-toggle",
+              button(
+                cls := "toggle-option",
+                typ := "button",
+                cls("on") <-- updates.map(_.countsBy == CountsBy.RepCount),
+                "Rep count",
+                onClick --> (_ => edit(_.copy(countsBy = CountsBy.RepCount)))
+              ),
+              button(
+                cls := "toggle-option",
+                typ := "button",
+                cls("on") <-- updates.map(_.countsBy == CountsBy.Frequency),
+                "Frequency",
+                onClick --> (_ => edit(_.copy(countsBy = CountsBy.Frequency)))
+              )
+            )
+          ),
+          div(
+            cls := "exercise-field",
+            span(cls := "field-label", "Factor"),
+            stepper(updates.map(_.factor), factor => edit(_.copy(factor = factor)), () => now().factor)
+          ),
+          button(
+            cls := "exercise-remove",
+            typ := "button",
+            aria.label := "Remove this exercise",
+            title := "Remove this exercise",
+            "×",
+            onClick --> { event =>
+              event.stopPropagation()
+              draft.update: current =>
+                current.copy(
+                  exercises = current.exercises.filterNot(_.id == id),
+                  selected = current.selected.filterNot(_ == id)
+                )
+            }
+          )
+        )
+
+      def addExercise(): Unit =
+        draft.update: current =>
+          val id = f"e${js.Date.now().toLong}%d-${scala.util.Random.nextInt(0x1000)}%03x"
+          current.copy(
+            exercises = current.exercises :+ ExerciseType(id, "", None, CountsBy.RepCount, current.defaultFactor),
+            // A new exercise is almost always the one about to be done, and selecting it saves the second tap.
+            selected = Some(id)
+          )
+
+      div(
+        cls := "settings-overlay",
+        div(
+          cls := "settings-screen",
+          role := "dialog",
+          div(
+            cls := "settings-header",
+            h2("Settings"),
+            span(cls := "settings-note", "saved to your account"),
+            button(cls := "about-close", typ := "button", title := "Close", onClick --> (_ => close()), "×")
+          ),
+          div(
+            cls := "settings-body",
+            div(
+              cls := "settings-card",
+              div(
+                cls := "settings-field",
+                span(cls := "field-label", "Your weight"),
+                div(
+                  cls := "settings-weight",
+                  child <-- draft.signal
+                    .map(_.weightUnit)
+                    .distinct
+                    .map: unit =>
+                      numberField(
+                        WeightUnit.show(draft.now().weightKilograms, unit),
+                        1,
+                        entered => draft.update(_.copy(weightKilograms = WeightUnit.toKilograms(entered, unit)))
+                      ),
+                  div(
+                    cls := "settings-toggle",
+                    WeightUnit.values.toSeq.map: unit =>
+                      button(
+                        cls := "toggle-option",
+                        typ := "button",
+                        cls("on") <-- draft.signal.map(_.weightUnit == unit),
+                        WeightUnit.label(unit),
+                        // The stored weight does not move: only what it is shown in does.
+                        onClick --> (_ => draft.update(_.copy(weightUnit = unit)))
+                      )
+                  )
+                ),
+                span(cls := "field-hint", "Kept once, used by every exercise.")
+              ),
+              div(
+                cls := "settings-field",
+                span(cls := "field-label", "Default factor"),
+                stepper(
+                  draft.signal.map(_.defaultFactor),
+                  factor => draft.update(_.copy(defaultFactor = factor)),
+                  () => draft.now().defaultFactor
+                ),
+                span(cls := "field-hint", "Used by a new exercise until you set its own.")
+              )
+            ),
+            div(
+              cls := "settings-card settings-exercises",
+              div(
+                cls := "settings-card-header",
+                span(cls := "field-label", "Exercises"),
+                button(cls := "add-exercise", typ := "button", "+ Add exercise", onClick --> (_ => addExercise()))
+              ),
+              div(
+                cls := "exercise-list",
+                children <-- draft.signal.map(_.exercises).split(_.id)(exerciseRow)
+              ),
+              child <-- draft.signal
+                .map(_.exercises.isEmpty)
+                .distinct
+                .map:
+                  case false => emptyNode
+                  case true  =>
+                    p(
+                      cls := "field-hint",
+                      "With no exercise chosen the dashboard counts reps at the default factor."
+                    )
+            ),
+            p(
+              cls := "settings-explainer",
+              "The chosen exercise drives the dashboard. Rep count multiplies reps by weight and factor; frequency " +
+                "sums each rep's rate instead, so faster reps count for more."
+            )
+          ),
+          child <-- failed.signal.map:
+            case None          => emptyNode
+            case Some(message) => p(cls := "error settings-error", message),
+          div(
+            cls := "settings-actions",
+            button(cls := "back-button", typ := "button", "Cancel", onClick --> (_ => close())),
+            button(
+              cls := "mode-button",
+              typ := "button",
+              disabled <-- saving.signal,
+              child.text <-- saving.signal.map(if _ then "Saving…" else "Save"),
+              onClick --> (_ => commit())
+            )
+          )
+        )
+      )
+
     def dashboard(): Element =
       val menuOpen = Var(false)
       val live = Var(Option.empty[LiveState])
@@ -302,12 +596,34 @@ object Main:
 
       val reading = live.signal.map(_.flatMap(_.reading))
       val reps = reading.map(_.fold(0)(_.reps))
-      val pace = reading.map(_.fold(0.0)(_.repsPerMinute))
+      val elapsedSeconds = reading.map(_.fold(0.0)(_.elapsedSeconds))
+
+      /** Everything on the screen is a function of the reading and the account's settings, so the two are combined once
+        * and every figure below is read off the result. Separately derived signals would each re-evaluate the same
+        * arithmetic and, worse, could disagree about which reading they were describing.
+        */
+      val figures = reading
+        .combineWith(accountSettings.signal)
+        .map: (latest, settings) =>
+          val counted = latest.fold(0)(_.reps)
+          val elapsedMinutes = latest.fold(0.0)(_.elapsedSeconds) / 60.0
+          (counted, elapsedMinutes, Effort.calories(counted, latest.fold(0.0)(_.cadenceSum), settings))
+
+      val boundary = elapsedSeconds.map(seconds => Effort.boundaryLabel(Effort.boundaryMinutes(seconds / 60.0)))
+
+      def figure(of: ((Int, Double, Double)) => Option[Double], show: Double => String): Signal[String] =
+        figures.map(values => of(values).fold(Effort.Absent)(show))
+
+      val repsPerMinute = figure((reps, minutes, _) => Effort.perMinute(reps.toDouble, minutes), Effort.rate)
+      val repsAtBoundary = figure((reps, minutes, _) => Effort.atBoundary(reps.toDouble, minutes), Effort.grouped)
+      val calories = figures.map((_, _, calories) => Effort.grouped(calories))
+      val caloriesPerMinute = figure((_, minutes, calories) => Effort.perMinute(calories, minutes), Effort.rate)
+      val caloriesAtBoundary = figure((_, minutes, calories) => Effort.atBoundary(calories, minutes), Effort.grouped)
 
       /** Three situations that a single "waiting" would render identical, told apart.
         *
-        * A dashboard whose own socket is down, one connected to an account with nothing counting, and one connected to
-        * a device that has not yet found a cadence are different problems with different remedies, and only the last of
+        * A dashboard whose own link is down, one connected to an account with nothing counting, and one connected to a
+        * device that has not yet found a cadence are different problems with different remedies, and only the last of
         * them is the app working normally.
         */
       val status = live.signal
@@ -324,11 +640,10 @@ object Main:
           case Right(state)  => live.set(Some(state))
           case Left(details) => dom.console.warn(s"Ignoring an unreadable update: $details")
 
-      /** The direct link to the counting device, which the readings take once it is up.
+      /** The direct link to the counting device, which the readings travel over.
         *
-        * The watcher offers, because it is the one that wants the data. Until the link forms -- and if it never does,
-        * on a browser without WebRTC or a network that will not carry it -- the relay carries everything as before, so
-        * this can only add a path, never remove one.
+        * The watcher offers, because it is the one that wants the data. There is no other path: the server introduces
+        * the two and then has nothing further to do with them.
         */
       val peer: PeerLink = PeerLink(
         http,
@@ -339,53 +654,112 @@ object Main:
       )
 
       def ask(instruction: LiveCommand): Unit =
-        // Straight to the device. There is no other path: a command travelling through a server would need both
-        // devices served by the same process, which is the thing this replaced.
         val _ = peer.send(instruction.toJson)
 
       def menuItem(label: String, act: () => Unit): Element =
         button(cls := "menu-item", typ := "button", label, onClick --> (_ => { menuOpen.set(false); act() }))
 
+      /** One of the two cards: a headline figure, and the two smaller ones that qualify it.
+        *
+        * The pair below is always the rate and the projection, in that order, on both cards -- so the eye learns the
+        * shape once and reads the second card without having to.
+        */
+      def card(
+          kind: String,
+          label: String,
+          value: Signal[String],
+          rate: Signal[String],
+          ahead: Signal[String]
+      ): Element =
+        div(
+          cls := s"figure-card $kind",
+          span(cls := "figure-label", label),
+          span(cls := "figure-value", child.text <-- value),
+          div(
+            cls := "figure-footnotes",
+            div(
+              cls := "figure-footnote",
+              span(cls := "footnote-label", "Per minute"),
+              span(cls := "footnote-value", child.text <-- rate)
+            ),
+            div(
+              cls := "figure-footnote",
+              span(cls := "footnote-label", child.text <-- boundary.map(at => s"At $at")),
+              span(cls := "footnote-value", child.text <-- ahead)
+            )
+          )
+        )
+
       div(
         cls := "dashboard-view",
-        onMountCallback(_ => peer.connect()),
+        onMountCallback { _ =>
+          peer.connect()
+          // Read again on arrival as well as at login: a tablet left on this screen overnight is signed in from a
+          // session it has not re-established, and the settings may have been changed from the phone in the meantime.
+          loadSettings()
+        },
         onUnmountCallback(_ => peer.close()),
         div(
           cls := "screen dashboard",
           div(
-            cls := "acquirer-header",
-            h1(cls := "screen-title", "Dashboard"),
-            button(
-              cls := "menu-button",
-              typ := "button",
-              aria.label := "Menu",
-              aria.expanded <-- menuOpen.signal,
-              "\u2630",
-              onClick --> (_ => menuOpen.update(open => !open))
+            cls := "dashboard-header",
+            div(
+              cls := "dashboard-title",
+              h1(
+                cls := "screen-title",
+                child.text <-- accountSettings.signal.map(_.selectedExercise.fold("Counting")(_.name))
+              ),
+              span(
+                cls := "dashboard-basis",
+                child.text <-- accountSettings.signal.map: settings =>
+                  val how = settings.countsBy match
+                    case CountsBy.RepCount  => "rep count"
+                    case CountsBy.Frequency => "frequency"
+                  f"factor ${settings.factor}%.2g · $how"
+              )
+            ),
+            div(
+              cls := "dashboard-clock",
+              span(cls := "clock-value", child.text <-- elapsedSeconds.map(Effort.elapsedClock)),
+              button(
+                cls := "menu-button",
+                typ := "button",
+                aria.label := "Menu",
+                aria.expanded <-- menuOpen.signal,
+                "\u2630",
+                onClick --> (_ => menuOpen.update(open => !open))
+              )
             )
           ),
           // A backdrop so a tap anywhere else dismisses the menu, which is what a phone expects.
           child <-- menuOpen.signal.map:
             case false => emptyNode
             case true  => div(cls := "menu-backdrop", onClick --> (_ => menuOpen.set(false))),
-          Readouts.reading(reps.map(_.toString), "reps"),
-          Readouts.controls(status, () => ask(LiveCommand.Reset)),
-          Readouts.reading(Readouts.perMinute(pace), "reps/min"),
+          div(
+            cls := "figure-cards",
+            card("reps-card", "Reps", reps.map(_.toString), repsPerMinute, repsAtBoundary),
+            card("calories-card", "Calories", calories, caloriesPerMinute, caloriesAtBoundary)
+          ),
+          div(
+            cls := "dashboard-status",
+            button(
+              cls := "reset-button",
+              typ := "button",
+              "↺",
+              aria.label := "Reset the count",
+              title := "Reset the count",
+              onClick --> (_ => ask(LiveCommand.Reset))
+            ),
+            p(cls := "lock-state", child.text <-- status)
+          ),
           div(
             cls := "acquirer-actions",
             cls("open") <-- menuOpen.signal,
+            menuItem("Settings", () => settingsOpen.set(true)),
             menuItem("Capture signal trace", () => ask(LiveCommand.CaptureTrace())),
             menuItem("About", () => openAbout()),
             menuItem("Back", () => show(Screen.Selection)),
             menuItem("Logout", () => logout())
-          ),
-          // Takes whatever the rows above leave, which is what makes this the panel and them the readouts.
-          div(
-            cls := "calorie-panel",
-            // Equal to the reps for now: the arithmetic that turns movement into energy needs a body and an
-            // exercise to be meaningful, and neither is known yet.
-            Readouts.reading(reps.map(_.toString), "cal"),
-            Readouts.reading(Readouts.perMinute(pace), "cal/min")
           )
         )
       )
@@ -399,7 +773,7 @@ object Main:
       // over from a previous page load, and those counted before a camera switch. Shown at once, so a reload mid-set
       // does not look as though it lost the count while the detector spends its first seconds finding the cadence.
       var baseline = repCountStore.restore(js.Date.now())
-      val repCount = Var(baseline)
+      val repCount = Var(baseline.count)
       val lock = Var[LockState](LockState.Acquiring(0, 0))
       // How far the movement stands above the background, kept whether or not a cadence has been found: a movement
       // too faint to count looks from the outside exactly like no movement at all.
@@ -488,7 +862,13 @@ object Main:
             math.round(counter.repsPerMinute).toDouble,
             latestStatus,
             Device.describe(),
-            counting = lock.now().isInstanceOf[LockState.Locked]
+            counting = lock.now().isInstanceOf[LockState.Locked],
+            // Both carry whatever a previous page load left behind, for the same reason the count does: a watching
+            // device must not see a set restart because the phone showing it reloaded.
+            // Whole seconds. The clock runs on while a set rests, so an unrounded figure would differ on every one
+            // of the ten samples a second and publish ten updates a second to say so.
+            elapsedSeconds = math.round(baseline.elapsedSeconds + counter.elapsedSeconds).toDouble,
+            cadenceSum = baseline.cadenceSum + counter.reading.cadenceSum
           )
         if !lastPublished.contains(reading) then
           // To whoever is watching, over their own link. Nothing is published when nobody is: a count with no
@@ -506,11 +886,17 @@ object Main:
           case LockState.Locked(channel, _, _) =>
             RestPhase.offsetOf(window, channel).foreach(offset => restOffsets.update(_ + (channel -> offset)))
           case _ => ()
-        val total = baseline + reading.count
+        val total = baseline.count + reading.count
         // Written on change rather than on every sample: ten writes a second would record nothing new between reps.
         // The sample's own timestamp dates the reading, so the age a later load measures is the age of the last rep
         // rather than of the last frame.
-        if total != repCount.now() then repCountStore.save(total, sample.atMillis)
+        if total != repCount.now() then
+          repCountStore.save(
+            total,
+            sample.atMillis,
+            baseline.cadenceSum + reading.cadenceSum,
+            baseline.elapsedSeconds + reading.elapsedSeconds
+          )
         repCount.set(total)
         lock.set(reading.lock)
         signalMargin.set(reading.margin)
@@ -537,7 +923,7 @@ object Main:
         * performed in the meantime are in the buffer, and the first lock counts the run it finds there.
         */
       def resetCount(): Unit =
-        baseline = 0
+        baseline = ResumedRun.Nothing
         signals.clear()
         counter.reset()
         totalSamples = 0
@@ -615,12 +1001,18 @@ object Main:
         measuredHz.set(None)
         signals.clear()
         restOffsets.set(Map.empty)
-        // Detection starts over from nothing, but the reps already counted stand: switching cameras mid-set is a
-        // change of viewpoint, not a new workout. Absorbing them into the baseline first is what keeps them.
-        baseline += counter.reading.count
+        // Detection starts over from nothing, but what was already counted stands: switching cameras mid-set is a
+        // change of viewpoint, not a new workout. Absorbing it into the baseline first is what keeps it -- the whole
+        // of it, since a set whose calories reset at a camera change would be no better off than one whose reps did.
+        val carried = counter.reading
+        baseline = ResumedRun(
+          baseline.count + carried.count,
+          baseline.cadenceSum + carried.cadenceSum,
+          baseline.elapsedSeconds + carried.elapsedSeconds
+        )
         counter.reset()
         totalSamples = 0
-        repCount.set(baseline)
+        repCount.set(baseline.count)
         lock.set(LockState.Acquiring(0, 0))
 
       def startCamera(deviceId: Option[String] = None): Unit =
@@ -846,6 +1238,7 @@ object Main:
                 onClick --> (_ => captureTrace())
               )
             ,
+            menuItem("Settings", () => settingsOpen.set(true)),
             menuItem("About", () => openAbout()),
             menuItem("Back", () => show(Screen.Selection)),
             menuItem("Logout", () => logout())
@@ -919,21 +1312,25 @@ object Main:
     val app =
       div(
         cls := "app",
-        // The bench is the only screen built for a desktop, so it is the only one let out of the phone-width frame.
+        // The bench and the dashboard are the two screens not held to a hand's width: the bench frames what a camera
+        // on a tripod sees, and the dashboard is read across a room from a tablet that may be either way up. Every
+        // other view is deliberately kept to a phone's frame, which is the device it is actually used on.
         cls("wide") <-- stateStore.signal
           .map(Shell.of)
           .distinct
           .map:
-            case Shell.SignedIn(_, Screen.Bench) => true
-            case _                               => false
+            case Shell.SignedIn(_, Screen.Bench)     => true
+            case Shell.SignedIn(_, Screen.Dashboard) => true
+            case _                                   => false
         ,
         child <-- stateStore.signal
           .map(Shell.of)
           .distinct
           .map:
-            // The acquirer keeps its own Back and Logout below the count, so the global bar would only duplicate it.
-            case Shell.SignedIn(_, Screen.Acquirer) => emptyNode
-            case Shell.SignedIn(_, _)               => userActions
+            // Both keep their own About and Logout in the menu, so the global bar would only duplicate them.
+            case Shell.SignedIn(_, Screen.Acquirer)  => emptyNode
+            case Shell.SignedIn(_, Screen.Dashboard) => emptyNode
+            case Shell.SignedIn(_, _)                => userActions
             // Reachable before signing in as well. Which build a browser is running is exactly the thing one wants
             // to check on a device that will not behave, and being signed out is no reason not to be able to look.
             case Shell.Login | Shell.AuthenticationFailed(_) => aboutOnly
@@ -1028,6 +1425,11 @@ object Main:
                   content
                 )
               )
+        ,
+        child <-- settingsOpen.signal
+          .map:
+            case false => emptyNode
+            case true  => settingsPanel()
         ,
         child <-- takeoverPending.signal
           .map:

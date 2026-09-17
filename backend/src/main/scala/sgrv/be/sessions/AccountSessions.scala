@@ -4,8 +4,10 @@ import com.google.cloud.Timestamp
 import com.google.cloud.firestore.{DocumentReference, Firestore}
 import java.time.{Duration, Instant}
 import scala.jdk.CollectionConverters.*
+import sgrv.api.AccountSettings
 import sgrv.be.store.GoogleFuture
 import zio.{Clock, Task, ZIO}
+import zio.json.*
 
 /** One account, and the counting sessions it has held.
   *
@@ -34,6 +36,14 @@ private[sessions] object AccountSchema:
 
   /** Which browser session is counting, so a takeover is a change of hand rather than a new session. */
   val counter = "counter"
+
+  /** What the account has set, as the JSON the two ends already agree on.
+    *
+    * One string rather than a nest of fields, for the reason the traces are: nothing is ever queried by a weight or a
+    * factor, and a document that named each of them would have every exercise's every field indexed for the benefit of
+    * no reader at all.
+    */
+  val settings = "settings"
 
 private[sessions] enum SessionEnd:
   case LoggedOut, Idle, TakenOver
@@ -176,6 +186,35 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
         )
       )
     yield ()
+
+  /** What the account has set, or nothing when it has never said.
+    *
+    * Unreadable settings are treated as absent rather than as a failure: the shape can only have changed because this
+    * app changed it, and refusing to open a dashboard over a field it no longer understands would be a worse outcome
+    * than starting again from the defaults.
+    */
+  def settings(name: String): Task[Option[AccountSettings]] =
+    GoogleFuture
+      .fromApiFuture(account(name).get())
+      .flatMap: snapshot =>
+        Option
+          .when(snapshot.exists)(Option(snapshot.getString(AccountSchema.settings)))
+          .flatten
+          .fold(ZIO.none): stored =>
+            stored.fromJson[AccountSettings] match
+              case Right(settings) => ZIO.some(settings)
+              case Left(details)   =>
+                ZIO.logWarning(s"Ignoring unreadable account settings: $details").as(None)
+
+  def saveSettings(name: String, settings: AccountSettings): Task[Unit] =
+    GoogleFuture
+      .fromApiFuture(
+        account(name).set(
+          Map[String, AnyRef](AccountSchema.settings -> settings.toJson).asJava,
+          com.google.cloud.firestore.SetOptions.merge()
+        )
+      )
+      .unit
 
   /** Files a captured recording under the session that produced it. */
   def recordTrace(name: String, session: String, traceId: String, fields: Map[String, AnyRef]): Task[Unit] =
