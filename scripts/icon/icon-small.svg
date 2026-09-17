@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#0b0d0f"/>
+  <!-- The same mark without the tally or the fine detail, scaled to fill the frame. A favicon is sixteen
+       pixels across: everything that is a nice touch at 512 is a grey smudge there, sitting on top of the
+       one shape that could still have read. -->
+  <g transform="translate(6,-64) scale(1.06)">
+  <g stroke="#0b0d0f" stroke-width="11">
+    <rect x="261" y="216" width="156" height="38" rx="19" fill="#cdd6d4"/>
+    <rect x="223" y="184" width="48" height="102" rx="18" fill="#cdd6d4"/>
+    <rect x="407" y="184" width="48" height="102" rx="18" fill="#cdd6d4"/>
+  </g>
+  <g fill="#9aa5a3">
+    <rect x="271" y="204" width="18" height="62" rx="8"/>
+    <rect x="389" y="204" width="18" height="62" rx="8"/>
+  </g>
+
+  <!-- The arm, turned about its elbow to stand the upper arm at 30 degrees to the horizontal and the forearm at 60.
+       Drawn upright and rotated rather than redrawn at an angle: the shapes were the hard part, and an angle is a
+       transform. The turn is 32.8 rather than 30 because the elbow as drawn is 91 degrees and not 90, so no single
+       rotation puts both segments exactly where they are wanted; this one splits the half-degree between them. -->
+  <g transform="translate(-18,32) scale(0.9) rotate(32.8, 285, 415)">
+    <path fill="#e8b04b" d="
+      M 36 388
+      C 40 320, 92 282, 144 292
+      C 186 300, 212 322, 220 350
+      C 226 316, 230 284, 232 258
+      C 216 234, 210 204, 220 182
+      C 232 152, 268 140, 298 150
+      C 328 160, 342 190, 334 218
+      C 330 238, 322 248, 320 266
+      L 320 396
+      C 320 440, 292 466, 252 466
+      L 106 468
+      C 64 468, 36 444, 36 406
+      Z"/>
+    <path d="M 84 340 Q 142 300 196 338" stroke="#f6cf84" stroke-width="22" stroke-linecap="round" fill="none"/>
+  </g>
+  </g>
+</svg>
