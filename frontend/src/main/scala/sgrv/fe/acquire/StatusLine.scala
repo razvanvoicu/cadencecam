@@ -13,8 +13,12 @@ private[fe] object StatusLine:
       if needed == 0 then "Waiting for the camera…" else s"Finding a cadence… about ${seconds}s"
     case LockState.Searching => "No steady cadence — paused"
     // Kept short enough to sit on one line between the reset control and its counterweight.
-    case LockState.Locked(channel, partner, periodSeconds) =>
-      f"Counting $channel+$partner · $periodSeconds%.1fs/rep"
+    //
+    // The two quadrants that agreed are deliberately not named. They were shown while this screen was a bench
+    // instrument, and they read to anyone else as a fault code: nothing about "Q4+Q2" can be acted on by the person
+    // holding the phone, and it displaced the one thing that can be -- the cadence being counted.
+    case LockState.Locked(_, _, periodSeconds) =>
+      f"Counting · $periodSeconds%.1fs/rep"
 
   /** What a watching device shows before its first reading arrives, or once the acquirer has gone away. */
   val Waiting = "Waiting for the acquirer…"

@@ -404,7 +404,6 @@ object Main:
       // How far the movement stands above the background, kept whether or not a cadence has been found: a movement
       // too faint to count looks from the outside exactly like no movement at all.
       val signalMargin = Var(Option.empty[Double])
-      val noiseLevel = Var(Option.empty[Double])
       // Derived from the camera itself rather than chosen: one on the same side as the screen is shown mirrored,
       // one facing away is not. Not persisted, since it belongs to the hardware rather than to the user.
       val mirrored = Var(false)
@@ -515,7 +514,6 @@ object Main:
         repCount.set(total)
         lock.set(reading.lock)
         signalMargin.set(reading.margin)
-        noiseLevel.set(reading.noise)
         publish()
         tick.update(_ + 1)
         sampleCount += 1
@@ -546,7 +544,6 @@ object Main:
         restOffsets.set(Map.empty)
         lock.set(LockState.Acquiring(0, 0))
         signalMargin.set(None)
-        noiseLevel.set(None)
         // Cleared rather than saved as zero: a reload should find nothing to resume, rather than a zero that goes on
         // being resumed for the rest of the retention window.
         repCountStore.clear()
@@ -693,7 +690,8 @@ object Main:
         val pane = canvasTag(cls := "signal-canvas")
         div(
           cls := "signal-pane",
-          span(cls := "signal-label", quadrant.toString),
+          // Unlabelled. The panes are laid out as the quadrants are, so where a trace sits already says which part of
+          // the frame it came from -- and "Q2" says that to nobody who has not read the detector.
           // Marks the channel the count is taken from, and the channel corroborating it. One marker in one place,
           // coloured by role: a quadrant is never both at once, and two markers at different offsets made the same
           // fact appear in two different spots depending on which role it happened to be.
@@ -707,7 +705,7 @@ object Main:
               case LockState.Locked(_, partner, _) => partner == quadrant
               case _                               => false
             ,
-            // The status line already names both in words; this is the same fact placed on the trace.
+            // Decoration over the trace it belongs to, and nothing a screen reader can do anything with.
             aria.hidden := true
           ),
           pane,
@@ -802,7 +800,7 @@ object Main:
                 )
           ),
           Readouts.reading(repCount.signal.map(_.toString), "reps"),
-          Readouts.controls(statusText, () => resetCount(), signalMargin.signal, noiseLevel.signal),
+          Readouts.controls(statusText, () => resetCount(), signalMargin.signal),
           div(
             cls := "acquirer-actions",
             cls("open") <-- menuOpen.signal,

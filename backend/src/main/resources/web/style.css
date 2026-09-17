@@ -285,7 +285,7 @@ button,
 
 /* The foot of the panel: reset at the left, the lock reading filling the rest. Sharing the row rather than
    floating over it means the button occupies the corner without costing height or covering the text. */
-/* Three tracks: the control, the line, and the gauges. The outer two are the same width, so the middle one lands on
+/* Three tracks: the control, the line, and the gauge. The outer two are the same width, so the middle one lands on
    the centre of the panel by construction -- where the flex row needed a spacer element kept in step with the button
    by hand, and the reading drifted off centre whenever the two fell out of step. */
 .control-row {
@@ -295,14 +295,8 @@ button,
   gap: 0.75rem;
 }
 
-/* The room above the movement, stacked in the counterweight's track. Rows sized by content, so a gauge with nothing
-   to say takes no height and the pair stays centred on the control opposite. */
-.gauges {
-  display: grid;
-  grid-template-rows: auto auto;
-  gap: 0.2rem;
-}
-
+/* The room above the movement, in the counterweight's track. Sized by content, so a gauge with nothing to say takes
+   no height and stays centred on the control opposite. */
 .gauge {
   display: grid;
   place-items: center;
@@ -321,27 +315,24 @@ button,
   margin-bottom: 0;
 }
 
-/* Colour carries the band and the number carries the value, so neither alone has to be relied on. The two gauges
-   share one set of bands: green means "this will not stop you counting", red means "this will". */
-.signal-badge.strong,
-.noise-badge.strong {
+/* Colour carries the band and the number carries the value, so neither alone has to be relied on: green means
+   "this will not stop you counting", red means "this will". */
+.signal-badge.strong {
   background: rgb(53 196 106 / 18%);
   color: #35c46a;
 }
 
-.signal-badge.adequate,
-.noise-badge.adequate {
+.signal-badge.adequate {
   background: rgb(245 158 11 / 18%);
   color: #f59e0b;
 }
 
-.signal-badge.weak,
-.noise-badge.weak {
+.signal-badge.weak {
   background: rgb(239 68 68 / 18%);
   color: #ef4444;
 }
 
-/* One size for the control and the gauges opposite it, named so the grid's outer tracks and the button cannot fall
+/* One size for the control and the gauge opposite it, named so the grid's outer tracks and the button cannot fall
    out of step -- which is what the old spacer element existed to prevent, and sometimes did not. */
 :root {
   --control-size: 2.5rem;
@@ -804,20 +795,6 @@ button,
   opacity: 1;
 }
 
-.signal-label {
-  position: absolute;
-  top: 0.15rem;
-  /* The trace runs the full height of the pane, so the label needs its own ground to stay readable over a peak. */
-  padding: 0 0.25rem;
-  background: var(--panel-bg);
-  border-radius: 3px;
-  color: var(--muted);
-  font-size: 0.7rem;
-  font-weight: 600;
-  left: 0.3rem;
-  letter-spacing: 0.04em;
-  pointer-events: none;
-}
 
 /* Three columns with equal, flexible outer ones: the middle column lands on the centre of the panel whatever the
    label beside it is, so the number itself is centred rather than the number-and-label pair. minmax(0, ...) keeps a

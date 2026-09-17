@@ -8,7 +8,14 @@ class StatusLineSuite extends FunSuite:
     assertEquals(StatusLine.of(LockState.Acquiring(0, 0)), "Waiting for the camera…")
     assertEquals(StatusLine.of(LockState.Acquiring(50, 150)), "Finding a cadence… about 10s")
     assertEquals(StatusLine.of(LockState.Searching), "No steady cadence — paused")
-    assertEquals(StatusLine.of(LockState.Locked(Quadrant.Q4, Quadrant.Q2, 1.04)), "Counting Q4+Q2 · 1.0s/rep")
+    assertEquals(StatusLine.of(LockState.Locked(Quadrant.Q4, Quadrant.Q2, 1.04)), "Counting · 1.0s/rep")
+
+  test("which quadrants agreed is never put in front of the person counting"):
+    // A quadrant name is a fault code to anyone who is not debugging the detector, and it displaced the one figure
+    // on that line that can be acted on.
+    val counting = StatusLine.of(LockState.Locked(Quadrant.Q4, Quadrant.Q2, 1.04))
+
+    assert(Quadrant.All.forall(quadrant => !counting.contains(quadrant.toString)), counting)
 
   test("a countdown never runs backwards past zero"):
     assertEquals(StatusLine.of(LockState.Acquiring(200, 150)), "Finding a cadence… about 0s")
