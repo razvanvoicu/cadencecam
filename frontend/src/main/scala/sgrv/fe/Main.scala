@@ -607,27 +607,41 @@ object Main:
       val reps = reading.map(_.fold(0)(_.reps))
       val elapsedSeconds = reading.map(_.fold(0.0)(_.elapsedSeconds))
 
-      /** Everything on the screen is a function of the reading and the account's settings, so the two are combined once
-        * and every figure below is read off the result. Separately derived signals would each re-evaluate the same
-        * arithmetic and, worse, could disagree about which reading they were describing.
+      /** The last few reps, as they were when each was counted. Kept here rather than sent, because a pace is a
+        * property of the reps a watcher has seen and the counter has no reason to hold a second window of its own.
+        */
+      val window = Var(Vector.empty[Effort.RepMark])
+
+      /** Everything on the screen is a function of the reading, the window and the account's settings, so the three are
+        * combined once and every figure below is read off the result. Separately derived signals would each re-evaluate
+        * the same arithmetic and, worse, could disagree about which reading they were describing.
         */
       val figures = reading
-        .combineWith(accountSettings.signal)
-        .map: (latest, settings) =>
+        .combineWith(window.signal, accountSettings.signal)
+        .map: (latest, marks, settings) =>
           val counted = latest.fold(0)(_.reps)
           val elapsedMinutes = latest.fold(0.0)(_.elapsedSeconds) / 60.0
-          (counted, elapsedMinutes, Effort.calories(counted, latest.fold(0.0)(_.cadenceSum), settings))
+          val calories = Effort.calories(counted, latest.fold(0.0)(_.cadenceSum), settings)
+          (counted, elapsedMinutes, calories, Effort.pace(marks), Effort.burn(marks, settings))
 
       val boundary = elapsedSeconds.map(seconds => Effort.boundaryLabel(Effort.boundaryMinutes(seconds / 60.0)))
 
-      def figure(of: ((Int, Double, Double)) => Option[Double], show: Double => String): Signal[String] =
+      def figure(
+          of: ((Int, Double, Double, Option[Double], Option[Double])) => Option[Double],
+          show: Double => String
+      ): Signal[String] =
         figures.map(values => of(values).fold(Effort.Absent)(show))
 
-      val repsPerMinute = figure((reps, minutes, _) => Effort.perMinute(reps.toDouble, minutes), Effort.rate)
-      val repsAtBoundary = figure((reps, minutes, _) => Effort.atBoundary(reps.toDouble, minutes), Effort.grouped)
-      val calories = figures.map((_, _, calories) => Effort.grouped(calories))
-      val caloriesPerMinute = figure((_, minutes, calories) => Effort.perMinute(calories, minutes), Effort.rate)
-      val caloriesAtBoundary = figure((_, minutes, calories) => Effort.atBoundary(calories, minutes), Effort.grouped)
+      val repsPerMinute = figure((_, _, _, pace, _) => pace, Effort.rate)
+      val repsAtBoundary =
+        figure(
+          (reps, minutes, _, pace, _) => pace.flatMap(Effort.atBoundary(reps.toDouble, _, minutes)),
+          Effort.grouped
+        )
+      val calories = figures.map((_, _, calories, _, _) => Effort.grouped(calories))
+      val caloriesPerMinute = figure((_, _, _, _, burn) => burn, Effort.rate)
+      val caloriesAtBoundary =
+        figure((_, minutes, calories, _, burn) => burn.flatMap(Effort.atBoundary(calories, _, minutes)), Effort.grouped)
 
       /** Three situations that a single "waiting" would render identical, told apart.
         *
@@ -646,8 +660,25 @@ object Main:
 
       def readUpdate(text: String): Unit =
         text.fromJson[LiveState] match
-          case Right(state)  => live.set(Some(state))
+          case Right(state) =>
+            live.set(Some(state))
+            state.reading.foreach(mark)
           case Left(details) => dom.console.warn(s"Ignoring an unreadable update: $details")
+
+      /** Notes a reading in the pace window, but only when it carries reps the window has not seen.
+        *
+        * Readings arrive about once a second whether or not anything was counted, so recording every one would make the
+        * window a second of history rather than ten reps of it. A count that has gone backwards is a reset at the other
+        * end, and the reps before it belong to a set that is over.
+        */
+      def mark(latest: LiveReading): Unit =
+        window.update: marks =>
+          marks.lastOption match
+            case Some(previous) if latest.reps < previous.reps  => Vector.empty
+            case Some(previous) if latest.reps == previous.reps => marks
+            case _                                              =>
+              val noted = Effort.RepMark(latest.reps, latest.lastRepSeconds, latest.cadenceSum)
+              (marks :+ noted).takeRight(Effort.PaceWindowReps)
 
       /** The direct link to the counting device, which the readings travel over.
         *
@@ -877,7 +908,10 @@ object Main:
             // Whole seconds. The clock runs on while a set rests, so an unrounded figure would differ on every one
             // of the ten samples a second and publish ten updates a second to say so.
             elapsedSeconds = math.round(baseline.elapsedSeconds + counter.elapsedSeconds).toDouble,
-            cadenceSum = baseline.cadenceSum + counter.reading.cadenceSum
+            cadenceSum = baseline.cadenceSum + counter.reading.cadenceSum,
+            // To a tenth, which is the sample clock's own resolution: this is what a cadence is measured over, and it
+            // changes only when a rep is counted, so it costs nothing to send exactly.
+            lastRepSeconds = math.round((baseline.elapsedSeconds + counter.lastRepSeconds) * 10.0) / 10.0
           )
         if !lastPublished.contains(reading) then
           // To whoever is watching, over their own link. Nothing is published when nobody is: a count with no

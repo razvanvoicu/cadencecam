@@ -39,7 +39,15 @@ final case class LiveReading(
       * the part only the counting device can measure -- when each rep happened -- and the account's own settings turn
       * it into energy at the other end.
       */
-    cadenceSum: Double = 0.0
+    cadenceSum: Double = 0.0,
+    /** When the most recent counted rep happened, on the same clock as `elapsedSeconds`.
+      *
+      * Separate from that clock, and to a tenth of a second where it is rounded to whole ones, because it is what a
+      * watching device measures a cadence over. The clock ticks between reps and so has to be coarse or it would be
+      * republished ten times a second; this changes only when a rep is counted, so it can afford to be exact -- and a
+      * pace taken over whole seconds would wander by five per cent on the rounding alone.
+      */
+    lastRepSeconds: Double = 0.0
 )
 
 object LiveReading:

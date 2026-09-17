@@ -18,14 +18,19 @@ private[fe] object Effort:
     */
   val BoundaryStepMinutes = 30
 
-  /** How long a set must have run before it is extrapolated at all.
+  /** How many readings a rate is taken over: eleven, so the span between the first and the last is the duration of the
+    * last ten reps.
     *
-    * A projection is a multiplication by `boundary / elapsed`, and at four seconds in that is a multiplication by four
-    * hundred: the figure would be a restatement of the first two reps with two orders of magnitude of confidence
-    * attached. Half a minute is the point at which the number it produces is about the exercise rather than about its
-    * first gap.
+    * A window rather than the whole session, because what someone watching mid-set wants to know is how fast they are
+    * going now. A session average answers a different question and answers it more slowly every minute: twenty minutes
+    * in, a rep at twice the pace moves it by a fiftieth, and the figure appears not to respond at all.
+    *
+    * The floor this replaces was a minimum elapsed time before anything was projected, needed because the projection
+    * used to scale the whole figure by `boundary / elapsed` and at four seconds in that was a multiplication by four
+    * hundred. Projecting only the remainder needs no such guard: the window itself will not report a pace until two
+    * reps have been counted a moment apart.
     */
-  val MinimumProjectionSeconds = 30.0
+  val PaceWindowReps = 11
 
   /** The next round boundary the workout has not yet reached, in minutes.
     *
@@ -47,19 +52,49 @@ private[fe] object Effort:
       val hours = minutes / 60.0
       if hours == math.floor(hours) then s"${hours.toInt} h" else f"$hours%.1f h"
 
-  /** A rate per minute, or nothing while there is no clock to divide by. */
+  /** One reading as it stood at the moment a rep was counted: the figures, and when that rep happened.
+    *
+    * Kept rather than the calories themselves, because those depend on settings that can change while the dashboard is
+    * open, and a window holding figures computed under an old factor would report a rate that never happened.
+    */
+  final case class RepMark(reps: Int, atSeconds: Double, cadenceSum: Double)
+
+  /** The pace over the window, in reps per minute, or nothing until it holds two marks a moment apart. */
+  def pace(window: Seq[RepMark]): Option[Double] = rateOver(window, mark => mark.reps.toDouble)
+
+  /** The same window read in calories per minute. */
+  def burn(window: Seq[RepMark], settings: AccountSettings): Option[Double] =
+    rateOver(window, mark => calories(mark.reps, mark.cadenceSum, settings))
+
+  /** How fast something grew across the window, per minute.
+    *
+    * From the ends rather than from a count of marks: the detector confirms its first run of reps all at once, so one
+    * mark can carry five reps, and assuming one apiece would report a fifth of the true pace at the start of a set.
+    */
+  private def rateOver(window: Seq[RepMark], of: RepMark => Double): Option[Double] =
+    for
+      first <- window.headOption
+      last <- window.lastOption
+      span = last.atSeconds - first.atSeconds
+      if span > 0
+      grown = of(last) - of(first)
+      if grown.isFinite
+    yield grown * 60.0 / span
+
+  /** A rate per minute over a whole session, or nothing while there is no clock to divide by. */
   def perMinute(total: Double, elapsedMinutes: Double): Option[Double] =
     Option.when(elapsedMinutes > 0 && total.isFinite)(total / elapsedMinutes)
 
-  /** What the total reaches at the next boundary if the pace so far is kept.
+  /** What the total reaches at the next boundary if the current pace is kept up to it.
     *
-    * Proportional to the average rather than built from the pace of the last few reps: those two are the same
-    * arithmetic when the rate used is the average, and using the recent pace instead would make the projection lurch by
-    * hundreds every time someone paused for breath.
+    * The total is real and only the remainder is projected, which is a far smaller claim than scaling the whole figure
+    * by `boundary / elapsed` -- what this replaces, and which could only ever move as slowly as the average it was
+    * built on. Fed the windowed pace, it answers the question actually being asked: keep going like this, and where
+    * does it end up.
     */
-  def atBoundary(total: Double, elapsedMinutes: Double): Option[Double] =
-    Option.when(elapsedMinutes * 60.0 >= MinimumProjectionSeconds && total.isFinite):
-      total * boundaryMinutes(elapsedMinutes) / elapsedMinutes
+  def atBoundary(total: Double, perMinute: Double, elapsedMinutes: Double): Option[Double] =
+    Option.when(total.isFinite && perMinute.isFinite):
+      total + perMinute * math.max(0.0, boundaryMinutes(elapsedMinutes) - elapsedMinutes)
 
   /** Energy, by whichever of the two measures the chosen exercise is counted by.
     *

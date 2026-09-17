@@ -42,27 +42,59 @@ class EffortSuite extends FunSuite:
     assertEquals(Effort.perMinute(100.0, 0.0), None)
     assertEquals(Effort.perMinute(100.0, 4.0), Some(25.0))
 
-  test("the projection is the pace so far carried to the horizon"):
-    // Two hundred reps in twenty minutes is ten a minute, so half an hour of it is three hundred.
-    assertEquals(Effort.atBoundary(200.0, 20.0), Some(300.0))
-    // Past the half hour the same pace is carried to the hour instead.
-    assertEquals(Effort.atBoundary(400.0, 40.0), Some(600.0))
+  test("the projection carries the current pace over the time that is left"):
+    // Two hundred reps at twenty minutes, still going at ten a minute: ten more minutes to the half hour, so three
+    // hundred. Only the remainder is projected; the two hundred already counted are not a claim about anything.
+    assertEquals(Effort.atBoundary(200.0, 10.0, 20.0), Some(300.0))
+    // Past the half hour the horizon is the hour, so the same pace is carried twenty minutes further.
+    assertEquals(Effort.atBoundary(400.0, 10.0, 40.0), Some(600.0))
 
-  test("the projection and the rate beside it are the same statement"):
-    // A dashboard showing a rate and a projection that do not imply each other invites arithmetic that fails, so
-    // the projection is the total plus the shown rate over the time left, by construction.
-    val total = 247.0
-    val minutes = 12.0
-    val rate = Effort.perMinute(total, minutes).get
-    val horizon = Effort.boundaryMinutes(minutes)
+  test("a projection at the boundary itself claims nothing beyond the total"):
+    assertEquals(Effort.atBoundary(300.0, 10.0, 30.0 - 1e-9).map(_.round), Some(300L))
 
-    assertEqualsDouble(Effort.atBoundary(total, minutes).get, total + rate * (horizon - minutes), 1e-9)
+  test("the projection moves with the pace beside it, rep by rep"):
+    // The point of the change: a dashboard whose projection could only crawl was reporting an average rather than
+    // what the exerciser was doing, and a rep taken faster has to show up in both figures at once.
+    val steady = Effort.atBoundary(200.0, 10.0, 20.0).get
+    val faster = Effort.atBoundary(200.0, 12.0, 20.0).get
 
-  test("nothing is extrapolated from the opening seconds of a set"):
-    // At four seconds in, a projection to the half hour is a multiplication by four hundred and fifty: it would be a
-    // restatement of the first gap between two reps, with two orders of magnitude of confidence attached.
-    assertEquals(Effort.atBoundary(2.0, 4.0 / 60.0), None)
-    assert(Effort.atBoundary(2.0, Effort.MinimumProjectionSeconds / 60.0).isDefined)
+    assertEqualsDouble(faster - steady, 20.0, 1e-9)
+
+  private def marks(gapSeconds: Double, count: Int, from: Double = 0.0) =
+    (0 until count).map(i => Effort.RepMark(i + 1, from + i * gapSeconds, (i * 1.0 / gapSeconds))).toVector
+
+  test("the pace is the last ten reps, not the whole session"):
+    // Eleven marks a second and a half apart: ten reps over fifteen seconds is forty a minute.
+    val window = marks(1.5, Effort.PaceWindowReps)
+
+    assertEqualsDouble(Effort.pace(window).get, 40.0, 1e-9)
+
+  test("the pace answers within a rep of the cadence changing"):
+    // A window that has just taken in one much faster rep must move, which is what "instantaneous" has to mean.
+    val steady = marks(2.0, Effort.PaceWindowReps)
+    val quickened = steady.dropRight(1) :+ Effort.RepMark(steady.last.reps, steady.last.atSeconds - 1.0, 0.0)
+
+    assert(Effort.pace(quickened).get > Effort.pace(steady).get * 1.05)
+
+  test("a window is read from its ends, so a batch of reps counted at once is not a slow set"):
+    // The detector confirms its first run all at once, so one reading can carry five reps. Counting marks rather
+    // than reps would report a fifth of the true pace at the start of every set.
+    val batched = Vector(Effort.RepMark(5, 0.0, 0.0), Effort.RepMark(6, 2.0, 0.0), Effort.RepMark(10, 8.0, 0.0))
+
+    assertEqualsDouble(Effort.pace(batched).get, (10 - 5) * 60.0 / 8.0, 1e-9)
+
+  test("a window with nothing to measure over reports nothing rather than a number"):
+    assertEquals(Effort.pace(Vector.empty), None)
+    assertEquals(Effort.pace(Vector(Effort.RepMark(1, 3.0, 0.0))), None)
+    // Two marks at the same instant: a span of zero is not a pace of infinity.
+    assertEquals(Effort.pace(Vector(Effort.RepMark(1, 3.0, 0.0), Effort.RepMark(2, 3.0, 0.0))), None)
+
+  test("calories are paced over the same window as the reps"):
+    val settings = exercise(CountsBy.Frequency, 1.0)
+    val window = Vector(Effort.RepMark(1, 0.0, 0.0), Effort.RepMark(11, 15.0, 8.0))
+    val burned = Effort.calories(11, 8.0, settings) - Effort.calories(1, 0.0, settings)
+
+    assertEqualsDouble(Effort.burn(window, settings).get, burned * 60.0 / 15.0, 1e-9)
 
   test("counting by reps multiplies the count by the weight and the factor, over the hundred"):
     assertEqualsDouble(Effort.calories(100, 999.0, exercise(CountsBy.RepCount, 1.5)), 100 * 80.0 * 1.5 / 100, 1e-9)

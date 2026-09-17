@@ -384,6 +384,18 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
   def elapsedSeconds: Double =
     firstRepAt.fold(0.0)(first => math.max(0.0, (latestSample - first).toDouble / settings.sampleRateHz))
 
+  /** When the most recent counted rep happened, on that same clock.
+    *
+    * What a cadence is measured between. The clock above runs on through a rest, which is right for a rate over a whole
+    * session and wrong for one over the last few reps: dividing by it would have a pace fall while nothing was
+    * happening, which is a statement about the rest rather than about the reps it is supposed to describe.
+    */
+  def lastRepSeconds: Double =
+    (for
+      first <- firstRepAt
+      last <- lastRepAt
+    yield math.max(0.0, (last - first).toDouble / settings.sampleRateHz)).getOrElse(0.0)
+
   /** The pace of the last few reps, in reps per minute, or zero when too few have been seen to say.
     *
     * Measured across the gaps between counted reps rather than from the detected period: the period is what the
