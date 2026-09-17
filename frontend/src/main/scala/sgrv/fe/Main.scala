@@ -230,25 +230,23 @@ object Main:
             val message = Option(error.getMessage).map(_.trim).filter(_.nonEmpty).getOrElse("The request failed.")
             stateStore.update(_.copy(logoutState = LogoutState.Failed(message)))
 
+    /** The menu for the screens that have no header of their own to hang one from.
+      *
+      * A menu rather than the row of links it replaces, so that every screen in the app opens the same sheet with the
+      * same entries in it. The two documents are why: whichever screen somebody happens to be on when they go looking
+      * for a privacy policy is the screen it has to be on.
+      */
     def userActions: Element =
+      val open = Var(false)
       div(
         cls := "user-actions",
-        a(
-          cls := "about-link",
-          href := "/about",
-          onClick.preventDefault --> (_ => openAbout()),
-          "About"
-        ),
-        button(
-          cls := "logout-link",
-          typ := "button",
-          disabled <-- stateStore.signal.map(_.logoutState == LogoutState.InProgress),
-          child.text <-- stateStore.signal
-            .map(_.logoutState)
-            .map:
-              case LogoutState.InProgress => "Logging out…"
-              case _                      => "Logout",
-          onClick --> (_ => logout())
+        Menu.toggle(open),
+        Menu.backdrop(open),
+        Menu.sheet(
+          open,
+          Menu.item(open, "About", () => openAbout()),
+          Menu.documentItems(open),
+          Menu.item(open, "Logout", () => logout())
         )
       )
 

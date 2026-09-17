@@ -97,29 +97,6 @@ button,
   min-height: 2.75rem;
 }
 
-
-.about-link,
-.logout-link {
-  color: var(--fg);
-  font-size: 0.95rem;
-  font-weight: 600;
-  text-underline-offset: 0.2rem;
-}
-
-.logout-link {
-  padding: 0;
-  background: transparent;
-  border: 0;
-  font-family: inherit;
-  text-decoration: underline;
-  cursor: pointer;
-}
-
-.logout-link:disabled {
-  cursor: wait;
-  opacity: 0.65;
-}
-
 .welcome {
   margin: 0 0 0.35rem;
   font-size: 1.5rem;
@@ -1051,10 +1028,6 @@ button,
     border-color: var(--accent);
   }
 
-  .about-link:hover,
-  .logout-link:hover:not(:disabled) {
-    text-decoration-thickness: 2px;
-  }
 }
 
 .logout-error {
