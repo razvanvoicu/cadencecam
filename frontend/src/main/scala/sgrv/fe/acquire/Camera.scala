@@ -169,10 +169,14 @@ private[fe] object Camera:
     ManualControl("focusMode", Seq("focusDistance"))
   )
 
-  /** How long the camera stays automatic before being held still.
+  /** The least time the camera is left automatic before anything is held still.
     *
-    * Locking the instant the stream opens freezes whatever the sensor started with, before metering has converged —
-    * often far too dark or too bright to see anything in. A moment of automatic first gives it something worth holding.
+    * A floor under the steadiness test rather than the whole of the wait, and it went missing when the fixed wait was
+    * replaced by that test. The test alone is not enough: a camera's reported settings commonly do not move in the
+    * first fraction of a second after a stream opens, because metering has not begun rather than because it has
+    * finished — and two such readings agree. The controls were then pinned a quarter of a second in, at whatever the
+    * sensor happened to start with, which is the dark picture this was supposed to have ended. Agreement is believed
+    * only once this much has passed.
     */
   private[acquire] val settleBeforeLockMillis = 1500
 
@@ -194,6 +198,14 @@ private[fe] object Camera:
     * quantised, so an exact match is too much to ask, but a picture four stops dark is not a rounding difference.
     */
   private[acquire] val honouredWithin = 0.1
+
+  /** Whether metering may be taken as having settled: two readings that agree, and never before the floor.
+    *
+    * The two tests are not interchangeable and neither works alone. Agreement without the floor believes a camera that
+    * has not started metering yet; the floor without agreement is the fixed wait that froze a half-converged value.
+    */
+  private[acquire] def settledEnough(waited: Int, before: js.Dynamic, now: js.Dynamic): Boolean =
+    waited >= settleBeforeLockMillis && before != null && steady(before, now)
 
   /** Whether the values a camera reports have stopped moving, over the settings actually being held. */
   private[acquire] def steady(before: js.Dynamic, now: js.Dynamic): Boolean =
@@ -373,10 +385,12 @@ private[fe] object Camera:
                 val after = js.JSON.stringify(dynamic.getSettings())
                 ControlOutcome("attempted", locked.filterNot(abandoned.contains), skipped ++ abandoned, Some(after))
 
-  /** Waits until two consecutive readings of the camera's settings agree, or until the wait is given up on. */
+  /** Waits until two consecutive readings of the camera's settings agree, and never less than the settling floor, or
+    * until the wait is given up on.
+    */
   private def whenSteady(dynamic: js.Dynamic, waited: Int = 0, before: js.Dynamic = null): Future[js.Dynamic] =
     val now = dynamic.getSettings()
-    if before != null && steady(before, now) then Future.successful(now)
+    if settledEnough(waited, before, now) then Future.successful(now)
     else if waited >= steadyGiveUpMillis then
       dom.console.info(s"Metering had not settled after ${steadyGiveUpMillis}ms; holding what it had reached")
       Future.successful(now)

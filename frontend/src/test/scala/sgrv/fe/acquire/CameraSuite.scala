@@ -209,6 +209,29 @@ class CameraSuite extends FunSuite:
     assert(Camera.steadyGiveUpMillis > Camera.settleBeforeLockMillis)
     assert(Camera.steadyPollMillis > 0 && Camera.steadyPollMillis < Camera.steadyGiveUpMillis)
 
+  test("a camera whose settings have not moved yet is not mistaken for one that has finished metering"):
+    // How the picture went dark again. The readings a camera gives in the first fraction of a second after a stream
+    // opens are commonly identical -- metering has not begun, rather than having finished -- and two identical
+    // readings satisfy the steadiness test on their own, so the controls were pinned a quarter of a second in at
+    // whatever the sensor started with.
+    val opening = js.Dynamic.literal("exposureTime" -> 40.0, "iso" -> 320)
+    val unmoved = js.Dynamic.literal("exposureTime" -> 40.0, "iso" -> 320)
+
+    assert(Camera.steady(opening, unmoved), "the readings do agree")
+    assert(!Camera.settledEnough(Camera.steadyPollMillis, opening, unmoved), "but far too early to believe them")
+    assert(Camera.settledEnough(Camera.settleBeforeLockMillis, opening, unmoved), "believed once the floor has passed")
+
+  test("metering that is still moving is not settled, however long it has been waited on"):
+    val climbing = js.Dynamic.literal("exposureTime" -> 40.0, "iso" -> 320)
+    val arrived = js.Dynamic.literal("exposureTime" -> 83.3, "iso" -> 100)
+
+    assert(!Camera.settledEnough(Camera.steadyGiveUpMillis, climbing, arrived))
+
+  test("the first reading has nothing to be compared against and settles nothing"):
+    val first = js.Dynamic.literal("exposureTime" -> 83.3, "iso" -> 100)
+
+    assert(!Camera.settledEnough(Camera.steadyGiveUpMillis, null, first))
+
   test("a setting the camera reports as absent on both readings counts as steady"):
     val bare = js.Dynamic.literal("exposureTime" -> 83.3)
 
