@@ -139,7 +139,10 @@ private[fe] object Camera:
       // Called once the controls have settled, or once it is known they will not be touched. The caller can then
       // note when that happened against its own sample count, which is what puts the answer and the signal that
       // provoked the question in the same recording.
-      onControls: ControlOutcome => Unit = _ => ()
+      onControls: ControlOutcome => Unit = _ => (),
+      // How bright the picture is right now, as the frames being sampled say. Used to check that holding the controls
+      // left the picture as it was; without it the hold is trusted on the camera's own word.
+      brightness: () => Option[Double] = () => None
   ): Future[dom.MediaStream] =
     if !supported then Future.failed(CameraUnsupported())
     else
@@ -149,7 +152,7 @@ private[fe] object Camera:
         .flatMap: stream =>
           fitToDevice(stream).map: _ =>
             // Deliberately not awaited: the preview should appear at once, and the controls settle behind it.
-            holdControlsStill(stream).foreach(onControls)
+            holdControlsStill(stream, brightness).foreach(onControls)
             stream
 
   /** The camera controls that must not move while a session runs.
@@ -198,6 +201,44 @@ private[fe] object Camera:
     * quantised, so an exact match is too much to ask, but a picture four stops dark is not a rounding difference.
     */
   private[acquire] val honouredWithin = 0.1
+
+  /** How long a held exposure is given to reach the picture before the picture is judged against it. A few frames at
+    * the slowest rate these cameras run at, and short of anything a person would notice.
+    */
+  private[acquire] val verifyAfterMillis = 800
+
+  /** How many samples a brightness reading is averaged over: half a second, so a hand passing through the frame at the
+    * moment of the check does not decide it.
+    */
+  private[fe] val BrightnessWindow = 5
+
+  /** How far the picture's brightness may move when its controls are held, and still be what automatic was doing.
+    *
+    * Holding the values automatic had arrived at should change nothing, so any real change means the values held were
+    * not those values. That is not a hypothetical: a Samsung S23 Ultra reported an exposure of 299.94234 and an ISO of
+    * 50 on six separate openings, in scenes of different brightness, and a Fold7 reported the same 299.94234 to eight
+    * figures. Those are numbers the driver hands back whatever it is doing, and ISO 50 is the bottom of the sensor's
+    * range -- so holding them turned the picture dark, and nothing in the camera's own report could show it.
+    *
+    * The report cannot be trusted on those cameras; the pixels can. A factor of 0.6 either way, measured: across
+    * 219,954 comparisons from 463 recordings, each of a half-second average against the same 0.8 seconds later, the
+    * picture moved by less than 8% in 98% of them and fell outside 0.6 in 0.076% -- about one opening in thirteen
+    * hundred. Holding the wrong exposure moves it by several stops. And a hold released by mistake is the safe way to
+    * be wrong: the camera is left on automatic, which works.
+    */
+  private[acquire] val heldTolerance = 0.6
+
+  /** The dimmest picture a comparison can be made against. Below it, noise alone moves the ratio by more than the
+    * tolerance, and a hold would be released for nothing.
+    */
+  private[acquire] val judgeableBrightness = 12.0
+
+  /** Whether holding the controls moved the picture further than holding what automatic chose could have. */
+  private[acquire] def changedBy(before: Double, after: Double): Boolean =
+    if !before.isFinite || !after.isFinite || before < judgeableBrightness then false
+    else
+      val ratio = after / before
+      ratio < heldTolerance || ratio > 1.0 / heldTolerance
 
   /** Whether metering may be taken as having settled: two readings that agree, and never before the floor.
     *
@@ -359,7 +400,7 @@ private[fe] object Camera:
     * Best effort throughout, and one control at a time: a camera willing to hold exposure but not focus should still
     * hold exposure, and a browser supporting none of this keeps working exactly as it did.
     */
-  private def holdControlsStill(stream: dom.MediaStream): Future[ControlOutcome] =
+  private def holdControlsStill(stream: dom.MediaStream, brightness: () => Option[Double]): Future[ControlOutcome] =
     stream.getVideoTracks().headOption match
       case None               => Future.successful(ControlOutcome("no video track"))
       case _ if !holdControls => Future.successful(ControlOutcome("switched off"))
@@ -385,6 +426,8 @@ private[fe] object Camera:
                 .toFuture
                 .map(_ => ())
             val capabilities = dynamic.getCapabilities()
+            // The picture as automatic left it, taken before anything is touched: what a correct hold must reproduce.
+            val before = brightness()
             capable
               .flatMap(control => pinning(control, settled, capabilities).map(control -> _))
               .foldLeft(Future.successful(Seq.empty[String])): (earlier, pinned) =>
@@ -400,7 +443,7 @@ private[fe] object Camera:
                         case refusal => request(releasing(control)).transform(_ => scala.util.Failure(refusal))
                     .map(_ => locked :+ control.mode)
                     .recover { case _ => locked }
-              .map: locked =>
+              .flatMap: locked =>
                 if locked.isEmpty then dom.console.info("The camera holds none of its controls still")
                 else dom.console.info(s"Camera controls held still: ${locked.mkString(", ")}")
                 // What the camera actually settled on, read back rather than assumed. Held at the darkest end of the
@@ -424,8 +467,46 @@ private[fe] object Camera:
                   val _ = request(back)
                 if abandoned.nonEmpty then
                   dom.console.info(s"Given back to the camera, which would not hold them: ${abandoned.mkString(", ")}")
-                val after = js.JSON.stringify(dynamic.getSettings())
-                ControlOutcome("attempted", locked.filterNot(abandoned.contains), skipped ++ abandoned, Some(after))
+                val snapshot = js.JSON.stringify(dynamic.getSettings())
+                val held = locked.filterNot(abandoned.contains)
+                val attempted = ControlOutcome("attempted", held, skipped ++ abandoned, Some(snapshot))
+                (before, held.nonEmpty) match
+                  case (Some(baseline), true) => verified(attempted, baseline, held, request, dynamic, brightness)
+                  case _                      => Future.successful(attempted)
+
+  /** Checks a hold against the picture, and gives it back to automatic if holding changed what the camera sees.
+    *
+    * The camera's own report is what the hold was built from, and on some cameras that report is a number the driver
+    * returns whatever it is doing -- so it cannot also be what says whether the hold worked. The frames can. A hold of
+    * the values automatic had reached leaves the picture as it was; one that darkens or blows it out was a hold of
+    * something else, and is released rather than left to count in the dark.
+    */
+  private def verified(
+      attempted: ControlOutcome,
+      baseline: Double,
+      held: Seq[String],
+      request: js.Dynamic => Future[Unit],
+      dynamic: js.Dynamic,
+      brightness: () => Option[Double]
+  ): Future[ControlOutcome] =
+    after(verifyAfterMillis).flatMap: _ =>
+      brightness() match
+        case Some(now) if changedBy(baseline, now) =>
+          dom.console.info(f"Holding moved the picture from $baseline%.0f to $now%.0f; giving the camera back its own")
+          val releases = held.map: mode =>
+            val back = js.Dynamic.literal()
+            back.updateDynamic(mode)("continuous")
+            request(back).recover { case _ => () }
+          Future
+            .sequence(releases)
+            .map: _ =>
+              attempted.copy(
+                reason = f"released: holding moved the picture from $baseline%.0f to $now%.0f",
+                held = Seq.empty,
+                skipped = attempted.skipped ++ held,
+                settled = Some(js.JSON.stringify(dynamic.getSettings()))
+              )
+        case _ => Future.successful(attempted)
 
   /** Waits until two consecutive readings of the camera's settings agree, and never less than the settling floor, or
     * until the wait is given up on.

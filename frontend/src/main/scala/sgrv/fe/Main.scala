@@ -1284,6 +1284,12 @@ object Main:
                 // The sample count at the moment they settled: a trace can then be read for whether the picture
                 // changed here or somewhere else entirely.
                 controlsAtSample = Some(totalSamples)
+              ,
+              // The whole frame's brightness over the last half second, from the samples already being taken. What
+              // lets the hold be checked against the picture rather than against the camera's word for it.
+              brightness = () =>
+                val recent = signals.window(Camera.BrightnessWindow).values.flatten
+                Option.when(recent.nonEmpty)(recent.sum / recent.size)
             )
             .onComplete:
               case Success(opened) if !live =>

@@ -248,6 +248,40 @@ class CameraSuite extends FunSuite:
     // where it started, not at wherever the driver puts an unheld control.
     assertEquals(Camera.releasing(exposure).exposureMode.asInstanceOf[String], "continuous")
 
+  test("a hold that darkens the picture is released, whatever the camera says it holds"):
+    // The S23 Ultra reported an exposure of 299.94234 and an ISO of 50 on six openings in scenes of different
+    // brightness: numbers the driver hands back whatever it is doing. Holding them took the picture dark, and the
+    // camera echoed the values back, so nothing in its own report could show it. The frames can.
+    assert(Camera.changedBy(before = 160.0, after = 60.0), "several stops darker")
+    assert(Camera.changedBy(before = 60.0, after = 160.0), "blown out is as wrong as dark")
+
+  test("a hold that leaves the picture as it was is kept"):
+    // Holding the values automatic reached should change nothing. Measured over 219,954 half-second comparisons, the
+    // picture moves by less than 8% in 98% of them on its own.
+    assert(!Camera.changedBy(before = 160.0, after = 160.0))
+    assert(!Camera.changedBy(before = 160.0, after = 148.0), "ordinary movement")
+    assert(!Camera.changedBy(before = 160.0, after = 175.0))
+
+  test("the tolerance sits between what movement does and what a wrong hold does"):
+    val tolerance = Camera.heldTolerance
+
+    assert(!Camera.changedBy(100.0, 100.0 * tolerance + 0.5), "just inside, dimmer")
+    assert(Camera.changedBy(100.0, 100.0 * tolerance - 0.5), "just outside, dimmer")
+    assert(!Camera.changedBy(100.0, 100.0 / tolerance - 0.5), "just inside, brighter")
+    assert(Camera.changedBy(100.0, 100.0 / tolerance + 0.5), "just outside, brighter")
+
+  test("a picture too dim to compare against releases nothing"):
+    // Below it, sensor noise alone moves the ratio past the tolerance, and a good hold would be thrown away for it.
+    assert(!Camera.changedBy(before = Camera.judgeableBrightness - 1, after = 1.0))
+
+  test("a picture gone completely black is caught, not mistaken for no reading"):
+    assert(Camera.changedBy(before = 150.0, after = 0.0))
+
+  test("a reading that is not a number judges nothing"):
+    assert(!Camera.changedBy(Double.NaN, 100.0))
+    assert(!Camera.changedBy(100.0, Double.NaN))
+    assert(!Camera.changedBy(100.0, Double.PositiveInfinity))
+
   test("a camera reporting no settings at all is left entirely alone"):
     val nothing = js.Dynamic.literal()
 
