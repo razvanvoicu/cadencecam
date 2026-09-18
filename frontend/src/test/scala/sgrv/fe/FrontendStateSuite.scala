@@ -106,3 +106,23 @@ class FrontendStateSuite extends FunSuite:
 
     assertEquals(Shell.of(onAcquirer.copy(user = UserState.Unauthenticated)), Shell.Login)
     assertEquals(Shell.of(FrontendState.Initial), Shell.Blank)
+
+  test("the bench is offered only when the address bar asks for it"):
+    // It is an instrument, not a feature: beside "Counter" and "Dashboard" it reads as a third thing to try, and what
+    // it does to somebody who tries it is start a test suite they did not want.
+    assert(Screen.benchOffered("#test"))
+    assert(Screen.benchOffered("#TEST"), "the fragment is typed by hand, so case cannot be the gate")
+    assert(!Screen.benchOffered(""))
+    assert(!Screen.benchOffered("#"))
+    assert(!Screen.benchOffered("#testing"))
+    assert(!Screen.benchOffered("test"))
+
+  test("the bench remains a screen the app can be on, whatever the address bar says"):
+    // Only the choice is hidden. A device already on the bench stays there across a reload, so nothing strands a
+    // suite that is halfway through.
+    val onTheBench = FrontendState.Initial.copy(
+      user = UserState.SignedIn("jane@example.com", "Jane"),
+      screen = Screen.Bench
+    )
+
+    assertEquals(onTheBench.prepareForStartup.screen, Screen.Bench)

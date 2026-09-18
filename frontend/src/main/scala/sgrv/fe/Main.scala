@@ -81,6 +81,11 @@ object Main:
 
     def show(screen: Screen): Unit = stateStore.update(_.copy(screen = screen))
 
+    /** Whether this page load may choose the bench. Read once: the fragment does not change under a running app, and
+      * asking the address bar again on every render would only invite it to.
+      */
+    val benchOffered = Screen.benchOffered(dom.window.location.hash)
+
     /** Raised while this device waits to be told whether to displace another one that is already counting.
       *
       * One acquirer per account is enforced by the relay, which stands the older device down. That is the right outcome
@@ -308,12 +313,14 @@ object Main:
             "Dashboard",
             "Watch the live rep count arriving from the counting device."
           ),
-          roleChoice(
-            "mode-bench",
-            Screen.Bench,
-            "Test",
-            "Show a movement of known cadence and measure the count against it. For a desktop screen."
-          )
+          if !benchOffered then emptyNode
+          else
+            roleChoice(
+              "mode-bench",
+              Screen.Bench,
+              "Test",
+              "Show a movement of known cadence and measure the count against it. For a desktop screen."
+            )
         )
       )
 

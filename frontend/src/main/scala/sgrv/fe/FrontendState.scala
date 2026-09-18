@@ -70,6 +70,25 @@ private[fe] enum Screen:
 private[fe] object Screen:
   given JsonCodec[Screen] = DeriveJsonCodec.gen[Screen]
 
+  /** What has to be in the address bar before the bench is offered as a choice.
+    *
+    * The bench is an instrument rather than a feature: it drives a movement of known cadence on a desktop screen and
+    * scores the detector against it. Standing beside "Counter" and "Dashboard" it reads as a third thing to try, and
+    * what it does to somebody who tries it is start a test suite they did not want, against a figure on a screen they
+    * do not have.
+    *
+    * Behind the address bar rather than behind a list of accounts, because this bundle is public: a list of who may see
+    * the bench would be public with it, and the difference between the two is whether what a curious reader finds in
+    * the JavaScript is a fragment or somebody's email address.
+    *
+    * Only the choice is hidden. A device already on the bench stays on it across a reload, so nothing strands a suite
+    * that is halfway through.
+    */
+  val BenchFragment = "#test"
+
+  def benchOffered(locationHash: String): Boolean =
+    locationHash.trim.toLowerCase == BenchFragment
+
 private[fe] enum AboutState:
   case Closed
   case Loading
