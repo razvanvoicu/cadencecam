@@ -21,7 +21,12 @@ final case class Workout(
     /** Why it ended, absent while it is still running. */
     endedBy: Option[String] = None
 ):
-  /** Whether this is the workout in progress. The one still running is shown, and cannot be deleted from under itself. */
+  /** Whether this is the workout in progress.
+    *
+    * Listed and marked rather than hidden: it is the one the dashboard's own figures belong to, and leaving it off
+    * would read as the app having lost it. It can be deleted like any other -- the account's pointer to it goes with
+    * it, and the device counting into it stands down at its next report.
+    */
   def running: Boolean = endedAtMillis.isEmpty
 
 object Workout:

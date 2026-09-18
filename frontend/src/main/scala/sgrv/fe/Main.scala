@@ -402,6 +402,30 @@ object Main:
             case Success(response) => failed.set(Some(s"That workout could not be deleted (HTTP ${response.status})."))
             case Failure(error)    => failed.set(Some(errorMessage(error)))
 
+      /** Hands the history to the browser as a file to save.
+        *
+        * Built here from what is already on screen rather than asked of the server: the list has been fetched, and a
+        * second route returning the same rows in a second format is a second thing to keep in step with the first.
+        */
+      def exportCsv(): Unit =
+        val listed = workouts.now().getOrElse(Seq.empty)
+        if listed.isEmpty then failed.set(Some("There is nothing to export yet."))
+        else
+          failed.set(None)
+          val document =
+            WorkoutCsv.of(listed, accountSettings.now(), millis => new js.Date(millis).toISOString())
+          val blob = dom.Blob(js.Array(document), dom.BlobPropertyBag(`type` = "text/csv;charset=utf-8"))
+          val address = dom.URL.createObjectURL(blob)
+          val anchor = dom.document.createElement("a").asInstanceOf[dom.html.Anchor]
+          anchor.href = address
+          anchor.setAttribute("download", WorkoutCsv.FileName)
+          // Attached before the click and taken away after: a detached anchor's click is ignored by some browsers,
+          // and one left behind would accumulate a node per export.
+          val _ = dom.document.body.appendChild(anchor)
+          anchor.click()
+          val _ = dom.document.body.removeChild(anchor)
+          dom.URL.revokeObjectURL(address)
+
       /** When a workout happened, in the reader's own locale: this is their day being named back to them, and the
         * conventions for that are theirs rather than this app's.
         */
@@ -473,7 +497,11 @@ object Main:
             ),
             Menu.toggle(menuOpen),
             Menu.backdrop(menuOpen),
-            Menu.sheet(menuOpen, Menu.documentItems(menuOpen)),
+            Menu.sheet(
+              menuOpen,
+              Menu.item(menuOpen, "Export as CSV", () => exportCsv()),
+              Menu.documentItems(menuOpen)
+            ),
             button(
               cls := "about-close",
               typ := "button",
