@@ -76,6 +76,10 @@ object Main extends ZIOAppDefault:
     Method.GET / "favicon.ico" -> handler(asset("favicon.ico", image.`vnd.microsoft.icon`, staticCacheCtrl)),
     Method.GET / "icon-192.png" -> handler(asset("icon-192.png", image.png, staticCacheCtrl)),
     Method.GET / "icon-512.png" -> handler(asset("icon-512.png", image.png, staticCacheCtrl)),
+    // Shrunk into the safe zone a launcher's mask never cuts. Without these Android sets the plain icon, shrunk, on a
+    // white disk -- which is what a Pixel showed.
+    Method.GET / "icon-maskable-192.png" -> handler(asset("icon-maskable-192.png", image.png, staticCacheCtrl)),
+    Method.GET / "icon-maskable-512.png" -> handler(asset("icon-maskable-512.png", image.png, staticCacheCtrl)),
     Method.GET / "manifest.webmanifest" ->
       handler(asset("manifest.webmanifest", application.`manifest+json`, staticCacheCtrl)),
     Method.GET / "style.css" -> handler(asset("style.css", text.css, staticCacheCtrl)),

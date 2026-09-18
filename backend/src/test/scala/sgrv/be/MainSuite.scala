@@ -229,10 +229,35 @@ class MainSuite extends munit.FunSuite:
     assertEquals(json.get("display").getAsString, "standalone")
     assertEquals(iconSizes, Set("192x192", "512x512"))
 
+  test("the manifest offers a maskable icon at both sizes, as well as a plain one"):
+    // Without a maskable icon Android shrinks the plain one and sets it on a white disk: that is what a Pixel showed.
+    // Every icon the manifest names must also be one the server actually serves, or the install quietly falls back.
+    val routes = run(ZIO.succeed(Main.staticRoutes(testStaticCacheControl)))
+    val manifest = run(
+      ZIO.scoped(routes.runZIO(Request.get(URL.decode("/manifest.webmanifest").toOption.get))).flatMap(_.body.asString)
+    )
+    val icons = JsonParser.parseString(manifest).getAsJsonObject.getAsJsonArray("icons")
+    val declared = (0 until icons.size()).map(index => icons.get(index).getAsJsonObject)
+    def sizesFor(purpose: String) =
+      declared.filter(_.get("purpose").getAsString == purpose).map(_.get("sizes").getAsString).toSet
+
+    assertEquals(sizesFor("maskable"), Set("192x192", "512x512"))
+    assertEquals(sizesFor("any"), Set("192x192", "512x512"))
+    declared
+      .map(_.get("src").getAsString)
+      .foreach: source =>
+        val response = run(ZIO.scoped(routes.runZIO(Request.get(URL.decode(source).toOption.get))))
+        assertEquals(response.status, Status.Ok, s"the manifest names $source, which is not served")
+
   test("packages and serves the required PWA icons as PNG files"):
     val routes = run(ZIO.succeed(Main.staticRoutes(testStaticCacheControl)))
 
-    Seq("icon-192.png" -> (192, 192), "icon-512.png" -> (512, 512)).foreach { case (fileName, expectedSize) =>
+    Seq(
+      "icon-192.png" -> (192, 192),
+      "icon-512.png" -> (512, 512),
+      "icon-maskable-192.png" -> (192, 192),
+      "icon-maskable-512.png" -> (512, 512)
+    ).foreach { case (fileName, expectedSize) =>
       val packaged = resourceBytes(s"web/$fileName")
       val response = run(ZIO.scoped(routes.runZIO(Request.get(URL.decode(s"/$fileName").toOption.get))))
       val served = run(response.body.asArray)

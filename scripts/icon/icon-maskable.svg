@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- The same mark, shrunk into the maskable safe zone: a circle of radius 40% of the width, centred.
+
+       An icon declared maskable is cropped by the launcher to whatever shape it uses: a circle on a Pixel, a
+       squircle on a Samsung, so anything outside that circle may be cut off. The full icon puts the tally in a
+       corner and runs the arm to the edge, which a circle would take away. Without a maskable icon at all, Android
+       shrinks the plain one and sets it on a white disk instead, which is what this exists to prevent.
+
+       The background stays full-bleed: it is what the launcher's mask cuts, and it has to reach every edge so no
+       shape leaves a gap around it. -->
+  <rect width="512" height="512" fill="#0b0d0f"/>
+  <g transform="translate(256 256) scale(0.637) translate(-256 -256)">
+
+  <!-- Five tally marks: counting, without a word in it. -->
+  <!-- As large as the corner allows. With the arm angled down and to the right, the top-left is free as far as the
+       dumbbell's near plate, and the marks are the only thing in the icon that says what the app does. Green is the
+       app's own: the colour the signal badge shows when the count can be trusted. -->
+  <g stroke="#35c46a" stroke-width="21" stroke-linecap="round" fill="none">
+    <line x1="63"  y1="48" x2="63"  y2="144"/>
+    <line x1="106" y1="48" x2="106" y2="144"/>
+    <line x1="150" y1="48" x2="150" y2="144"/>
+    <line x1="193" y1="48" x2="193" y2="144"/>
+    <line x1="44"  y1="138" x2="212" y2="54"/>
+  </g>
+
+  <!-- The dumbbell stays level whatever the arm is doing, because gravity does. Laid in before the arm so the fist
+       closes over its bar, and outlined so the plates read as one object with it rather than as two grey blocks
+       floating either side of a hand. -->
+  <g stroke="#0b0d0f" stroke-width="11">
+    <rect x="261" y="216" width="156" height="38" rx="19" fill="#cdd6d4"/>
+    <rect x="223" y="184" width="48" height="102" rx="18" fill="#cdd6d4"/>
+    <rect x="407" y="184" width="48" height="102" rx="18" fill="#cdd6d4"/>
+  </g>
+  <g fill="#9aa5a3">
+    <rect x="271" y="204" width="18" height="62" rx="8"/>
+    <rect x="389" y="204" width="18" height="62" rx="8"/>
+  </g>
+
+  <!-- The arm, turned about its elbow to stand the upper arm at 30 degrees to the horizontal and the forearm at 60.
+       Drawn upright and rotated rather than redrawn at an angle: the shapes were the hard part, and an angle is a
+       transform. The turn is 32.8 rather than 30 because the elbow as drawn is 91 degrees and not 90, so no single
+       rotation puts both segments exactly where they are wanted; this one splits the half-degree between them. -->
+  <g transform="translate(-18,32) scale(0.9) rotate(32.8, 285, 415)">
+    <path fill="#e8b04b" d="
+      M 36 388
+      C 40 320, 92 282, 144 292
+      C 186 300, 212 322, 220 350
+      C 226 316, 230 284, 232 258
+      C 216 234, 210 204, 220 182
+      C 232 152, 268 140, 298 150
+      C 328 160, 342 190, 334 218
+      C 330 238, 322 248, 320 266
+      L 320 396
+      C 320 440, 292 466, 252 466
+      L 106 468
+      C 64 468, 36 444, 36 406
+      Z"/>
+    <path d="M 84 340 Q 142 300 196 338" stroke="#f6cf84" stroke-width="22" stroke-linecap="round" fill="none"/>
+    <g stroke="#c8913a" stroke-width="11" stroke-linecap="round" fill="none">
+      <line x1="252" y1="200" x2="256" y2="176"/>
+      <line x1="282" y1="194" x2="284" y2="170"/>
+      <line x1="312" y1="200" x2="312" y2="178"/>
+    </g>
+    <path d="M 228 214 Q 224 238 240 250" stroke="#c8913a" stroke-width="12" stroke-linecap="round" fill="none"/>
+  </g>
+  </g>
+</svg>
