@@ -1383,9 +1383,10 @@ object Main:
                     p(cls := "intro-lead", "Counts your exercise repetitions using your phone's camera."),
                     p(
                       cls := "intro-detail",
-                      "Prop your phone where it can see the movement — a dumbbell curl, a stair climber, a " +
-                        "stationary bicycle — and it counts the repetitions as you go. A tablet or a second phone " +
-                        "can show the running count, your pace, and an estimate of the energy you have used."
+                      "Prop your phone where it can see a repetitive movement — a dumbbell curl, a stair " +
+                        "climber's rotating wheel, a stationary bicycle's pedal in motion — and it counts the " +
+                        "repetitions as you go. A tablet or a second phone can show the running count, your pace, " +
+                        "and an estimate of the energy you have used."
                     ),
                     p(
                       cls := "intro-detail",
