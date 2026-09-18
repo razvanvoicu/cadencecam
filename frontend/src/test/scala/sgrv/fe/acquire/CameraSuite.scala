@@ -179,6 +179,75 @@ class CameraSuite extends FunSuite:
     assertEquals(Camera.pinning(ManualControl("focusMode", Seq("focusDistance")), settled), None)
     assertEquals(Camera.pinning(ManualControl("whiteBalanceMode", Seq("colorTemperature")), settled), None)
 
+  // What two real cameras reported about themselves, taken from their recorded traces.
+  private val samsungA53 = (
+    js.Dynamic.literal(
+      exposureTime = js.Dynamic.literal(min = 0.42, max = 1000),
+      iso = js.Dynamic.literal(min = 50, max = 3200),
+      colorTemperature = js.Dynamic.literal(min = 2850, max = 7000),
+      focusDistance = js.Dynamic.literal(min = 0.1, max = 3.6)
+    ),
+    js.Dynamic.literal(exposureTime = 600, iso = 0, colorTemperature = 0, focusDistance = 0)
+  )
+  private val pixel10 = (
+    js.Dynamic.literal(
+      exposureTime = js.Dynamic.literal(min = 0.26345, max = 160000.01084),
+      iso = js.Dynamic.literal(min = 21, max = 5333)
+    ),
+    js.Dynamic.literal(exposureTime = 83.27803, iso = 100)
+  )
+  private val exposure = ManualControl("exposureMode", Seq("exposureTime", "iso"))
+
+  test("a zero the camera reports for a value it does not expose is not a reading"):
+    // The Samsung answered 0 for its ISO, colour temperature and focus distance, while declaring that its ISO starts
+    // at 50, its colour temperature at 2850 and its focus at 0.1. Asked to hold ISO 0 it could not; the request failed
+    // after the mode had already left automatic, and the picture went dark and stayed dark.
+    val (capabilities, settings) = samsungA53
+
+    assertEquals(Camera.reading("iso", settings, capabilities), None)
+    assertEquals(Camera.reading("colorTemperature", settings, capabilities), None)
+    assertEquals(Camera.reading("focusDistance", settings, capabilities), None)
+    assert(Camera.reading("exposureTime", settings, capabilities).isDefined, "the shutter it reported is real")
+
+  test("the Samsung's exposure is left automatic rather than half held"):
+    // Its shutter was a real reading and its sensitivity was not. A shutter held without a sensitivity is half an
+    // exposure, and the half left to the driver is the half that went dark.
+    val (capabilities, settings) = samsungA53
+
+    assertEquals(Camera.pinning(exposure, settings, capabilities), None)
+    Camera.manualControls.foreach: control =>
+      assertEquals(Camera.pinning(control, settings, capabilities), None, control.mode)
+
+  test("the Pixel's exposure is still held, at both values it reported"):
+    // The camera that already worked must keep doing what it did: both of its values are real and in range.
+    val (capabilities, settings) = pixel10
+    val held = Camera.pinning(exposure, settings, capabilities).get
+
+    assertEquals(held.exposureTime.asInstanceOf[Double], 83.27803)
+    assertEquals(held.iso.asInstanceOf[Double], 100.0)
+
+  test("a value outside the range its own camera declares is not a reading, at either end"):
+    val capabilities = js.Dynamic.literal(iso = js.Dynamic.literal(min = 50, max = 3200))
+
+    assertEquals(Camera.reading("iso", js.Dynamic.literal(iso = 49), capabilities), None)
+    assertEquals(Camera.reading("iso", js.Dynamic.literal(iso = 3201), capabilities), None)
+    assert(Camera.reading("iso", js.Dynamic.literal(iso = 50), capabilities).isDefined, "the ends are in range")
+    assert(Camera.reading("iso", js.Dynamic.literal(iso = 3200), capabilities).isDefined)
+
+  test("a value with no declared range is taken as it comes, having nothing to be checked against"):
+    assert(Camera.reading("exposureTime", js.Dynamic.literal(exposureTime = 312.5), js.Dynamic.literal()).isDefined)
+
+  test("a control is held only when every value it governs is a reading"):
+    val settings = js.Dynamic.literal(exposureTime = 312.5)
+
+    assertEquals(Camera.pinning(exposure, settings), None)
+    assert(Camera.pinning(exposure, js.Dynamic.literal(exposureTime = 312.5, iso = 100)).isDefined)
+
+  test("a control handed back goes to continuous, the camera's own automatic"):
+    // Sent when a value is refused after the mode has already left automatic: a hold that fails must leave the camera
+    // where it started, not at wherever the driver puts an unheld control.
+    assertEquals(Camera.releasing(exposure).exposureMode.asInstanceOf[String], "continuous")
+
   test("a camera reporting no settings at all is left entirely alone"):
     val nothing = js.Dynamic.literal()
 

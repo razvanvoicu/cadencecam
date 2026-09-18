@@ -273,16 +273,45 @@ private[fe] object Camera:
     * settings, which is exactly the case that goes wrong. So a control whose value cannot be read is left alone: an
     * automatic exposure that drifts is a nuisance, an exposure pinned to a number nobody chose is unusable.
     */
-  private[acquire] def pinning(control: ManualControl, settings: js.Dynamic): Option[js.Dynamic] =
-    val readable = control.settings.flatMap: setting =>
-      val current = settings.selectDynamic(setting)
-      Option.when(!js.isUndefined(current) && current != null)(setting -> current)
-    // Every value this mode governs, in one request. They are sent together because they take effect together: a
-    // shutter held without a sensitivity is not a held exposure, it is half of one.
-    Option.when(readable.nonEmpty):
+  private[acquire] def pinning(
+      control: ManualControl,
+      settings: js.Dynamic,
+      capabilities: js.Dynamic = js.Dynamic.literal()
+  ): Option[js.Dynamic] =
+    val readings = control.settings.map(setting => setting -> reading(setting, settings, capabilities))
+    // Every value this mode governs, or none of them. They take effect together: a shutter held without a sensitivity
+    // is not a held exposure, it is half of one, and the half left to the driver is the half that went dark.
+    Option.when(readings.forall(_._2.isDefined)):
       val wanted = js.Dynamic.literal()
-      readable.foreach((setting, current) => wanted.updateDynamic(setting)(current))
+      readings.foreach((setting, value) => value.foreach(current => wanted.updateDynamic(setting)(current)))
       wanted
+
+  /** What a camera reports for one setting, if what it reports is a reading rather than a placeholder.
+    *
+    * Some cameras answer zero for every value they do not actually expose. A Samsung Galaxy A53 reports an ISO of 0, a
+    * colour temperature of 0 and a focus distance of 0, while declaring in the same breath that its ISO runs from 50,
+    * its colour temperature from 2850 and its focus from 0.1. Taken as readings, those zeros were asked for back -- and
+    * a camera asked to hold ISO 0 cannot, the request fails, and what is left is a camera already switched out of
+    * automatic with no value to hold. That is how its picture went dark and stayed dark.
+    *
+    * So a number is a reading only when it lies inside the range the same camera declares for it. A setting with no
+    * declared range is taken as it comes, since there is nothing to check it against.
+    */
+  private[acquire] def reading(setting: String, settings: js.Dynamic, capabilities: js.Dynamic): Option[js.Any] =
+    val current = settings.selectDynamic(setting)
+    if js.isUndefined(current) || current == null then None
+    else if js.typeOf(current) != "number" then Some(current)
+    else
+      val value = current.asInstanceOf[Double]
+      val range = capabilities.selectDynamic(setting)
+      def bound(name: String): Option[Double] =
+        if js.isUndefined(range) || range == null then None
+        else
+          val limit = range.selectDynamic(name)
+          Option.when(!js.isUndefined(limit) && js.typeOf(limit) == "number")(limit.asInstanceOf[Double])
+      val above = bound("min").forall(value >= _)
+      val below = bound("max").forall(value <= _)
+      Option.when(value.isFinite && above && below)(current)
 
   /** The request that switches one control to manual, carrying nothing else.
     *
@@ -294,6 +323,12 @@ private[fe] object Camera:
   private[acquire] def switching(control: ManualControl): js.Dynamic =
     val wanted = js.Dynamic.literal()
     wanted.updateDynamic(control.mode)("manual")
+    wanted
+
+  /** The request that hands one control back to the camera. */
+  private[acquire] def releasing(control: ManualControl): js.Dynamic =
+    val wanted = js.Dynamic.literal()
+    wanted.updateDynamic(control.mode)("continuous")
     wanted
 
   /** What this camera says it can do and where it currently sits, as JSON.
@@ -338,7 +373,8 @@ private[fe] object Camera:
           whenSteady(dynamic).flatMap: settled =>
             // Read once metering has stopped moving, not on a timer: what gets pinned is what automatic arrived at.
             val capable = manualCapable(dynamic.getCapabilities())
-            val skipped = capable.filter(control => pinning(control, settled).isEmpty).map(_.mode)
+            val skipped =
+              capable.filter(control => pinning(control, settled, dynamic.getCapabilities()).isEmpty).map(_.mode)
             if skipped.nonEmpty then
               dom.console.info(s"Left automatic, having no value to hold them at: ${skipped.mkString(", ")}")
             def request(wanted: js.Dynamic): Future[Unit] =
@@ -348,14 +384,20 @@ private[fe] object Camera:
                 )
                 .toFuture
                 .map(_ => ())
+            val capabilities = dynamic.getCapabilities()
             capable
-              .flatMap(control => pinning(control, settled).map(control -> _))
+              .flatMap(control => pinning(control, settled, capabilities).map(control -> _))
               .foldLeft(Future.successful(Seq.empty[String])): (earlier, pinned) =>
                 val (control, value) = pinned
                 earlier.flatMap: locked =>
                   // Mode first and on its own; only then the value it is to be held at.
                   request(switching(control))
-                    .flatMap(_ => request(value))
+                    .flatMap: _ =>
+                      // If the mode took and the value did not, the camera is out of automatic with nothing to hold:
+                      // it sits wherever the driver leaves it, which is dark. Hand the control back before giving up
+                      // on it, so a hold that fails can only ever leave the camera where it started.
+                      request(value).recoverWith:
+                        case refusal => request(releasing(control)).transform(_ => scala.util.Failure(refusal))
                     .map(_ => locked :+ control.mode)
                     .recover { case _ => locked }
               .map: locked =>
@@ -369,7 +411,7 @@ private[fe] object Camera:
                 // frozen. Those modes go back to continuous.
                 val asked = js.Dynamic.literal()
                 capable.foreach: control =>
-                  pinning(control, settled).foreach: value =>
+                  pinning(control, settled, capabilities).foreach: value =>
                     js.Object
                       .keys(value.asInstanceOf[js.Object])
                       .foreach: setting =>
