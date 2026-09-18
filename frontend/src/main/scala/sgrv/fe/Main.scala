@@ -27,7 +27,19 @@ import sgrv.fe.acquire.{
   Sample,
   SignalGraph
 }
-import sgrv.api.{AccountSettings, CountsBy, ExerciseType, LiveCommand, LiveReading, LiveState, PeerRole, WeightUnit}
+import sgrv.api.{
+  AccountSettings,
+  CountsBy,
+  DiscardWorkout,
+  ExerciseType,
+  LiveCommand,
+  LiveReading,
+  LiveState,
+  PeerRole,
+  WeightUnit,
+  Workout,
+  WorkoutHistory
+}
 import sgrv.fe.bench.BenchView
 import sgrv.fe.live.PeerLink
 import sgrv.fe.refreshstate.RefreshStateStore
@@ -117,6 +129,11 @@ object Main:
       * running, and persisting it would reopen it on a reload -- over a camera that then keeps counting behind it.
       */
     val settingsOpen = Var(false)
+
+    /** Whether the history is up. A panel over the dashboard rather than a screen of its own, so opening it does not
+      * tear down the link to the counting device and make it pair again on the way back.
+      */
+    val historyOpen = Var(false)
 
     /** Reads the account's settings. Called when a session is confirmed, which is what "on every login" means here.
       *
@@ -341,6 +358,154 @@ object Main:
       * absolutely and no row has a fixed height, so a landscape arrangement later is a change of direction on the
       * container rather than a rewrite.
       */
+    /** The account's workouts, newest first, and the throwing away of any one of them.
+      *
+      * Read when the panel opens rather than kept: a history is looked at occasionally and changes rarely, and a copy
+      * held from the last time it was opened would show a workout that has since been deleted from another device.
+      */
+    def historyPanel(): Element =
+      val workouts = Var(Option.empty[Seq[Workout]])
+      val failed = Var(Option.empty[String])
+      val confirming = Var(Option.empty[String])
+      val menuOpen = Var(false)
+
+      def load(): Unit =
+        http
+          .get(WorkoutHistory.Path)
+          .flatMap(response => response.text())
+          .map(_.fromJson[WorkoutHistory])
+          .onComplete:
+            case Success(Right(history)) =>
+              failed.set(None)
+              workouts.set(Some(history.workouts))
+            case Success(Left(details)) =>
+              dom.console.warn(s"Ignoring an unreadable history: $details")
+              failed.set(Some("The history could not be read."))
+              workouts.set(Some(Seq.empty))
+            case Failure(error) =>
+              failed.set(Some(errorMessage(error)))
+              workouts.set(Some(Seq.empty))
+
+      /** Removes one workout, and takes it off the list without asking for the whole history again. */
+      def discard(workout: Workout): Unit =
+        confirming.set(None)
+        val init = new dom.RequestInit:
+          method = dom.HttpMethod.POST
+          headers = js.Dictionary("Content-Type" -> "application/json")
+          body = DiscardWorkout(workout.id).toJson
+        http
+          .send(DiscardWorkout.Path, init)
+          .onComplete:
+            case Success(response) if response.ok =>
+              failed.set(None)
+              workouts.update(_.map(_.filterNot(_.id == workout.id)))
+            case Success(response) => failed.set(Some(s"That workout could not be deleted (HTTP ${response.status})."))
+            case Failure(error)    => failed.set(Some(errorMessage(error)))
+
+      /** When a workout happened, in the reader's own locale: this is their day being named back to them, and the
+        * conventions for that are theirs rather than this app's.
+        */
+      def when(millis: Double): String =
+        val at = new js.Date(millis)
+        s"${at.toLocaleDateString()} ${at.toLocaleTimeString()}"
+
+      def row(id: String, initial: Workout, updates: Signal[Workout]): Element =
+        div(
+          cls := "workout-row",
+          cls("running") <-- updates.map(_.running),
+          div(
+            cls := "workout-when",
+            span(cls := "workout-date", child.text <-- updates.map(workout => when(workout.startedAtMillis))),
+            child <-- updates.map: workout =>
+              if workout.running then span(cls := "workout-state", "in progress")
+              else span(cls := "workout-state", Effort.elapsedClock(workout.elapsedSeconds))
+          ),
+          div(
+            cls := "workout-figures",
+            span(
+              cls := "workout-figure",
+              child.text <-- updates.map(_.reps.toString),
+              span(cls := "workout-unit", "reps")
+            ),
+            span(
+              cls := "workout-figure",
+              child.text <-- updates
+                .combineWith(accountSettings.signal)
+                .map: (workout, settings) =>
+                  Effort.grouped(Effort.calories(workout.reps, workout.cadenceSum, settings)),
+              span(cls := "workout-unit", "cal")
+            )
+          ),
+          // Two taps, because this is the one control on the screen that destroys something. The confirmation is the
+          // row itself rather than a dialog: what is about to go is the thing being pointed at.
+          child <-- confirming.signal.map: asked =>
+            if asked.contains(id) then
+              div(
+                cls := "workout-confirm",
+                button(cls := "workout-yes", typ := "button", "Delete", onClick --> (_ => discard(initial))),
+                button(cls := "workout-no", typ := "button", "Keep", onClick --> (_ => confirming.set(None)))
+              )
+            else
+              button(
+                cls := "workout-remove",
+                typ := "button",
+                aria.label := "Delete this workout",
+                title := "Delete this workout",
+                "\u00d7",
+                onClick --> (_ => confirming.set(Some(id)))
+              )
+        )
+
+      div(
+        cls := "settings-overlay",
+        onMountCallback(_ => load()),
+        div(
+          cls := "settings-screen history-screen",
+          role := "dialog",
+          div(
+            cls := "settings-header",
+            h2("History"),
+            span(
+              cls := "settings-note",
+              child.text <-- workouts.signal.map:
+                case None         => "reading…"
+                case Some(listed) => if listed.isEmpty then "" else s"${listed.size} workouts"
+            ),
+            Menu.toggle(menuOpen),
+            Menu.backdrop(menuOpen),
+            Menu.sheet(menuOpen, Menu.documentItems(menuOpen)),
+            button(
+              cls := "about-close",
+              typ := "button",
+              title := "Close",
+              onClick --> (_ => historyOpen.set(false)),
+              "\u00d7"
+            )
+          ),
+          child <-- failed.signal.map:
+            case None          => emptyNode
+            case Some(message) => p(cls := "error settings-error", message)
+          ,
+          div(
+            cls := "settings-body history-body",
+            child <-- workouts.signal.map:
+              case None                           => p(cls := "field-hint", "Reading your history…")
+              case Some(listed) if listed.isEmpty =>
+                p(cls := "field-hint", "Nothing counted yet. Your workouts will appear here.")
+              case Some(_) => emptyNode
+            ,
+            div(
+              cls := "workout-list",
+              children <-- workouts.signal.map(_.getOrElse(Seq.empty)).split(_.id)(row)
+            )
+          ),
+          div(
+            cls := "settings-actions",
+            button(cls := "back-button", typ := "button", "Close", onClick --> (_ => historyOpen.set(false)))
+          )
+        )
+      )
+
     /** The settings panel: a weight, a default factor, and the exercises this account counts.
       *
       * Edited against a copy and written back only on Save, so leaving by Cancel leaves nothing behind. The copy is
@@ -789,6 +954,7 @@ object Main:
           Menu.sheet(
             menuOpen,
             menuItem("Settings", () => settingsOpen.set(true)),
+            menuItem("History", () => historyOpen.set(true)),
             menuItem("Capture signal trace", () => ask(LiveCommand.CaptureTrace())),
             menuItem("About", () => openAbout()),
             Menu.documentItems(menuOpen),
@@ -1479,6 +1645,11 @@ object Main:
           .map:
             case false => emptyNode
             case true  => settingsPanel()
+        ,
+        child <-- historyOpen.signal
+          .map:
+            case false => emptyNode
+            case true  => historyPanel()
         ,
         child <-- takeoverPending.signal
           .map:

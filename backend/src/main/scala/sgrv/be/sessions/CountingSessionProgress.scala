@@ -58,7 +58,7 @@ object CountingSessionProgress extends BackendPlugin:
       // Which browser session is reporting, so a device that has been taken over can be told.
       mine <- ZIO.fromOption(CountingSessionListener.documentId(request)).orElseFail(NotCounting)
       body <- request.body.asString.mapError(error => Malformed(describe(error)))
-      reps <- ZIO.fromEither(CountingSessionProgress.reps(body)).mapError(Malformed.apply)
+      progress <- ZIO.fromEither(CountingSessionProgress.reported(body)).mapError(Malformed.apply)
       firestore <- ZIO.service[Firestore]
       located <- AccountSessions.active(firestore, email).mapError(WriteFailed.apply)
       (account, session) <- ZIO.fromOption(located).orElseFail(NotCounting)
@@ -68,7 +68,9 @@ object CountingSessionProgress extends BackendPlugin:
       // Another device has the role: say so rather than recording a count from a device that has been stood down.
       // With no relay left to tell it, this is how a displaced counter finds out.
       _ <- ZIO.fail(Displaced).when(state.counter.exists(_ != mine))
-      _ <- keeper.counted(account, session, reps, now).mapError(WriteFailed.apply)
+      _ <- keeper
+        .counted(account, session, progress.reps, progress.cadenceSum, progress.elapsedSeconds, now)
+        .mapError(WriteFailed.apply)
     yield ()
 
   /** The count a request body reports, or why it does not report one.
@@ -76,11 +78,19 @@ object CountingSessionProgress extends BackendPlugin:
     * A negative total is rejected rather than clamped: nothing legitimate produces one, so it means the caller and this
     * route disagree about something, and quietly storing a zero would hide that.
     */
-  private[sessions] def reps(body: String): Either[String, Int] =
+  private[sessions] def reported(body: String): Either[String, RepProgress] =
     body
       .fromJson[RepProgress]
       .flatMap: progress =>
-        Either.cond(progress.reps >= 0, progress.reps, s"Negative rep count ${progress.reps}")
+        if progress.reps < 0 then Left(s"Negative rep count ${progress.reps}")
+        else if !progress.cadenceSum.isFinite || progress.cadenceSum < 0 then
+          Left(s"Cadence sum ${progress.cadenceSum} is not a number at or above zero")
+        else if !progress.elapsedSeconds.isFinite || progress.elapsedSeconds < 0 then
+          Left(s"Elapsed ${progress.elapsedSeconds} is not a duration")
+        else Right(progress)
+
+  /** The count alone, which is all most readers want of a report. */
+  private[sessions] def reps(body: String): Either[String, Int] = reported(body).map(_.reps)
 
   private def failureResponse(failure: ProgressFailure): ZIO[Any, Nothing, Response] =
     failure match

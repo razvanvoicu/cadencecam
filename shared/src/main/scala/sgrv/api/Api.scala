@@ -43,7 +43,17 @@ object CountingSession:
   * dashboard will need answered but this record does not yet decide.
   */
 @jsonNoExtraFields
-final case class RepProgress(reps: Int)
+final case class RepProgress(
+    reps: Int,
+    /** The frequency accumulator behind the calorie figure, and the clock it was measured over.
+      *
+      * Reported so the history has something to work a calorie figure out from afterwards. Not the figure itself: that
+      * depends on a weight and a factor the account can change, and one computed under an old factor and kept would be
+      * a number nothing else on the screen agreed with.
+      */
+    cadenceSum: Double = 0.0,
+    elapsedSeconds: Double = 0.0
+)
 
 object RepProgress:
   /** Where the acquirer reports to. Shared so the route and the caller cannot drift apart. */

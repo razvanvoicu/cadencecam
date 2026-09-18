@@ -1542,3 +1542,112 @@ button,
   color: var(--muted);
   font-size: 0.85rem;
 }
+
+/* The history. It borrows the settings panel's frame, because it is the same kind of thing: a screen about the
+   account rather than about the set in front of the camera. */
+.history-screen .settings-header {
+  gap: 0.75rem;
+}
+
+.history-body {
+  gap: 0.75rem;
+}
+
+.workout-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.workout-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  background: var(--dash-panel);
+  border: 1px solid var(--dash-line);
+  border-radius: 12px;
+}
+
+/* The one still being counted into. Marked rather than hidden: it is the workout the numbers on the dashboard
+   behind this panel belong to, and leaving it out would read as the app having lost it. */
+.workout-row.running {
+  border-color: var(--dash-accent);
+}
+
+.workout-when {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.workout-date {
+  font-size: 0.95rem;
+}
+
+.workout-state {
+  color: var(--dash-muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.workout-figures {
+  display: flex;
+  gap: 1.1rem;
+}
+
+.workout-figure {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.workout-unit {
+  color: var(--dash-muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.workout-remove {
+  width: 2.2rem;
+  height: 2.2rem;
+  background: transparent;
+  border: 0;
+  color: var(--dash-muted);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.workout-confirm {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.workout-yes,
+.workout-no {
+  min-height: 2.2rem;
+  padding: 0 0.75rem;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.workout-yes {
+  background: #ef4444;
+  border: 1px solid #ef4444;
+  color: #fff;
+  font-weight: 600;
+}
+
+.workout-no {
+  background: transparent;
+  border: 1px solid #262e31;
+  color: inherit;
+}

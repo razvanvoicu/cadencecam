@@ -4,7 +4,7 @@ import com.google.cloud.Timestamp
 import com.google.cloud.firestore.{DocumentReference, Firestore}
 import java.time.{Duration, Instant}
 import scala.jdk.CollectionConverters.*
-import sgrv.api.AccountSettings
+import sgrv.api.{AccountSettings, Workout}
 import sgrv.be.store.GoogleFuture
 import zio.{Clock, Task, ZIO}
 import zio.json.*
@@ -36,6 +36,14 @@ private[sessions] object AccountSchema:
 
   /** Which browser session is counting, so a takeover is a change of hand rather than a new session. */
   val counter = "counter"
+
+  /** What a workout measured. The accumulator is kept beside the count because a calorie figure is worked out from it
+    * when it is shown, rather than stored: the weight and the factor behind that figure can change afterwards.
+    */
+  val reps = "reps"
+  val repsAt = "repsAt"
+  val cadenceSum = "cadenceSum"
+  val elapsedSeconds = "elapsedSeconds"
 
   /** What the account has set, as the JSON the two ends already agree on.
     *
@@ -98,6 +106,25 @@ private[sessions] object AccountSessions:
 
 /** What a device is told when it arrives: whether this account already has something counting. */
 private[sessions] final case class AccountState(active: Option[String], counter: Option[String])
+
+private[sessions] object AccountSessionStore:
+  /** Firestore caps a batch at five hundred; this leaves room and keeps one commit small. */
+  val DeleteBatch = 400
+
+  /** One stored session, as the history lists it. Absent fields read as a workout that counted nothing, which is what a
+    * session opened and abandoned without a rep actually is.
+    */
+  private[sessions] def workoutOf(document: com.google.cloud.firestore.DocumentSnapshot): Workout =
+    def millis(field: String) = Option(document.getTimestamp(field)).map(_.toDate.toInstant.toEpochMilli.toDouble)
+    Workout(
+      id = document.getId,
+      startedAtMillis = millis(AccountSchema.startedAt).getOrElse(0.0),
+      endedAtMillis = millis(AccountSchema.completedAt),
+      reps = Option(document.getLong(AccountSchema.reps)).fold(0)(_.intValue),
+      cadenceSum = Option(document.getDouble(AccountSchema.cadenceSum)).fold(0.0)(_.doubleValue),
+      elapsedSeconds = Option(document.getDouble(AccountSchema.elapsedSeconds)).fold(0.0)(_.doubleValue),
+      endedBy = Option(document.getString(AccountSchema.endedBy))
+    )
 
 private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfter: Duration):
 
@@ -167,15 +194,27 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       _ <- GoogleFuture.fromApiFuture(account(name).set(moved.asJava, com.google.cloud.firestore.SetOptions.merge()))
     yield ()
 
-  /** Records a rep count, which is also what keeps the session from going idle. */
-  def counted(name: String, session: String, reps: Int, now: Instant): Task[Unit] =
+  /** Records what a workout has measured so far, which is also what keeps the session from going idle. */
+  def counted(
+      name: String,
+      session: String,
+      reps: Int,
+      cadenceSum: Double,
+      elapsedSeconds: Double,
+      now: Instant
+  ): Task[Unit] =
     for
       _ <- GoogleFuture.fromApiFuture(
         account(name)
           .collection(AccountSchema.sessions)
           .document(session)
           .set(
-            Map[String, AnyRef]("reps" -> java.lang.Long.valueOf(reps.toLong), "repsAt" -> stamp(now)).asJava,
+            Map[String, AnyRef](
+              AccountSchema.reps -> java.lang.Long.valueOf(reps.toLong),
+              AccountSchema.repsAt -> stamp(now),
+              AccountSchema.cadenceSum -> java.lang.Double.valueOf(cadenceSum),
+              AccountSchema.elapsedSeconds -> java.lang.Double.valueOf(elapsedSeconds)
+            ).asJava,
             com.google.cloud.firestore.SetOptions.merge()
           )
       )
@@ -215,6 +254,60 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
         )
       )
       .unit
+
+  /** The account's workouts, newest first.
+    *
+    * Read straight from the sessions subcollection rather than from a query across accounts: an account's own sessions
+    * are its own subcollection, so this needs no index and can see nobody else's.
+    */
+  def history(name: String, limit: Int): Task[Seq[Workout]] =
+    val query = account(name)
+      .collection(AccountSchema.sessions)
+      .orderBy(AccountSchema.startedAt, com.google.cloud.firestore.Query.Direction.DESCENDING)
+      .limit(limit)
+    GoogleFuture
+      .fromApiFuture(query.get())
+      .map(_.getDocuments.asScala.toSeq.map(AccountSessionStore.workoutOf))
+
+  /** Throws one workout away, with everything filed under it.
+    *
+    * The recordings and the pairing messages go with it: they belong to that workout and to nothing else, and a
+    * deletion that left them behind would be a deletion in name only. Firestore does not remove a document's
+    * subcollections when the document goes, so they are removed first and by hand.
+    */
+  def discard(name: String, session: String): Task[Unit] =
+    val workout = account(name).collection(AccountSchema.sessions).document(session)
+    for
+      _ <- ZIO.foreachDiscard(Seq("traces", "signals"))(under => deleteAll(workout.collection(under)))
+      _ <- GoogleFuture.fromApiFuture(workout.delete())
+      // If the account was counting into it, it no longer is: a pointer to a workout that has gone would leave the
+      // next device believing something was already counting and refusing to start.
+      snapshot <- GoogleFuture.fromApiFuture(account(name).get())
+      counting = Option.when(snapshot.exists)(Option(snapshot.getString(AccountSchema.activeSession))).flatten
+      _ <- ZIO
+        .when(counting.contains(session)):
+          GoogleFuture.fromApiFuture(
+            account(name).update(
+              Map[String, AnyRef](
+                AccountSchema.activeSession -> com.google.cloud.firestore.FieldValue.delete(),
+                AccountSchema.counter -> com.google.cloud.firestore.FieldValue.delete()
+              ).asJava
+            )
+          )
+        .unit
+    yield ()
+
+  /** Empties a collection, in batches, because Firestore has no recursive delete from a client library. */
+  private def deleteAll(collection: com.google.cloud.firestore.CollectionReference): Task[Unit] =
+    GoogleFuture
+      .fromApiFuture(collection.limit(AccountSessionStore.DeleteBatch).get())
+      .flatMap: found =>
+        val documents = found.getDocuments.asScala.toSeq
+        if documents.isEmpty then ZIO.unit
+        else
+          val batch = firestore.batch()
+          documents.foreach(document => { val _ = batch.delete(document.getReference) })
+          GoogleFuture.fromApiFuture(batch.commit()) *> deleteAll(collection)
 
   /** Files a captured recording under the session that produced it. */
   def recordTrace(name: String, session: String, traceId: String, fields: Map[String, AnyRef]): Task[Unit] =
