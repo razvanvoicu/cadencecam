@@ -1367,6 +1367,26 @@ object Main:
                 // Before authentication has been attempted, offer the only thing an anonymous visitor can do.
                 div(
                   cls := "home",
+                  // What the app is, for the two people who arrive without knowing: somebody deciding whether to hand
+                  // over their Google account, and a reviewer who cannot sign in to find out. A login button on an
+                  // otherwise empty page answers neither.
+                  div(
+                    cls := "intro",
+                    h1(cls := "intro-title", "CadenceCam"),
+                    p(cls := "intro-lead", "Counts your exercise repetitions using your phone's camera."),
+                    p(
+                      cls := "intro-detail",
+                      "Prop your phone where it can see the movement — a dumbbell curl, a stair climber, a " +
+                        "stationary bicycle — and it counts the repetitions as you go. A tablet or a second phone " +
+                        "can show the running count, your pace, and an estimate of the energy you have used."
+                    ),
+                    p(
+                      cls := "intro-detail",
+                      "The picture is processed on your device and is never uploaded: the app reads only how bright " +
+                        "each quarter of the frame is, and counts the movement from that. No photo or video is " +
+                        "recorded."
+                    )
+                  ),
                   a(cls := "login-button", href := "/auth/login", "Login with Google")
                 )
               case Shell.AuthenticationFailed(message) =>

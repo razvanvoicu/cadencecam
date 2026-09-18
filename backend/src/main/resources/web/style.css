@@ -71,6 +71,33 @@ button,
   text-align: center;
 }
 
+/* The only part of the app a visitor sees before signing in, so it has to carry the whole explanation on its own. */
+.intro {
+  margin: 0 auto 2rem;
+  max-width: 26rem;
+  text-align: left;
+}
+
+.intro-title {
+  margin: 0 0 0.25rem;
+  font-size: 1.75rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.intro-lead {
+  margin: 0 0 1.25rem;
+  font-size: 1.05rem;
+  text-align: center;
+}
+
+.intro-detail {
+  margin: 0 0 0.9rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
 /* Centred by the box rather than by its padding: as an inline-block, whatever the minimum height added beyond the
    line box fell entirely below the text, which sat high in the button. */
 .login-button {
