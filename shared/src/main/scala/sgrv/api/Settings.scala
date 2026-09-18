@@ -126,3 +126,12 @@ object AccountSettings:
   val Initial: AccountSettings = AccountSettings()
 
   given JsonCodec[AccountSettings] = DeriveJsonCodec.gen[AccountSettings]
+
+/** Everything the account holds, and the removing of all of it.
+  *
+  * One route rather than a sweep the app performs with several: what a person asks for when they ask for this is that
+  * nothing of theirs is left, and a client that had to remember every place data is kept would be a client that forgets
+  * one the next time somewhere new is written to.
+  */
+object AccountData:
+  val Path = "/account/data"

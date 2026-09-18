@@ -278,8 +278,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
   def discard(name: String, session: String): Task[Unit] =
     val workout = account(name).collection(AccountSchema.sessions).document(session)
     for
-      _ <- ZIO.foreachDiscard(Seq("traces", "signals"))(under => deleteAll(workout.collection(under)))
-      _ <- GoogleFuture.fromApiFuture(workout.delete())
+      _ <- forget(workout)
       // If the account was counting into it, it no longer is: a pointer to a workout that has gone would leave the
       // next device believing something was already counting and refusing to start.
       snapshot <- GoogleFuture.fromApiFuture(account(name).get())
@@ -297,8 +296,40 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
         .unit
     yield ()
 
-  /** Empties a collection, in batches, because Firestore has no recursive delete from a client library. */
-  private def deleteAll(collection: com.google.cloud.firestore.CollectionReference): Task[Unit] =
+  /** Removes one workout with everything filed under it. Firestore leaves a document's subcollections behind when the
+    * document goes, so they are emptied first and by hand.
+    */
+  private def forget(workout: com.google.cloud.firestore.DocumentReference): Task[Unit] =
+    ZIO.foreachDiscard(Seq("traces", "signals"))(under => deleteAll(workout.collection(under))) *>
+      GoogleFuture.fromApiFuture(workout.delete()).unit
+
+  /** Everything this account has: its workouts, its settings, and the test results filed under its address.
+    *
+    * The account document goes last. It holds the pointer to whatever was counting, so while it stands the app still
+    * behaves as though there were a session; removing it first and then failing halfway would leave the workouts
+    * orphaned under a name nothing refers to any more.
+    */
+  def forgetEverything(name: String, email: String): Task[Unit] =
+    val sessions = account(name).collection(AccountSchema.sessions)
+    def nextPage: Task[Unit] =
+      GoogleFuture
+        .fromApiFuture(sessions.limit(AccountSessionStore.DeleteBatch).get())
+        .flatMap: found =>
+          val documents = found.getDocuments.asScala.toSeq
+          if documents.isEmpty then ZIO.unit
+          else ZIO.foreachDiscard(documents)(document => forget(document.getReference)) *> nextPage
+    for
+      _ <- nextPage
+      _ <- GoogleFuture.fromApiFuture(account(name).delete())
+      _ <- deleteAll(
+        firestore
+          .collection(TestEventSchema.collection)
+          .whereEqualTo(TestEventSchema.userEmail, email)
+      )
+    yield ()
+
+  /** Empties a query's results, in batches, because Firestore has no recursive delete from a client library. */
+  private def deleteAll(collection: com.google.cloud.firestore.Query): Task[Unit] =
     GoogleFuture
       .fromApiFuture(collection.limit(AccountSessionStore.DeleteBatch).get())
       .flatMap: found =>

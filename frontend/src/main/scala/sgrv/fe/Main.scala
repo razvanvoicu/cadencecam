@@ -28,6 +28,7 @@ import sgrv.fe.acquire.{
   SignalGraph
 }
 import sgrv.api.{
+  AccountData,
   AccountSettings,
   CountsBy,
   DiscardWorkout,
@@ -134,6 +135,11 @@ object Main:
       * tear down the link to the counting device and make it pair again on the way back.
       */
     val historyOpen = Var(false)
+
+    /** Raised while the account is being asked whether it meant it. Deleting everything is the one thing in the app
+      * that cannot be undone from inside the app, so it is asked for twice and said plainly the second time.
+      */
+    val forgetPending = Var(false)
 
     /** Reads the account's settings. Called when a session is confirmed, which is what "on every login" means here.
       *
@@ -258,6 +264,26 @@ object Main:
       * same entries in it. The two documents are why: whichever screen somebody happens to be on when they go looking
       * for a privacy policy is the screen it has to be on.
       */
+    /** Removes everything the account holds, then signs out.
+      *
+      * Signing out afterwards because what is left otherwise is a session pointing at an account that no longer exists:
+      * every screen would be reading records that had just been deleted and quietly showing their absence as zeroes.
+      * Ending the session is the honest state to be in when nothing is left.
+      */
+    def forgetEverything(): Unit =
+      forgetPending.set(false)
+      val init = new dom.RequestInit:
+        method = dom.HttpMethod.DELETE
+      http
+        .send(AccountData.Path, init)
+        .onComplete:
+          case Success(response) if response.ok => logout()
+          case Success(response)                =>
+            dom.console.warn(s"Could not delete the account's data: HTTP ${response.status}")
+            stateStore.update(_.copy(logoutState = LogoutState.Failed("Your data could not be deleted.")))
+          case Failure(error) =>
+            stateStore.update(_.copy(logoutState = LogoutState.Failed(errorMessage(error))))
+
     def userActions: Element =
       val open = Var(false)
       div(
@@ -983,6 +1009,7 @@ object Main:
             menuOpen,
             menuItem("Settings", () => settingsOpen.set(true)),
             menuItem("History", () => historyOpen.set(true)),
+            menuItem("Delete all my data", () => forgetPending.set(true)),
             menuItem("Capture signal trace", () => ask(LiveCommand.CaptureTrace())),
             menuItem("About", () => openAbout()),
             Menu.documentItems(menuOpen),
@@ -1678,6 +1705,39 @@ object Main:
           .map:
             case false => emptyNode
             case true  => historyPanel()
+        ,
+        child <-- forgetPending.signal
+          .map:
+            case false => emptyNode
+            case true  =>
+              div(
+                cls := "about-overlay",
+                div(
+                  cls := "about-dialog takeover-dialog",
+                  role := "alertdialog",
+                  div(cls := "about-header", h2("Delete all your data?")),
+                  p(
+                    "This removes every workout you have counted, the recordings they produced, and your settings. " +
+                      "It cannot be undone, and there is nothing left afterwards to recover it from."
+                  ),
+                  p(cls := "field-hint", "You will be signed out. You can sign in again and start over."),
+                  div(
+                    cls := "takeover-actions",
+                    button(
+                      cls := "mode-button forget-confirm",
+                      typ := "button",
+                      "Delete everything",
+                      onClick --> (_ => forgetEverything())
+                    ),
+                    button(
+                      cls := "back-button",
+                      typ := "button",
+                      "Keep my data",
+                      onClick --> (_ => forgetPending.set(false))
+                    )
+                  )
+                )
+              )
         ,
         child <-- takeoverPending.signal
           .map:

@@ -1651,3 +1651,10 @@ button,
   border: 1px solid #262e31;
   color: inherit;
 }
+
+/* The one control in the app that destroys something irrecoverable, coloured like it. */
+.forget-confirm {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #fff;
+}

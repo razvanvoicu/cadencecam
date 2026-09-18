@@ -1,6 +1,6 @@
 package sgrv.be.sessions
 
-import sgrv.api.{DiscardWorkout, RepProgress, Workout, WorkoutHistory}
+import sgrv.api.{AccountData, DiscardWorkout, RepProgress, Workout, WorkoutHistory}
 import sgrv.be.core.{CapabilityRegistry, PluginStatus, RouteDiscovery}
 import zio.*
 import zio.http.{Method, Path}
@@ -66,3 +66,18 @@ class WorkoutHistorySuite extends munit.FunSuite:
 
   test("a history is bounded, so one request cannot ask for a database"):
     assert(WorkoutHistory.Limit > 0 && WorkoutHistory.Limit <= 1000)
+
+  test("everything an account holds is removed by one route, which takes no argument"):
+    // No id to get wrong, and none that could name somebody else's account: what is removed is whoever is signed in.
+    val patterns = AccountDataRoute.routes.routes.map(_.routePattern)
+
+    assertEquals(patterns.size, 1)
+    assert(patterns.exists(_.matches(Method.DELETE, Path(AccountData.Path))))
+
+  test("the delete-everything route is discovered on the classpath, and asks the host for Firestore"):
+    val statuses = run(RouteDiscovery.discover(CapabilityRegistry.empty))
+
+    val skipped = statuses.collectFirst:
+      case PluginStatus.Skipped(AccountDataRoute.id, _, missing) => missing.map(_.id).toSet
+
+    assertEquals(skipped, Some(Set("firestore", "session-store")))
