@@ -494,7 +494,6 @@ button,
 
 .figure-label {
   color: var(--dash-muted);
-  font-size: 0.75rem;
   font-weight: 500;
   letter-spacing: 0.2em;
   text-transform: uppercase;
@@ -551,16 +550,17 @@ button,
 
 .footnote-label {
   color: var(--dash-muted);
-  font-size: 0.7rem;
   font-weight: 500;
   letter-spacing: 0.14em;
+  line-height: 1.1;
   text-transform: uppercase;
-  white-space: nowrap;
 }
 
+.figure-label,
+.footnote-label,
 .footnote-value {
-  /* The qualifying figures are read from the same distance as the headline. Keep them at half its scale instead of
-     letting a separate, much smaller scale turn them into fine print. */
+  /* Every word and qualifying figure in a card is read from the same distance as its headline. Keep all of them at
+     half the headline's scale instead of leaving the labels as fine print. */
   font-size: clamp(2rem, 8.5vmin, 6.5rem);
   /* As with the headline, the card's width is the final limit. Both terms are exactly half of its corresponding
      headline term, so the relationship survives changes in viewport shape and card layout. */
