@@ -19,6 +19,12 @@ private[sessions] object AccountSchema:
   val collection = "CountingSessions"
   val sessions = "sessions"
 
+  /** What is filed under one workout: the signal recordings captured during it, and the messages its two devices
+    * exchanged to pair. Both belong to that workout alone and go with it when it is deleted.
+    */
+  val traces = "traces"
+  val signals = "signals"
+
   /** The session in progress, absent when the account has none. One field, so "one active session per account" is a
     * property of the shape rather than something that has to be enforced by a query.
     */
@@ -300,7 +306,9 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
     * document goes, so they are emptied first and by hand.
     */
   private def forget(workout: com.google.cloud.firestore.DocumentReference): Task[Unit] =
-    ZIO.foreachDiscard(Seq("traces", "signals"))(under => deleteAll(workout.collection(under))) *>
+    ZIO.foreachDiscard(Seq(AccountSchema.traces, AccountSchema.signals))(under =>
+      deleteAll(workout.collection(under))
+    ) *>
       GoogleFuture.fromApiFuture(workout.delete()).unit
 
   /** Everything this account has: its workouts, its settings, and the test results filed under its address.
@@ -347,7 +355,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
         account(name)
           .collection(AccountSchema.sessions)
           .document(session)
-          .collection("traces")
+          .collection(AccountSchema.traces)
           .document(traceId)
           .create(fields.asJava)
       )
@@ -381,7 +389,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
         account(name)
           .collection(AccountSchema.sessions)
           .document(session)
-          .collection("signals")
+          .collection(AccountSchema.signals)
           .document()
           .create(fields.asJava)
       )
@@ -403,7 +411,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
     val query = account(name)
       .collection(AccountSchema.sessions)
       .document(session)
-      .collection("signals")
+      .collection(AccountSchema.signals)
       .whereGreaterThan("postedAt", stamp(floor))
       .orderBy("postedAt", com.google.cloud.firestore.Query.Direction.ASCENDING)
       .limit(64)

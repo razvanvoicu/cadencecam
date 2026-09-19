@@ -14,8 +14,8 @@ import zio.json.*
 /** Removes what an abandoned run filed, leaving nothing behind that reads as a completed one.
   *
   * Scoped to one run of one account, and to the two places a run writes: the events it reported, and the recordings it
-  * asked the counting device to capture. The counting session itself is left alone -- it is a login rather than a run,
-  * it outlives the suite, and the schema says plainly that those records are kept.
+  * asked the counting device to capture. The workout the run was counted into is left alone: it belongs to the account
+  * rather than to the run, it is listed in the account's history, and the history is where it can be thrown away.
   */
 private[sessions] final class DiscardedRuns(firestore: Firestore):
 
@@ -47,24 +47,32 @@ private[sessions] final class DiscardedRuns(firestore: Firestore):
     * into the stored document. A half-open range over that prefix is a single-field query, which Firestore serves
     * without an index being declared for it.
     *
-    * Per session rather than across all of them: a collection-group query over `traces` would need an index this
-    * project does not have, and one account's open sessions are few.
+    * Looked for under every workout the account has, one at a time. A recording is filed under whichever workout was
+    * open when it was captured, which for one run is usually one workout and can be two; and a query across every
+    * `traces` collection at once would need a collection-group index this project does not declare.
     */
   private def deleteTraces(runId: String, email: String): zio.Task[Int] =
     val prefix = s"bench $runId"
-    val sessions = firestore
-      .collection(CountingSessionSchema.collection)
-      .whereEqualTo(CountingSessionSchema.userEmail, email)
-    for
-      found <- GoogleFuture.fromApiFuture(sessions.get())
-      counts <- ZIO.foreach(found.getDocuments.asScala.toSeq): session =>
-        val traces = session.getReference
-          .collection(CountingSessionSchema.traces)
-          .whereGreaterThanOrEqualTo(CountingSessionSchema.note, prefix)
-          // '' sits above every character a note can hold, so the range ends where the prefix stops matching.
-          .whereLessThan(CountingSessionSchema.note, prefix + HighestCharacter)
-        GoogleFuture.fromApiFuture(traces.get()).flatMap(hits => delete(hits.getDocuments.asScala.toSeq))
-    yield counts.sum
+    AccountKey
+      .of(email)
+      .flatMap:
+        // Without the key there is no workout to look under -- and none a recording could have been filed under
+        // either, since filing one needs the same name.
+        case None       => ZIO.succeed(0)
+        case Some(name) =>
+          val workouts = firestore
+            .collection(AccountSchema.collection)
+            .document(name)
+            .collection(AccountSchema.sessions)
+          for
+            found <- GoogleFuture.fromApiFuture(workouts.get())
+            counts <- ZIO.foreach(found.getDocuments.asScala.toSeq): workout =>
+              val traces = workout.getReference
+                .collection(AccountSchema.traces)
+                .whereGreaterThanOrEqualTo(CountingSessionSchema.note, prefix)
+                .whereLessThan(CountingSessionSchema.note, prefix + HighestCharacter)
+              GoogleFuture.fromApiFuture(traces.get()).flatMap(hits => delete(hits.getDocuments.asScala.toSeq))
+          yield counts.sum
 
   private def delete(documents: Seq[QueryDocumentSnapshot]): zio.Task[Int] =
     ZIO
