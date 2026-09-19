@@ -1,10 +1,27 @@
 package sgrv.be.auth
 
 import java.time.Instant
+import zio.*
 import zio.json.ast.Json
 import zio.http.{Path, Method as ZioMethod}
 
 class AuthSuite extends munit.FunSuite:
+
+  private def run[A](effect: ZIO[Any, Any, A]): A =
+    Unsafe.unsafe { implicit unsafe =>
+      Runtime.default.unsafe
+        .run(effect.mapError(error => new RuntimeException(error.toString)))
+        .getOrThrowFiberFailure()
+    }
+
+  test("generates distinct URL-safe 256-bit OAuth and session tokens"):
+    val tokens = run:
+      ZIO.scoped:
+        TokenGenerator.live.build.flatMap: environment =>
+          ZIO.collectAll(List.fill(32)(environment.get[TokenGenerator].generate(32)))
+
+    assertEquals(tokens.distinct.size, tokens.size)
+    assert(tokens.forall(_.matches("[A-Za-z0-9_-]{43}")), tokens.mkString(", "))
 
   test("validates and normalizes the configured public base URL"):
     assertEquals(AppConfig.validatePublicBaseUrl("http://localhost:8123/"), Right("http://localhost:8123"))
