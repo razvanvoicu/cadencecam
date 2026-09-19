@@ -507,6 +507,7 @@ button,
 .figure-value {
   display: flex;
   align-items: center;
+  justify-content: center;
   flex: 1;
   min-height: 0;
   font-size: clamp(4rem, 17vmin, 13rem);
@@ -516,6 +517,7 @@ button,
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.03em;
   line-height: 1.02;
+  text-align: center;
 }
 
 .reps-card .figure-value {
@@ -557,7 +559,12 @@ button,
 }
 
 .footnote-value {
-  font-size: clamp(1.35rem, 3.5vmin, 2.4rem);
+  /* The qualifying figures are read from the same distance as the headline. Keep them at half its scale instead of
+     letting a separate, much smaller scale turn them into fine print. */
+  font-size: clamp(2rem, 8.5vmin, 6.5rem);
+  /* As with the headline, the card's width is the final limit. Both terms are exactly half of its corresponding
+     headline term, so the relationship survives changes in viewport shape and card layout. */
+  font-size: min(clamp(2rem, 9vmin, 6.5rem), 10cqi);
   font-weight: 300;
   font-variant-numeric: tabular-nums;
 }
