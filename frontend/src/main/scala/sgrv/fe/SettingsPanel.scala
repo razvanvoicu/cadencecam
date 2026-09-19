@@ -3,12 +3,10 @@ package sgrv.fe
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
 import sgrv.api.{AccountSettings, CountsBy, ExerciseType, WeightUnit}
-import sgrv.fe.ApiClient.ApiFailure
+import sgrv.fe.ApiClient.ApiError
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.scalajs.js
-import scala.util.Failure
-import scala.util.Success
 
 /** Account settings shared by the screens, plus the panel that edits them. */
 private[fe] final class SettingsPanel(api: ApiClient):
@@ -27,6 +25,7 @@ private[fe] final class SettingsPanel(api: ApiClient):
     * reopen it on a reload -- over a camera that then keeps counting behind it.
     */
   val isOpen: Var[Boolean] = Var(false)
+  private val loadRequests = RequestScope()
 
   def open(): Unit = isOpen.set(true)
 
@@ -36,9 +35,9 @@ private[fe] final class SettingsPanel(api: ApiClient):
     * from the dashboard, and refusing to draw the screen over it would turn a wrong factor into no screen at all.
     */
   def load(): Unit =
-    api.accountSettings().onComplete:
-      case Success(value) => settings.set(value)
-      case Failure(error) => dom.console.warn(s"Could not read the account settings: ${errorMessage(error)}")
+    loadRequests.latest(api.accountSettings()):
+      case Right(value) => settings.set(value)
+      case Left(error)  => dom.console.warn(error.message)
 
   /** The settings panel: a weight, a default factor, and the exercises this account counts.
     *
@@ -50,26 +49,29 @@ private[fe] final class SettingsPanel(api: ApiClient):
     val draft = Var(settings.now())
     val saving = Var(false)
     val failed = Var(Option.empty[String])
+    val saveRequests = RequestScope()
 
-    def close(): Unit = isOpen.set(false)
+    def close(): Unit =
+      saveRequests.invalidate()
+      isOpen.set(false)
 
     def commit(): Unit =
       if !saving.now() then
         saving.set(true)
         failed.set(None)
         val next = draft.now()
-        api.saveAccountSettings(next).onComplete: outcome =>
+        saveRequests.run(api.saveAccountSettings(next)): outcome =>
           saving.set(false)
           outcome match
-            case Success(_) =>
+            case Right(_) =>
               // From the draft rather than from another request: the screens behind this one should show the new
               // figures the moment it closes, not one round trip later.
               settings.set(next)
               close()
-            case Failure(ApiFailure(_, status)) =>
+            case Left(ApiError.Http(_, status, _)) =>
               failed.set(Some(s"The server would not save these settings (HTTP $status)."))
-            case Failure(error) =>
-              failed.set(Some(errorMessage(error)))
+            case Left(error) =>
+              failed.set(Some(error.message))
 
     /** A number the user types, taken only when it parses and is above zero.
       *
@@ -206,6 +208,7 @@ private[fe] final class SettingsPanel(api: ApiClient):
 
     div(
       cls := "settings-overlay",
+      onUnmountCallback(_ => saveRequests.invalidate()),
       div(
         cls := "settings-screen",
         role := "dialog",

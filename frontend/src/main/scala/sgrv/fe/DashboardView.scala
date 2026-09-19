@@ -68,8 +68,8 @@ private[fe] object DashboardView:
 
     /** One of the two cards: a headline figure, and the two smaller ones that qualify it.
       *
-      * The pair below is always the rate and the projection, in that order, on both cards -- so the eye learns the shape
-      * once and reads the second card without having to.
+      * The pair below is always the rate and the projection, in that order, on both cards -- so the eye learns the
+      * shape once and reads the second card without having to.
       */
     def card(
         kind: String,
@@ -158,9 +158,7 @@ private[fe] object DashboardView:
           menuItem("History", () => historyPanel.open()),
           Menu.item(
             menuOpen,
-            defaultsToDashboard.signal.map(on =>
-              if on then "Default to dashboard off" else "Default to dashboard on"
-            ),
+            defaultsToDashboard.signal.map(on => if on then "Default to dashboard off" else "Default to dashboard on"),
             () =>
               val on = !defaultsToDashboard.now()
               StartPreference.setDefaultsToDashboard(storage, on)

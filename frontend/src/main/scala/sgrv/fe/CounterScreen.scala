@@ -100,6 +100,7 @@ private[fe] object CounterScreen:
     // rather than being there and inert.
     val adjustables = Var(Seq.empty[Adjustable])
     val adjustOpen = Var(false)
+    val roleRequests = RequestScope()
 
     val video = videoTag(cls := "camera-video")
     // The overlay's lines sit at 50% of this box, so the box must be exactly the frame: its aspect ratio is set from the
@@ -395,7 +396,9 @@ private[fe] object CounterScreen:
         peer.connect()
         // Before anything is reported: a report carries a count into the account's session, and until the role is taken
         // there is no session to carry it into.
-        api.takeCounterRole().failed.foreach(error => dom.console.warn(errorMessage(error)))
+        roleRequests.run(api.takeCounterRole()):
+          case Left(error) => dom.console.warn(error.message)
+          case Right(_)    => ()
         startCamera()
         // Leaving this screen is what releases the camera; staying would leave a phone counting into a room it no
         // longer owns, with its own tally still climbing on screen.
@@ -406,6 +409,7 @@ private[fe] object CounterScreen:
       },
       onUnmountCallback { _ =>
         live = false
+        roleRequests.invalidate()
         peer.close()
         reporter.stop()
         release()
@@ -461,8 +465,7 @@ private[fe] object CounterScreen:
           // on Safari there is nothing to move: it reports exposure as modes, with no range to put a slider on.
           child <-- adjustables.signal.map: available =>
             if available.isEmpty then emptyNode
-            else menuItem("Camera controls", () => adjustOpen.set(true))
-          ,
+            else menuItem("Camera controls", () => adjustOpen.set(true)),
           // Kept in the menu rather than on the panel: capturing is for working on the detector, not for working out,
           // and a control that stops a set is worth a deliberate tap.
           child <-- capture.signal.map: state =>

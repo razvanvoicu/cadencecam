@@ -4,7 +4,6 @@ import com.raquo.laminar.api.L.*
 import sgrv.api.AcquirerPresence
 
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.util.Success
 
 /** Chooses the role this device plays and owns the deliberate counter-takeover flow. */
 private[fe] final class RoleSelection(api: ApiClient, show: Screen => Unit, benchOffered: Boolean):
@@ -12,8 +11,8 @@ private[fe] final class RoleSelection(api: ApiClient, show: Screen => Unit, benc
     *
     * One acquirer per account is enforced by the account's record: whichever device took the role last is named as the
     * counter, and the one it replaced stands down when its next report is refused. That is the right outcome and the
-    * wrong way to arrive at it unannounced: on a bench with four handsets signed into one account, a phone that silently
-    * stopped counting looked like a phone that had crashed. So it is asked for first.
+    * wrong way to arrive at it unannounced: on a bench with four handsets signed into one account, a phone that
+    * silently stopped counting looked like a phone that had crashed. So it is asked for first.
     */
   val takeoverPending: Var[Boolean] = Var(false)
 
@@ -24,6 +23,7 @@ private[fe] final class RoleSelection(api: ApiClient, show: Screen => Unit, benc
     * already running, the choice is real and worth making deliberately.
     */
   private val accountCounting = Var(false)
+  private val presenceRequests = RequestScope()
 
   /** Where a fresh login lands: counting if the account has no counter, the choice of roles if it has.
     *
@@ -31,9 +31,9 @@ private[fe] final class RoleSelection(api: ApiClient, show: Screen => Unit, benc
     * someone and their camera, so it counts. Taking the role is what settles it either way.
     */
   def startByPresence(): Unit =
-    api.acquirerPresence().onComplete:
-      case Success(AcquirerPresence(true)) => accountCounting.set(true)
-      case _                               =>
+    presenceRequests.latest(api.acquirerPresence()):
+      case Right(AcquirerPresence(true)) => accountCounting.set(true)
+      case _                             =>
         accountCounting.set(false)
         show(Screen.Acquirer)
 
@@ -44,9 +44,9 @@ private[fe] final class RoleSelection(api: ApiClient, show: Screen => Unit, benc
     * account's record names one.
     */
   private def acquireRole(): Unit =
-    api.acquirerPresence().onComplete:
-      case Success(AcquirerPresence(true)) => takeoverPending.set(true)
-      case _                               => show(Screen.Acquirer)
+    presenceRequests.latest(api.acquirerPresence()):
+      case Right(AcquirerPresence(true)) => takeoverPending.set(true)
+      case _                             => show(Screen.Acquirer)
 
   private def roleChoice(modifier: String, screen: Screen, title: String, description: String): Element =
     button(

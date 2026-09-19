@@ -3,12 +3,10 @@ package sgrv.fe
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
 import sgrv.api.{AccountSettings, Workout}
-import sgrv.fe.ApiClient.ApiFailure
+import sgrv.fe.ApiClient.ApiError
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.scalajs.js
-import scala.util.Failure
-import scala.util.Success
 
 /** The account's workouts, newest first, and the throwing away of any one of them.
   *
@@ -28,28 +26,36 @@ private[fe] final class HistoryPanel(api: ApiClient, accountSettings: Var[Accoun
     val failed = Var(Option.empty[String])
     val confirming = Var(Option.empty[String])
     val menuOpen = Var(false)
+    val loadRequests = RequestScope()
+    val discardRequests = RequestScope()
 
-    def close(): Unit = isOpen.set(false)
+    def stopRequests(): Unit =
+      loadRequests.invalidate()
+      discardRequests.invalidate()
+
+    def close(): Unit =
+      stopRequests()
+      isOpen.set(false)
 
     def load(): Unit =
-      api.workoutHistory().onComplete:
-        case Success(history) =>
+      loadRequests.latest(api.workoutHistory()):
+        case Right(history) =>
           failed.set(None)
           workouts.set(Some(history.workouts))
-        case Failure(error) =>
-          failed.set(Some(errorMessage(error)))
+        case Left(error) =>
+          failed.set(Some(error.message))
           workouts.set(Some(Seq.empty))
 
     /** Removes one workout, and takes it off the list without asking for the whole history again. */
     def discard(workout: Workout): Unit =
       confirming.set(None)
-      api.discardWorkout(workout.id).onComplete:
-        case Success(_) =>
+      discardRequests.run(api.discardWorkout(workout.id)):
+        case Right(_) =>
           failed.set(None)
           workouts.update(_.map(_.filterNot(_.id == workout.id)))
-        case Failure(ApiFailure(_, status)) =>
+        case Left(ApiError.Http(_, status, _)) =>
           failed.set(Some(s"That workout could not be deleted (HTTP $status)."))
-        case Failure(error) => failed.set(Some(errorMessage(error)))
+        case Left(error) => failed.set(Some(error.message))
 
     /** Hands the history to the browser as a file to save.
       *
@@ -132,6 +138,7 @@ private[fe] final class HistoryPanel(api: ApiClient, accountSettings: Var[Accoun
     div(
       cls := "settings-overlay",
       onMountCallback(_ => load()),
+      onUnmountCallback(_ => stopRequests()),
       div(
         cls := "settings-screen history-screen",
         role := "dialog",

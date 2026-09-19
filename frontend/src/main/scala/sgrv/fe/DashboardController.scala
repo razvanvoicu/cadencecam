@@ -16,8 +16,8 @@ private[fe] final class DashboardController(http: HttpService):
   val reps: Signal[Int] = reading.map(_.fold(0)(_.reps))
   val elapsedSeconds: Signal[Double] = reading.map(_.fold(0.0)(_.elapsedSeconds))
 
-  /** The last few reps, as they were when each was counted. Kept here rather than sent, because a pace is a property
-    * of the reps a watcher has seen and the counter has no reason to hold a second window of its own.
+  /** The last few reps, as they were when each was counted. Kept here rather than sent, because a pace is a property of
+    * the reps a watcher has seen and the counter has no reason to hold a second window of its own.
     */
   val window: Var[Vector[Effort.RepMark]] = Var(Vector.empty)
 

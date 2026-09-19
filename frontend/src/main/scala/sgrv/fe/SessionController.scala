@@ -2,14 +2,12 @@ package sgrv.fe
 
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
-import sgrv.fe.ApiClient.{ApiFailure, MeResult}
+import sgrv.fe.ApiClient.{ApiError, MeResult}
 import sgrv.fe.UserState.*
 import sgrv.fe.refreshstate.RefreshStateStore
 import sgrv.fe.refreshstate.SessionRefreshWorker
 
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.util.Failure
-import scala.util.Success
 
 /** Owns authentication and session lifecycle.
   *
@@ -25,39 +23,43 @@ private[fe] final class SessionController(
     onSignedIn: () => Unit,
     startByPresence: () => Unit
 ):
-  /** Raised while the account is being asked whether it meant it. Deleting everything is the one thing in the app
-    * that cannot be undone from inside the app, so it is asked for twice and said plainly the second time.
+  /** Raised while the account is being asked whether it meant it. Deleting everything is the one thing in the app that
+    * cannot be undone from inside the app, so it is asked for twice and said plainly the second time.
     */
   val forgetPending: Var[Boolean] = Var(false)
+  private val aboutRequests = RequestScope()
 
   def start(): Unit =
-    api.session().onComplete:
-      case Success(MeResult(session @ SignedIn(email, _), countingSessionId)) =>
-        // What this device has been told to open on, if anything. Read once, here: the one-shot marker it may consume
-        // belongs to this start and no other.
-        val preferred = StartPreference.consumeOpening(storage)
-        stateStore.update: current =>
-          current.copy(
-            user = session,
-            // A preference wins. Otherwise a different account signing in on this device starts at the role picker
-            // rather than inheriting whichever role the previous account left behind.
-            screen = preferred.getOrElse:
-              if stateStore.restoredUserEmail.contains(email) then current.screen else Screen.Selection
-            ,
-            countingSessionId = countingSessionId
-          )
-        refreshStateStore.update(_.copy(expired = false))
-        worker.enable()
-        onSignedIn()
-        // Only for a login that has just landed on the picker with nothing preferred: a device returning to the role it
-        // already held keeps it, and must not be sent to the camera because some other device happens to be free.
-        if preferred.isEmpty && !stateStore.restoredUserEmail.contains(email) then startByPresence()
-      case Success(MeResult(session, _)) => updateUser(session)
-      case Failure(error)                => updateUser(AuthenticationFailed(errorMessage(error)))
+    api
+      .session()
+      .foreach:
+        case Right(MeResult(session @ SignedIn(email, _), countingSessionId)) =>
+          // What this device has been told to open on, if anything. Read once, here: the one-shot marker it may consume
+          // belongs to this start and no other.
+          val preferred = StartPreference.consumeOpening(storage)
+          stateStore.update: current =>
+            current.copy(
+              user = session,
+              // A preference wins. Otherwise a different account signing in on this device starts at the role picker
+              // rather than inheriting whichever role the previous account left behind.
+              screen = preferred.getOrElse:
+                if stateStore.restoredUserEmail.contains(email) then current.screen else Screen.Selection
+              ,
+              countingSessionId = countingSessionId
+            )
+          refreshStateStore.update(_.copy(expired = false))
+          worker.enable()
+          onSignedIn()
+          // Only for a login that has just landed on the picker with nothing preferred: a device returning to the role it
+          // already held keeps it, and must not be sent to the camera because some other device happens to be free.
+          if preferred.isEmpty && !stateStore.restoredUserEmail.contains(email) then startByPresence()
+        case Right(MeResult(session, _)) => updateUser(session)
+        case Left(error)                 => updateUser(AuthenticationFailed(error.message))
 
   def handleUnauthorized(): Unit =
     // The initial `/me` is allowed to answer 401 without putting an expiry dialog over the ordinary login screen.
     if worker.isEnabled then
+      aboutRequests.invalidate()
       worker.disable()
       stateStore.update(SessionController.signedOut(Unauthenticated))
       refreshStateStore.update(_.copy(expired = true))
@@ -69,14 +71,16 @@ private[fe] final class SessionController(
     // Nobody to ask before signing in: the build endpoint needs a session, so asking only ever produced a 401 dressed
     // up as a failure, and tripped the session handling on the way out. What is worth knowing there -- which bundle
     // this browser is running -- is known locally.
-    if !signedIn then stateStore.update(_.copy(aboutState = AboutState.LocalOnly))
+    if !signedIn then
+      aboutRequests.invalidate()
+      stateStore.update(_.copy(aboutState = AboutState.LocalOnly))
     else
       stateStore.update(_.copy(aboutState = AboutState.Loading))
-      api.about().onComplete:
-        case Success(information) if stateStore.current.aboutState == AboutState.Loading =>
+      aboutRequests.latest(api.about()):
+        case Right(information) if stateStore.current.aboutState == AboutState.Loading =>
           stateStore.update(_.copy(aboutState = AboutState.Loaded(information)))
-        case Failure(error) if stateStore.current.aboutState == AboutState.Loading =>
-          stateStore.update(_.copy(aboutState = AboutState.Failed(errorMessage(error))))
+        case Left(error) if stateStore.current.aboutState == AboutState.Loading =>
+          stateStore.update(_.copy(aboutState = AboutState.Failed(error.message)))
         case _ => ()
 
   def logout(): Unit =
@@ -84,12 +88,14 @@ private[fe] final class SessionController(
       worker.disable()
       refreshStateStore.update(_.copy(expired = false))
       stateStore.update(_.copy(logoutState = LogoutState.InProgress))
-      api.logout().onComplete:
-        case Success(_) =>
-          stateStore.update(SessionController.signedOut(Unauthenticated))
-          dom.window.location.assign("/")
-        case Failure(error) =>
-          stateStore.update(_.copy(logoutState = LogoutState.Failed(errorMessage(error))))
+      api
+        .logout()
+        .foreach:
+          case Right(_) =>
+            stateStore.update(SessionController.signedOut(Unauthenticated))
+            dom.window.location.assign("/")
+          case Left(error) =>
+            stateStore.update(_.copy(logoutState = LogoutState.Failed(error.message)))
 
   /** Removes everything the account holds, then signs out.
     *
@@ -99,12 +105,14 @@ private[fe] final class SessionController(
     */
   def forgetEverything(): Unit =
     forgetPending.set(false)
-    api.deleteAccountData().onComplete:
-      case Success(_) => logout()
-      case Failure(_: ApiFailure) =>
-        stateStore.update(_.copy(logoutState = LogoutState.Failed("Your data could not be deleted.")))
-      case Failure(error) =>
-        stateStore.update(_.copy(logoutState = LogoutState.Failed(errorMessage(error))))
+    api
+      .deleteAccountData()
+      .foreach:
+        case Right(_)               => logout()
+        case Left(_: ApiError.Http) =>
+          stateStore.update(_.copy(logoutState = LogoutState.Failed("Your data could not be deleted.")))
+        case Left(error) =>
+          stateStore.update(_.copy(logoutState = LogoutState.Failed(error.message)))
 
   private def updateUser(state: UserState): Unit =
     stateStore.update: current =>

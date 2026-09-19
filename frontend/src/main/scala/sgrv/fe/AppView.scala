@@ -113,8 +113,8 @@ private[fe] object AppView:
         case Restoring(email, _) => Some(email)
         case _                   => None
       val content = state match
-        case AboutState.Loading         => p(cls := "about-status", "Loading build information…")
-        case AboutState.Failed(message) => p(cls := "error about-status", message)
+        case AboutState.Loading             => p(cls := "about-status", "Loading build information…")
+        case AboutState.Failed(message)     => p(cls := "error about-status", message)
         case AboutState.Loaded(information) =>
           dl(
             cls := "about-details",
