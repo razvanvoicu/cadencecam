@@ -10,9 +10,13 @@ import scala.scalajs.js
 import scala.util.Failure
 import scala.util.Success
 
-/** Reports the acquirer's running total to its counting session at a fixed interval.
+/** Reports what the acquirer's workout has measured so far to the account's session, at a fixed interval.
   *
-  * On a timer rather than on every rep: the dashboard needs a total that is roughly current, not every increment, and a
+  * The whole measurement rather than the count alone: the rep count, the cadence accumulated over it, and how long the
+  * set has run. The history works its calorie figure and its duration out of the last two, and a session that was only
+  * ever told the count shows every workout as having taken no time and, counted by frequency, burned nothing.
+  *
+  * On a timer rather than on every rep: the session needs a record that is roughly current, not every increment, and a
   * workout at two hertz would otherwise mean a request per half second. Reporting unchanged totals too is deliberate —
   * the traffic is also what keeps a scale-to-zero backend from being reclaimed while an acquirer sits mid-workout,
   * which a report only on change would not do during a rest.
@@ -27,7 +31,6 @@ private[fe] final class RepProgressReporter(
   private var handle: Option[Int] = None
   private var inFlight = false
 
-  /** Begins reporting whatever `reps` returns at each tick. Starting twice is a no-op rather than a second timer. */
   /** Called when the server says another device now holds the counter's role.
     *
     * With no relay left to carry a stand-down message, this is how a displaced device learns: its next report is
@@ -35,14 +38,16 @@ private[fe] final class RepProgressReporter(
     */
   var onDisplaced: () => Unit = () => ()
 
-  def start(reps: () => Int): Unit =
-    if handle.isEmpty then handle = Some(dom.window.setInterval(() => report(reps()), intervalMillis.toDouble))
+  /** Begins reporting whatever `progress` returns at each tick. Starting twice is a no-op rather than a second timer.
+    */
+  def start(progress: () => RepProgress): Unit =
+    if handle.isEmpty then handle = Some(dom.window.setInterval(() => report(progress()), intervalMillis.toDouble))
 
   def stop(): Unit =
     handle.foreach(dom.window.clearInterval)
     handle = None
 
-  private def report(reps: Int): Unit =
+  private def report(progress: RepProgress): Unit =
     // A slow network must not let reports queue up behind each other: the next tick carries the same information as
     // the one still in flight, so skipping it loses nothing.
     if !inFlight then
@@ -50,7 +55,7 @@ private[fe] final class RepProgressReporter(
       val init = new dom.RequestInit:
         method = dom.HttpMethod.POST
         headers = js.Dictionary("Content-Type" -> "application/json")
-        body = RepProgress(reps).toJson
+        body = progress.toJson
       http
         .send(RepProgress.Path, init)
         .onComplete: outcome =>

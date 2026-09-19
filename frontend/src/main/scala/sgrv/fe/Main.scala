@@ -1282,12 +1282,7 @@ object Main:
         // Detection starts over from nothing, but what was already counted stands: switching cameras mid-set is a
         // change of viewpoint, not a new workout. Absorbing it into the baseline first is what keeps it -- the whole
         // of it, since a set whose calories reset at a camera change would be no better off than one whose reps did.
-        val carried = counter.reading
-        baseline = ResumedRun(
-          baseline.count + carried.count,
-          baseline.cadenceSum + carried.cadenceSum,
-          baseline.elapsedSeconds + carried.elapsedSeconds
-        )
+        baseline = baseline.plus(counter.reading)
         counter.reset()
         totalSamples = 0
         repCount.set(baseline.count)
@@ -1421,12 +1416,12 @@ object Main:
           // taken there is no session to carry it into.
           takeCounterRole()
           startCamera()
-          // Reads the total rather than being pushed it, so a tick reports whatever is current at the moment it
-          // fires and no report can be left describing a count that has since moved on.
           // Leaving this screen is what releases the camera; staying would leave a phone counting into a room it no
           // longer owns, with its own tally still climbing on screen.
           reporter.onDisplaced = () => show(Screen.Selection)
-          reporter.start(() => repCount.now())
+          // Reads the workout rather than being pushed it, so a tick reports whatever is current at the moment it
+          // fires and no report can be left describing a count that has since moved on.
+          reporter.start(() => baseline.plus(counter.reading).progress)
         },
         onUnmountCallback { _ =>
           live = false

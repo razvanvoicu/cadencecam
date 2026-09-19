@@ -1,6 +1,7 @@
 package sgrv.fe.acquire
 
 import org.scalajs.dom
+import sgrv.api.RepProgress
 import zio.json.*
 
 import scala.util.control.NonFatal
@@ -30,7 +31,19 @@ private[fe] object SavedRepCount:
   given JsonCodec[SavedRepCount] = DeriveJsonCodec.gen[SavedRepCount]
 
 /** What a run resumes from after a page load: nothing at all, or everything that was measured before it. */
-private[fe] final case class ResumedRun(count: Int, cadenceSum: Double, elapsedSeconds: Double)
+private[fe] final case class ResumedRun(count: Int, cadenceSum: Double, elapsedSeconds: Double):
+
+  /** This run with what the detector has counted since added to it: the whole workout so far.
+    *
+    * How a count carried over from a previous page load, or from before a camera switch, joins the one being made now.
+    * All three together, because they are one measurement of one set: carrying the reps while restarting the clock
+    * would report a workout that did two hundred reps in no time at all.
+    */
+  def plus(reading: RepReading): ResumedRun =
+    ResumedRun(count + reading.count, cadenceSum + reading.cadenceSum, elapsedSeconds + reading.elapsedSeconds)
+
+  /** The run as the account's session files it. */
+  def progress: RepProgress = RepProgress(count, cadenceSum, elapsedSeconds)
 
 private[fe] object ResumedRun:
   val Nothing: ResumedRun = ResumedRun(0, 0.0, 0.0)

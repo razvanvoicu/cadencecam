@@ -1,6 +1,7 @@
 package sgrv.fe.acquire
 
 import munit.FunSuite
+import sgrv.api.RepProgress
 import zio.json.*
 
 class RepCountStoreSuite extends FunSuite:
@@ -58,3 +59,17 @@ class RepCountStoreSuite extends FunSuite:
     assertEquals(resumable(saved, retention = 60 * 1000.0), 0)
     assertEquals(resumable(saved, retention = 120 * 1000.0), 57)
     assertEquals(RepCountStore.DefaultRetentionMillis, 3_600_000.0)
+
+  test("a carried-over run and what the detector has counted since add up to the whole workout"):
+    // A reload or a camera switch leaves a run behind, and the detector starts again from nothing. All three figures
+    // join together, or the history is told a workout of two hundred reps that took no time at all.
+    val carried = ResumedRun(57, 31.5, 184.0)
+    val since = RepReading(12, LockState.Searching, cadenceSum = 6.25, elapsedSeconds = 30.0)
+
+    assertEquals(carried.plus(since), ResumedRun(69, 37.75, 214.0))
+    assertEquals(ResumedRun.Nothing.plus(since), ResumedRun(12, 6.25, 30.0))
+
+  test("the account's session is told the whole measurement, not only the count"):
+    // The history works a duration and a calorie figure out of what the session was told. Told only the count, it
+    // showed every workout as having taken no time and, counted by frequency, burned nothing.
+    assertEquals(ResumedRun(69, 37.75, 214.0).progress, RepProgress(69, 37.75, 214.0))
