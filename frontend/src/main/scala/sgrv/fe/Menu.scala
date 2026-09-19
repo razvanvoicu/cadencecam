@@ -43,6 +43,10 @@ private[fe] object Menu:
   def item(open: Var[Boolean], label: String, act: () => Unit): Element =
     button(cls := "menu-item", typ := "button", label, onClick --> (_ => { open.set(false); act() }))
 
+  /** An entry whose wording changes with what choosing it would do -- a switch, named by the way it will turn. */
+  def item(open: Var[Boolean], label: Signal[String], act: () => Unit): Element =
+    button(cls := "menu-item", typ := "button", child.text <-- label, onClick --> (_ => { open.set(false); act() }))
+
   /** An entry that opens a page of its own, in a tab of its own.
     *
     * A new tab rather than this one, deliberately: these are static pages outside the app, and following one in place

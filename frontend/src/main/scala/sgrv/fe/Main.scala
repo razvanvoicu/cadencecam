@@ -141,6 +141,11 @@ object Main:
       */
     val forgetPending = Var(false)
 
+    /** Whether this device opens on the dashboard. Mirrors what is stored, so the menu can say which way the next tap
+      * turns it.
+      */
+    val defaultsToDashboard = Var(StartPreference.defaultsToDashboard(localStorage))
+
     /** Reads the account's settings. Called when a session is confirmed, which is what "on every login" means here.
       *
       * A failure leaves the defaults in place and says so in the console only. There is nothing a person can do about
@@ -210,20 +215,25 @@ object Main:
     val initialSession = http.get("/me").flatMap(sessionState)
     initialSession.onComplete:
       case Success(MeResult(session @ SignedIn(email, _), countingSessionId)) =>
+        // What this device has been told to open on, if anything. Read once, here: the one-shot marker it may
+        // consume belongs to this start and no other.
+        val preferred = StartPreference.consumeOpening(localStorage)
         stateStore.update: current =>
           current.copy(
             user = session,
-            // A different account signing in on this device starts at the role picker rather than inheriting
-            // whichever role the previous account left behind.
-            screen = if stateStore.restoredUserEmail.contains(email) then current.screen else Screen.Selection,
+            // A preference wins. Otherwise a different account signing in on this device starts at the role picker
+            // rather than inheriting whichever role the previous account left behind.
+            screen = preferred.getOrElse:
+              if stateStore.restoredUserEmail.contains(email) then current.screen else Screen.Selection
+            ,
             countingSessionId = countingSessionId
           )
         refreshStateStore.update(_.copy(expired = false))
         worker.enable()
         loadSettings()
-        // Only for a login that has just landed on the picker: a device returning to the role it already held keeps
-        // it, and must not be sent to the camera because some other device happens to be free.
-        if !stateStore.restoredUserEmail.contains(email) then startByPresence()
+        // Only for a login that has just landed on the picker with nothing preferred: a device returning to the role it
+        // already held keeps it, and must not be sent to the camera because some other device happens to be free.
+        if preferred.isEmpty && !stateStore.restoredUserEmail.contains(email) then startByPresence()
       case Success(MeResult(session, _)) => updateUser(session)
       case Failure(error)                => updateUser(AuthenticationFailed(errorMessage(error)))
 
@@ -1009,6 +1019,16 @@ object Main:
             menuOpen,
             menuItem("Settings", () => settingsOpen.set(true)),
             menuItem("History", () => historyOpen.set(true)),
+            Menu.item(
+              menuOpen,
+              defaultsToDashboard.signal.map(on =>
+                if on then "Default to dashboard off" else "Default to dashboard on"
+              ),
+              () =>
+                val on = !defaultsToDashboard.now()
+                StartPreference.setDefaultsToDashboard(localStorage, on)
+                defaultsToDashboard.set(on)
+            ),
             menuItem("Delete all my data", () => forgetPending.set(true)),
             menuItem("Capture signal trace", () => ask(LiveCommand.CaptureTrace())),
             menuItem("About", () => openAbout()),
