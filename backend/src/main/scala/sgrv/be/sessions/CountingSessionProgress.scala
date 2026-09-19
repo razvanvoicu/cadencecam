@@ -61,17 +61,15 @@ object CountingSessionProgress extends BackendPlugin:
       body <- request.body.asString.mapError(error => Malformed(describe(error)))
       progress <- ZIO.fromEither(CountingSessionProgress.reported(body)).mapError(Malformed.apply)
       firestore <- ZIO.service[Firestore]
-      located <- AccountSessions.active(firestore, email).mapError(WriteFailed.apply)
-      (account, session) <- ZIO.fromOption(located).orElseFail(NotCounting)
+      account <- AccountKey.of(email).someOrFail(NotCounting)
       keeper <- AccountSessions.store(firestore)
       now <- Clock.instant
-      state <- keeper.state(account, now).mapError(WriteFailed.apply)
-      // Another device has the role: say so rather than recording a count from a device that has been stood down.
-      // Nothing else tells it, so this is how a displaced counter finds out.
-      _ <- ZIO.fail(Displaced).when(state.counter.exists(_ != mine))
-      _ <- keeper
-        .counted(account, session, progress.reps, progress.cadenceSum, progress.elapsedSeconds, now)
+      recorded <- keeper
+        .counted(account, mine, progress.reps, progress.cadenceSum, progress.elapsedSeconds, now)
         .mapError(WriteFailed.apply)
+      // The ownership check and progress write happen in the same transaction. Another device taking over between a
+      // read and this write therefore cannot let a displaced counter file one last report.
+      _ <- ZIO.fail(Displaced).when(recorded.isEmpty)
     yield ()
 
   /** The count a request body reports, or why it does not report one.

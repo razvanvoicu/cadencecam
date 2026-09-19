@@ -1,7 +1,9 @@
 package sgrv.be.sessions
 
+import com.google.api.core.{ApiFunction, ApiFutures}
 import com.google.cloud.Timestamp
-import com.google.cloud.firestore.{DocumentReference, Firestore}
+import com.google.cloud.firestore.{DocumentReference, DocumentSnapshot, Firestore, Transaction}
+import com.google.common.util.concurrent.MoreExecutors
 import java.time.{Duration, Instant}
 import scala.jdk.CollectionConverters.*
 import sgrv.api.{AccountSettings, Workout}
@@ -149,89 +151,133 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
 
   private def stamp(at: Instant) = Timestamp.ofTimeSecondsAndNanos(at.getEpochSecond, at.getNano)
 
+  /** Reads an account and decides all writes which depend on it inside one Firestore transaction. Firestore may invoke
+    * the callback more than once when another request changes the account concurrently, so callers must derive their
+    * answer only from the supplied snapshot and limit their effects to writes on `transaction`.
+    */
+  private def transact[A](name: String)(
+      decide: (Transaction, DocumentReference, DocumentSnapshot) => A
+  ): Task[A] =
+    val reference = account(name)
+    GoogleFuture.fromApiFuture:
+      firestore.runAsyncTransaction[A]: transaction =>
+        ApiFutures.transform(
+          transaction.get(reference),
+          new ApiFunction[DocumentSnapshot, A]:
+            override def apply(snapshot: DocumentSnapshot): A = decide(transaction, reference, snapshot)
+          ,
+          MoreExecutors.directExecutor()
+        )
+
+  private def stateOf(snapshot: DocumentSnapshot): AccountState =
+    if !snapshot.exists then AccountState(None, None)
+    else
+      AccountState(
+        Option(snapshot.getString(AccountSchema.activeSession)),
+        Option(snapshot.getString(AccountSchema.counter))
+      )
+
+  private def quietSince(snapshot: DocumentSnapshot): Option[Instant] =
+    Option(snapshot.getTimestamp(AccountSchema.lastRepAt)).map(_.toDate.toInstant)
+
+  private def end(
+      transaction: Transaction,
+      reference: DocumentReference,
+      session: String,
+      why: SessionEnd,
+      now: Instant,
+      clearAccount: Boolean
+  ): Unit =
+    val ended = Map[String, AnyRef](
+      AccountSchema.completedAt -> stamp(now),
+      AccountSchema.endedBy -> why.toString
+    )
+    val _ = transaction.set(
+      reference.collection(AccountSchema.sessions).document(session),
+      ended.asJava,
+      com.google.cloud.firestore.SetOptions.merge()
+    )
+    if clearAccount then
+      val _ = transaction.update(
+        reference,
+        Map[String, AnyRef](
+          AccountSchema.activeSession -> com.google.cloud.firestore.FieldValue.delete(),
+          AccountSchema.counter -> com.google.cloud.firestore.FieldValue.delete()
+        ).asJava
+      )
+
   /** What is counting for this account, closing a session first if it has gone quiet for longer than the timeout.
     *
     * Evaluated when someone asks rather than swept by a timer: an idle instance runs no code, so a background job would
     * need scheduling, while every question that matters arrives as a request anyway.
     */
   def state(name: String, now: Instant): Task[AccountState] =
-    GoogleFuture
-      .fromApiFuture(account(name).get())
-      .flatMap: snapshot =>
-        if !snapshot.exists then ZIO.succeed(AccountState(None, None))
-        else
-          val active = Option(snapshot.getString(AccountSchema.activeSession))
-          val counter = Option(snapshot.getString(AccountSchema.counter))
-          val quietSince = Option(snapshot.getTimestamp(AccountSchema.lastRepAt)).map(_.toDate.toInstant)
-          active match
-            case Some(session) if AccountSessions.goneQuiet(quietSince, now, idleAfter) =>
-              close(name, session, SessionEnd.Idle, now).as(AccountState(None, None))
-            case other => ZIO.succeed(AccountState(other, counter))
+    transact(name): (transaction, reference, snapshot) =>
+      val current = stateOf(snapshot)
+      current.active match
+        case Some(session) if AccountSessions.goneQuiet(quietSince(snapshot), now, idleAfter) =>
+          end(transaction, reference, session, SessionEnd.Idle, now, clearAccount = true)
+          AccountState(None, None)
+        case _ => current
 
   /** Takes the counter's role: joins the session in progress, or opens one when there is none. */
   def takeCounting(name: String, browserSession: String, now: Instant): Task[String] =
-    state(name, now).flatMap: current =>
-      current.active match
-        case Some(session) => hand(name, session, browserSession).as(session)
-        case None          => start(name, browserSession, now)
-
-  /** Opens a session: a new document under the account, and the account's pointer to it.
-    *
-    * Its id begins with the moment it opened, so a listing of the subcollection is in the order the workouts happened
-    * even before anything sorts it.
-    */
-  private def start(name: String, browserSession: String, now: Instant): Task[String] =
-    val session = f"${now.toEpochMilli}%d-${scala.util.Random.nextInt(0x1000)}%03x"
-    val opened = Map[String, AnyRef](
-      AccountSchema.startedAt -> stamp(now),
-      AccountSchema.counter -> browserSession
-    )
-    for
-      _ <- GoogleFuture.fromApiFuture(
-        account(name).collection(AccountSchema.sessions).document(session).create(opened.asJava)
-      )
-      _ <- GoogleFuture.fromApiFuture(
-        account(name).set(
-          Map[String, AnyRef](
-            AccountSchema.activeSession -> session,
-            AccountSchema.counter -> browserSession,
-            AccountSchema.lastRepAt -> stamp(now)
-          ).asJava,
-          com.google.cloud.firestore.SetOptions.merge()
-        )
-      )
-    yield session
-
-  /** Moves the counter's role to another device without ending the session. */
-  private def hand(name: String, session: String, browserSession: String): Task[Unit] =
-    val moved = Map[String, AnyRef](AccountSchema.counter -> browserSession)
-    for
-      _ <- GoogleFuture.fromApiFuture(
-        account(name)
-          .collection(AccountSchema.sessions)
-          .document(session)
-          .set(moved.asJava, com.google.cloud.firestore.SetOptions.merge())
-      )
-      _ <- GoogleFuture.fromApiFuture(account(name).set(moved.asJava, com.google.cloud.firestore.SetOptions.merge()))
-    yield ()
+    // Chosen outside the callback because Firestore may retry a transaction. Every attempt must create the same
+    // session rather than leaving the caller with whichever random id the final attempt happened to choose.
+    val newSession = f"${now.toEpochMilli}%d-${scala.util.Random.nextInt(0x1000)}%03x"
+    transact(name): (transaction, reference, snapshot) =>
+      val current = stateOf(snapshot)
+      current.active.filterNot(_ => AccountSessions.goneQuiet(quietSince(snapshot), now, idleAfter)) match
+        case Some(session) =>
+          val moved = Map[String, AnyRef](AccountSchema.counter -> browserSession)
+          val _ = transaction.set(
+            reference.collection(AccountSchema.sessions).document(session),
+            moved.asJava,
+            com.google.cloud.firestore.SetOptions.merge()
+          )
+          val _ = transaction.set(reference, moved.asJava, com.google.cloud.firestore.SetOptions.merge())
+          session
+        case None =>
+          current.active.foreach(session =>
+            end(transaction, reference, session, SessionEnd.Idle, now, clearAccount = false)
+          )
+          val opened = Map[String, AnyRef](
+            AccountSchema.startedAt -> stamp(now),
+            AccountSchema.counter -> browserSession
+          )
+          val _ = transaction.create(
+            reference.collection(AccountSchema.sessions).document(newSession),
+            opened.asJava
+          )
+          val _ = transaction.set(
+            reference,
+            Map[String, AnyRef](
+              AccountSchema.activeSession -> newSession,
+              AccountSchema.counter -> browserSession,
+              AccountSchema.lastRepAt -> stamp(now)
+            ).asJava,
+            com.google.cloud.firestore.SetOptions.merge()
+          )
+          newSession
 
   /** Records what a workout has measured so far. Also moves the account's idle mark, whatever the count: see
     * [[AccountSchema.lastRepAt]].
     */
   def counted(
       name: String,
-      session: String,
+      browserSession: String,
       reps: Int,
       cadenceSum: Double,
       elapsedSeconds: Double,
       now: Instant
-  ): Task[Unit] =
-    for
-      _ <- GoogleFuture.fromApiFuture(
-        account(name)
-          .collection(AccountSchema.sessions)
-          .document(session)
-          .set(
+  ): Task[Option[String]] =
+    transact(name): (transaction, reference, snapshot) =>
+      val current = stateOf(snapshot)
+      current.active
+        .filter(_ => current.counter.contains(browserSession))
+        .map: session =>
+          val _ = transaction.set(
+            reference.collection(AccountSchema.sessions).document(session),
             Map[String, AnyRef](
               AccountSchema.reps -> java.lang.Long.valueOf(reps.toLong),
               AccountSchema.repsAt -> stamp(now),
@@ -240,14 +286,12 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
             ).asJava,
             com.google.cloud.firestore.SetOptions.merge()
           )
-      )
-      _ <- GoogleFuture.fromApiFuture(
-        account(name).set(
-          Map[String, AnyRef](AccountSchema.lastRepAt -> stamp(now)).asJava,
-          com.google.cloud.firestore.SetOptions.merge()
-        )
-      )
-    yield ()
+          val _ = transaction.set(
+            reference,
+            Map[String, AnyRef](AccountSchema.lastRepAt -> stamp(now)).asJava,
+            com.google.cloud.firestore.SetOptions.merge()
+          )
+          session
 
   /** What the account has set, or nothing when it has never said.
     *
@@ -452,29 +496,14 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
           .maxOption
         (theirs, consumed.getOrElse(floor).toString)
 
-  /** Ends the session and leaves it as a record. The account keeps its document; only the pointer is cleared. */
-  def close(name: String, session: String, why: SessionEnd, now: Instant): Task[Unit] =
-    val ended = Map[String, AnyRef](
-      AccountSchema.completedAt -> stamp(now),
-      AccountSchema.endedBy -> why.toString
-    )
-    for
-      _ <- GoogleFuture
-        .fromApiFuture(
-          account(name)
-            .collection(AccountSchema.sessions)
-            .document(session)
-            .set(ended.asJava, com.google.cloud.firestore.SetOptions.merge())
-        )
-        .unit
-      _ <- GoogleFuture
-        .fromApiFuture(
-          account(name).update(
-            Map[String, AnyRef](
-              AccountSchema.activeSession -> com.google.cloud.firestore.FieldValue.delete(),
-              AccountSchema.counter -> com.google.cloud.firestore.FieldValue.delete()
-            ).asJava
-          )
-        )
-        .unit
-    yield ()
+  /** Ends whichever session is active and leaves it as a record. The decision and both document changes are one
+    * transaction, so a concurrent takeover cannot leave the account pointing at a completed session or clear a newer
+    * one. A session already quiet is still recorded as idle rather than as the later event which happened to notice it.
+    */
+  def close(name: String, why: SessionEnd, now: Instant): Task[Option[String]] =
+    transact(name): (transaction, reference, snapshot) =>
+      stateOf(snapshot).active.map: session =>
+        val actual =
+          if AccountSessions.goneQuiet(quietSince(snapshot), now, idleAfter) then SessionEnd.Idle else why
+        end(transaction, reference, session, actual, now, clearAccount = true)
+        session

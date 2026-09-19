@@ -39,14 +39,16 @@ object CountingSessionListener extends SessionListener:
   override def onLogout(event: LogoutEvent): ZIO[Requires, Throwable, Unit] =
     for
       firestore <- ZIO.service[Firestore]
-      located <- AccountSessions.active(firestore, event.user.email)
-      _ <- located match
-        case None                     => ZIO.logInfo(s"Signed out with nothing counting: ${event.user.email}")
-        case Some((account, session)) =>
+      named <- AccountKey.of(event.user.email)
+      _ <- named match
+        case None          => ZIO.logInfo(s"Signed out with nothing counting: ${event.user.email}")
+        case Some(account) =>
           for
             keeper <- AccountSessions.store(firestore)
-            _ <- keeper.close(account, session, SessionEnd.LoggedOut, event.at)
-            _ <- ZIO.logInfo(s"Signed out; closed the counting session for ${event.user.email}")
+            closed <- keeper.close(account, SessionEnd.LoggedOut, event.at)
+            _ <- closed match
+              case Some(_) => ZIO.logInfo(s"Signed out; closed the counting session for ${event.user.email}")
+              case None    => ZIO.logInfo(s"Signed out with nothing counting: ${event.user.email}")
           yield ()
     yield ()
 
