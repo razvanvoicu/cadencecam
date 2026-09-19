@@ -107,6 +107,20 @@ class FrontendStateSuite extends FunSuite:
     assertEquals(Shell.of(onAcquirer.copy(user = UserState.Unauthenticated)), Shell.Login)
     assertEquals(Shell.of(FrontendState.Initial), Shell.Blank)
 
+  test("session loss clears role and transient account operations together"):
+    val active = FrontendState(
+      user = UserState.SignedIn("developer@example.com", "Developer"),
+      screen = Screen.Acquirer,
+      countingSessionId = Some("a3f1"),
+      aboutState = AboutState.Loading,
+      logoutState = LogoutState.InProgress
+    )
+
+    assertEquals(
+      SessionController.signedOut(UserState.Unauthenticated)(active),
+      FrontendState.Initial.copy(user = UserState.Unauthenticated)
+    )
+
   test("the bench is offered only when the address bar asks for it"):
     // It is an instrument, not a feature: beside "Counter" and "Dashboard" it reads as a third thing to try, and what
     // it does to somebody who tries it is start a test suite they did not want.
