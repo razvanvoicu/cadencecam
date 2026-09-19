@@ -3,7 +3,8 @@ package sgrv.fe.acquire
 import org.scalajs.dom
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
-import scala.scalajs.js
+import sgrv.fe.browser.CameraInterop
+import sgrv.fe.browser.CameraInterop.{Constraint, Properties}
 
 /** One camera setting the person holding the phone can move by hand, and the range it may move over. */
 private[fe] final case class Adjustable(
@@ -89,36 +90,21 @@ private[fe] object CameraAdjust:
     * second kind has anywhere to put a slider. Anything reported without a usable span is left out rather than shown as
     * a control that cannot move.
     */
-  private[fe] def adjustable(capabilities: js.Dynamic, settings: js.Dynamic): Seq[Adjustable] =
-    if js.isUndefined(capabilities) || capabilities == null then Seq.empty
-    else
-      val frameRate = number(settings.selectDynamic("frameRate"))
-      offered.flatMap: (setting, label, logarithmic) =>
-        val span = capabilities.selectDynamic(setting)
-        val now = settings.selectDynamic(setting)
-        for
-          range <- Option.when(!js.isUndefined(span) && span != null)(span)
-          min <- number(range.selectDynamic("min"))
-          reportedMax <- number(range.selectDynamic("max"))
-          max = ceiling(setting, reportedMax, frameRate)
-          if max > min
-          current <- number(now).orElse(Some(min))
-        yield
-          // A step the browser did not give is derived rather than assumed to be one: an exposure measured in
-          // hundreds of microseconds and a colour temperature measured in kelvin cannot share a granularity.
-          val step = number(range.selectDynamic("step")).filter(_ > 0).getOrElse((max - min) / 100.0)
-          Adjustable(setting, label, governing(setting), min, max, step, current.max(min).min(max), logarithmic)
-
-  /** A number the camera reported, or nothing.
-    *
-    * Checked by JavaScript's own idea of the type rather than by a cast. A capability the browser reports as a string,
-    * an object or not at all would otherwise become a `Double` that is quietly NaN, and a slider with NaN for a bound
-    * renders but cannot be moved.
-    */
-  private def number(value: js.Dynamic): Option[Double] =
-    Option
-      .when(!js.isUndefined(value) && value != null && js.typeOf(value) == "number")(value.asInstanceOf[Double])
-      .filterNot(_.isNaN)
+  private[fe] def adjustable(capabilities: Properties, settings: Properties): Seq[Adjustable] =
+    val frameRate = settings.number("frameRate")
+    offered.flatMap: (setting, label, logarithmic) =>
+      for
+        range <- capabilities.range(setting)
+        min <- range.min
+        reportedMax <- range.max
+        max = ceiling(setting, reportedMax, frameRate)
+        if max > min
+        current = settings.number(setting).getOrElse(min)
+      yield
+        // A step the browser did not give is derived rather than assumed to be one: an exposure measured in
+        // hundreds of microseconds and a colour temperature measured in kelvin cannot share a granularity.
+        val step = range.step.filter(_ > 0).getOrElse((max - min) / 100.0)
+        Adjustable(setting, label, governing(setting), min, max, step, current.max(min).min(max), logarithmic)
 
   /** Moves one setting, switching its mode off automatic first when it has one.
     *
@@ -129,19 +115,12 @@ private[fe] object CameraAdjust:
     stream.getVideoTracks().headOption match
       case None        => Future.successful(())
       case Some(track) =>
-        def request(wanted: js.Dynamic): Future[Unit] =
-          track
-            .applyConstraints(js.Dynamic.literal(advanced = js.Array(wanted)).asInstanceOf[dom.MediaTrackConstraints])
-            .toFuture
-            .map(_ => ())
-        val setting = js.Dynamic.literal()
-        setting.updateDynamic(adjustable.setting)(value)
+        def request(wanted: Constraint): Future[Unit] = CameraInterop.track(track).apply(wanted)
+        val setting = Constraint.number(adjustable.setting, value)
         adjustable.mode match
           case None       => request(setting)
           case Some(mode) =>
-            val manual = js.Dynamic.literal()
-            manual.updateDynamic(mode)("manual")
-            request(manual).flatMap(_ => request(setting))
+            request(Constraint.text(mode, "manual")).flatMap(_ => request(setting))
 
   /** Hands one setting at a time to the camera, however fast the finger moves.
     *
@@ -165,18 +144,11 @@ private[fe] object CameraAdjust:
       stream.getVideoTracks().headOption match
         case None        => Future.successful(())
         case Some(track) =>
+          val cameraTrack = CameraInterop.track(track)
           Camera.manualControls
             .foldLeft(Future.successful(())): (earlier, control) =>
-              val wanted = js.Dynamic.literal()
-              wanted.updateDynamic(control.mode)("continuous")
               earlier
-                .flatMap: _ =>
-                  track
-                    .applyConstraints(
-                      js.Dynamic.literal(advanced = js.Array(wanted)).asInstanceOf[dom.MediaTrackConstraints]
-                    )
-                    .toFuture
-                    .map(_ => ())
+                .flatMap(_ => cameraTrack.apply(Constraint.text(control.mode, "continuous")))
                 .recover { case _ => () }
 
     private def pump(): Unit =
@@ -192,18 +164,8 @@ private[fe] object CameraAdjust:
               pump()
 
   /** What the camera says it is doing now, for the sliders to be re-seated from after anything is applied. */
-  private[fe] def settingsOf(stream: dom.MediaStream): Option[js.Dynamic] =
-    stream
-      .getVideoTracks()
-      .headOption
-      .map(_.asInstanceOf[js.Dynamic])
-      .filterNot(track => js.isUndefined(track.getSettings))
-      .map(_.getSettings())
+  private[fe] def settingsOf(stream: dom.MediaStream): Option[Properties] =
+    CameraInterop.firstVideoTrack(stream).flatMap(_.settings)
 
-  private[fe] def capabilitiesOf(stream: dom.MediaStream): Option[js.Dynamic] =
-    stream
-      .getVideoTracks()
-      .headOption
-      .map(_.asInstanceOf[js.Dynamic])
-      .filterNot(track => js.isUndefined(track.getCapabilities))
-      .map(_.getCapabilities())
+  private[fe] def capabilitiesOf(stream: dom.MediaStream): Option[Properties] =
+    CameraInterop.firstVideoTrack(stream).flatMap(_.capabilities)

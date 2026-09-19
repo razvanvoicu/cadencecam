@@ -2,8 +2,9 @@ package sgrv.fe.acquire
 
 import org.scalajs.dom
 import scala.concurrent.Future
-import scala.scalajs.js
 import scala.concurrent.ExecutionContext.Implicits.global
+import sgrv.fe.browser.CameraInterop
+import sgrv.fe.browser.CameraInterop.{Constraint, Properties, Setting}
 
 /** What the acquirer's camera is currently doing. Deliberately not part of `FrontendState`: a live `MediaStream` is a
   * browser resource that cannot be serialised, and a permission grant must be re-established on every page load rather
@@ -73,12 +74,7 @@ private[fe] object Camera:
     * chosen camera is requested exactly, since the point of choosing is to override that preference.
     */
   private[acquire] def openingConstraints(deviceId: Option[String]): dom.MediaStreamConstraints =
-    val video = deviceId match
-      case Some(id) => js.Dynamic.literal(deviceId = js.Dynamic.literal(exact = id))
-      case None     => js.Dynamic.literal(facingMode = "environment")
-    video.updateDynamic("width")(js.Dynamic.literal(ideal = FullFieldProbe))
-    video.updateDynamic("height")(js.Dynamic.literal(ideal = FullFieldProbe))
-    js.Dynamic.literal(audio = false, video = video).asInstanceOf[dom.MediaStreamConstraints]
+    CameraInterop.openingConstraints(deviceId, FullFieldProbe)
 
   /** The same request on its own, for going back to the widest mode after a narrower one turned out to crop.
     *
@@ -86,12 +82,7 @@ private[fe] object Camera:
     * the point of this request is to accept whichever shape carries the most picture.
     */
   private def widestRequest: dom.MediaTrackConstraints =
-    js.Dynamic
-      .literal(
-        width = js.Dynamic.literal(ideal = FullFieldProbe),
-        height = js.Dynamic.literal(ideal = FullFieldProbe)
-      )
-      .asInstanceOf[dom.MediaTrackConstraints]
+    CameraInterop.widestConstraints(FullFieldProbe)
 
   /** Whether the frame should stand up or lie down: the way the screen does.
     *
@@ -131,7 +122,7 @@ private[fe] object Camera:
 
   /** False on an insecure origin, where the browser does not expose `mediaDevices` at all. */
   private[acquire] def supported: Boolean =
-    !js.isUndefined(dom.window.navigator.asInstanceOf[js.Dynamic].mediaDevices)
+    CameraInterop.mediaDevicesAvailable
 
   def start(
       deviceId: Option[String] = None,
@@ -244,33 +235,21 @@ private[fe] object Camera:
     * The two tests are not interchangeable and neither works alone. Agreement without the floor believes a camera that
     * has not started metering yet; the floor without agreement is the fixed wait that froze a half-converged value.
     */
-  private[acquire] def settledEnough(waited: Int, before: js.Dynamic, now: js.Dynamic): Boolean =
-    waited >= settleBeforeLockMillis && before != null && steady(before, now)
+  private[acquire] def settledEnough(waited: Int, before: Option[Properties], now: Properties): Boolean =
+    waited >= settleBeforeLockMillis && before.exists(steady(_, now))
 
   /** Whether the values a camera reports have stopped moving, over the settings actually being held. */
-  private[acquire] def steady(before: js.Dynamic, now: js.Dynamic): Boolean =
-    manualControls
-      .flatMap(_.settings)
-      .forall: setting =>
-        val was = before.selectDynamic(setting)
-        val is = now.selectDynamic(setting)
-        js.isUndefined(was) == js
-          .isUndefined(is) && (js.isUndefined(is) || js.JSON.stringify(was) == js.JSON.stringify(is))
+  private[acquire] def steady(before: Properties, now: Properties): Boolean =
+    before.same(manualControls.flatMap(_.settings), now)
 
   /** Which of the settings asked for came back materially different, and so were not really held. */
-  private[acquire] def refused(asked: js.Dynamic, got: js.Dynamic, within: Double = honouredWithin): Seq[String] =
-    js.Object
-      .keys(asked.asInstanceOf[js.Object])
-      .toSeq
-      .filter: setting =>
-        val wanted = asked.selectDynamic(setting)
-        val actual = got.selectDynamic(setting)
-        if js.isUndefined(actual) || js.typeOf(wanted) != "number" || js.typeOf(actual) != "number" then false
-        else
-          val a = wanted.asInstanceOf[Double]
-          val b = actual.asInstanceOf[Double]
+  private[acquire] def refused(asked: Constraint, got: Properties, within: Double = honouredWithin): Seq[String] =
+    asked.keys.filter: setting =>
+      (asked.number(setting), got.number(setting)) match
+        case (Some(a), Some(b)) =>
           val scale = math.max(math.abs(a), 1e-9)
           math.abs(a - b) / scale > within
+        case _ => false
 
   /** Whether to hold the controls still at all. On, with the evidence it was waiting for and the fault it had fixed.
     *
@@ -296,12 +275,8 @@ private[fe] object Camera:
     * value to an array of modes fails in a way no `Try` catches — it raises an `Error`, not an exception — so a camera
     * reporting something odd would take the whole capture down instead of simply going unlocked.
     */
-  private[acquire] def manualCapable(capabilities: js.Dynamic): Seq[ManualControl] =
-    manualControls.filter: control =>
-      val modes = capabilities.selectDynamic(control.mode)
-      !js.isUndefined(modes) &&
-      js.Dynamic.global.Array.isArray(modes).asInstanceOf[Boolean] &&
-      modes.asInstanceOf[js.Array[Any]].exists(_ == "manual")
+  private[acquire] def manualCapable(capabilities: Properties): Seq[ManualControl] =
+    manualControls.filter(control => capabilities.modes(control.mode).contains("manual"))
 
   /** What to send to hold one control where it currently sits, or nothing when it cannot be held there.
     *
@@ -315,16 +290,14 @@ private[fe] object Camera:
     */
   private[acquire] def pinning(
       control: ManualControl,
-      settings: js.Dynamic,
-      capabilities: js.Dynamic = js.Dynamic.literal()
-  ): Option[js.Dynamic] =
+      settings: Properties,
+      capabilities: Properties = Properties.empty
+  ): Option[Constraint] =
     val readings = control.settings.map(setting => setting -> reading(setting, settings, capabilities))
     // Every value this mode governs, or none of them. They take effect together: a shutter held without a sensitivity
     // is not a held exposure, it is half of one, and the half left to the driver is the half that went dark.
     Option.when(readings.forall(_._2.isDefined)):
-      val wanted = js.Dynamic.literal()
-      readings.foreach((setting, value) => value.foreach(current => wanted.updateDynamic(setting)(current)))
-      wanted
+      Constraint(readings.flatMap((setting, value) => value.map(setting -> _))*)
 
   /** What a camera reports for one setting, if what it reports is a reading rather than a placeholder.
     *
@@ -337,21 +310,16 @@ private[fe] object Camera:
     * So a number is a reading only when it lies inside the range the same camera declares for it. A setting with no
     * declared range is taken as it comes, since there is nothing to check it against.
     */
-  private[acquire] def reading(setting: String, settings: js.Dynamic, capabilities: js.Dynamic): Option[js.Any] =
-    val current = settings.selectDynamic(setting)
-    if js.isUndefined(current) || current == null then None
-    else if js.typeOf(current) != "number" then Some(current)
-    else
-      val value = current.asInstanceOf[Double]
-      val range = capabilities.selectDynamic(setting)
-      def bound(name: String): Option[Double] =
-        if js.isUndefined(range) || range == null then None
-        else
-          val limit = range.selectDynamic(name)
-          Option.when(!js.isUndefined(limit) && js.typeOf(limit) == "number")(limit.asInstanceOf[Double])
-      val above = bound("min").forall(value >= _)
-      val below = bound("max").forall(value <= _)
-      Option.when(value.isFinite && above && below)(current)
+  private[acquire] def reading(setting: String, settings: Properties, capabilities: Properties): Option[Setting] =
+    settings
+      .setting(setting)
+      .filter:
+        case Setting.Number(value) =>
+          val range = capabilities.range(setting)
+          val above = range.flatMap(_.min).forall(value >= _)
+          val below = range.flatMap(_.max).forall(value <= _)
+          value.isFinite && above && below
+        case Setting.Text(_) => true
 
   /** The request that switches one control to manual, carrying nothing else.
     *
@@ -360,16 +328,10 @@ private[fe] object Camera:
     * is how this was written -- the camera goes manual and then sits at whatever the driver defaults to, which is the
     * darkest end of its range. That is the symptom this had, and the reason it was switched off.
     */
-  private[acquire] def switching(control: ManualControl): js.Dynamic =
-    val wanted = js.Dynamic.literal()
-    wanted.updateDynamic(control.mode)("manual")
-    wanted
+  private[acquire] def switching(control: ManualControl): Constraint = Constraint.text(control.mode, "manual")
 
   /** The request that hands one control back to the camera. */
-  private[acquire] def releasing(control: ManualControl): js.Dynamic =
-    val wanted = js.Dynamic.literal()
-    wanted.updateDynamic(control.mode)("continuous")
-    wanted
+  private[acquire] def releasing(control: ManualControl): Constraint = Constraint.text(control.mode, "continuous")
 
   /** What this camera says it can do and where it currently sits, as JSON.
     *
@@ -377,22 +339,7 @@ private[fe] object Camera:
     * works at all, and reading them off a phone any other way is guesswork.
     */
   private[fe] def report(stream: dom.MediaStream): Option[String] =
-    stream
-      .getVideoTracks()
-      .headOption
-      .map: track =>
-        val dynamic = track.asInstanceOf[js.Dynamic]
-        val hasCapabilities = !js.isUndefined(dynamic.getCapabilities)
-        val hasSettings = !js.isUndefined(dynamic.getSettings)
-        val described = js.Dynamic.literal()
-        // Recorded whether or not they exist. An absent field used to mean either "old build" or "browser does not
-        // offer this", and being unable to tell those apart is what sent two diagnoses in the wrong direction.
-        described.updateDynamic("hasGetCapabilities")(hasCapabilities)
-        described.updateDynamic("hasGetSettings")(hasSettings)
-        if hasCapabilities then described.updateDynamic("capabilities")(dynamic.getCapabilities())
-        if hasSettings then described.updateDynamic("settings")(dynamic.getSettings())
-        try js.JSON.stringify(described)
-        catch case _: Throwable => s"""{"hasGetCapabilities":$hasCapabilities,"hasGetSettings":$hasSettings}"""
+    CameraInterop.firstVideoTrack(stream).map(_.report)
 
   /** Holds each supported control still, once the camera has had a moment to meter.
     *
@@ -404,27 +351,21 @@ private[fe] object Camera:
       case None               => Future.successful(ControlOutcome("no video track"))
       case _ if !holdControls => Future.successful(ControlOutcome("switched off"))
       case Some(track)        =>
-        val dynamic = track.asInstanceOf[js.Dynamic]
-        if js.isUndefined(dynamic.getCapabilities) then
+        val cameraTrack = CameraInterop.track(track)
+        if !cameraTrack.hasCapabilities then
           Future.successful(ControlOutcome("this browser does not report camera capabilities"))
-        else if js.isUndefined(dynamic.getSettings) then
+        else if !cameraTrack.hasSettings then
           Future.successful(ControlOutcome("this browser does not report camera settings"))
         else
-          whenSteady(dynamic).flatMap: settled =>
+          whenSteady(cameraTrack).flatMap: settled =>
             // Read once metering has stopped moving, not on a timer: what gets pinned is what automatic arrived at.
-            val capable = manualCapable(dynamic.getCapabilities())
+            val capabilities = cameraTrack.capabilities.getOrElse(Properties.empty)
+            val capable = manualCapable(capabilities)
             val skipped =
-              capable.filter(control => pinning(control, settled, dynamic.getCapabilities()).isEmpty).map(_.mode)
+              capable.filter(control => pinning(control, settled, capabilities).isEmpty).map(_.mode)
             if skipped.nonEmpty then
               dom.console.info(s"Left automatic, having no value to hold them at: ${skipped.mkString(", ")}")
-            def request(wanted: js.Dynamic): Future[Unit] =
-              track
-                .applyConstraints(
-                  js.Dynamic.literal(advanced = js.Array(wanted)).asInstanceOf[dom.MediaTrackConstraints]
-                )
-                .toFuture
-                .map(_ => ())
-            val capabilities = dynamic.getCapabilities()
+            def request(wanted: Constraint): Future[Unit] = cameraTrack.apply(wanted)
             // The picture as automatic left it, taken before anything is touched: what a correct hold must reproduce.
             val before = brightness()
             capable
@@ -447,30 +388,24 @@ private[fe] object Camera:
                 else dom.console.info(s"Camera controls held still: ${locked.mkString(", ")}")
                 // What the camera actually settled on, read back rather than assumed. Held at the darkest end of the
                 // range is indistinguishable from held correctly unless the value itself is recorded.
-                val reported = dynamic.getSettings()
+                val reported = cameraTrack.settings.getOrElse(Properties.empty)
                 // Asked for, and actually got. A camera that accepts a request and then sits somewhere else has not
                 // held anything; keeping such a lock is worse than leaving it automatic, because it is both wrong and
                 // frozen. Those modes go back to continuous.
-                val asked = js.Dynamic.literal()
-                capable.foreach: control =>
-                  pinning(control, settled, capabilities).foreach: value =>
-                    js.Object
-                      .keys(value.asInstanceOf[js.Object])
-                      .foreach: setting =>
-                        asked.updateDynamic(setting)(value.selectDynamic(setting))
+                val asked = Constraint(
+                  capable.flatMap(control => pinning(control, settled, capabilities).toSeq.flatMap(_.values.toSeq))*
+                )
                 val missed = refused(asked, reported)
                 val abandoned = capable.filter(control => control.settings.exists(missed.contains)).map(_.mode)
                 abandoned.foreach: mode =>
-                  val back = js.Dynamic.literal()
-                  back.updateDynamic(mode)("continuous")
-                  val _ = request(back)
+                  val _ = request(Constraint.text(mode, "continuous"))
                 if abandoned.nonEmpty then
                   dom.console.info(s"Given back to the camera, which would not hold them: ${abandoned.mkString(", ")}")
-                val snapshot = js.JSON.stringify(dynamic.getSettings())
+                val snapshot = cameraTrack.settings.fold("{}")(_.json)
                 val held = locked.filterNot(abandoned.contains)
                 val attempted = ControlOutcome("attempted", held, skipped ++ abandoned, Some(snapshot))
                 (before, held.nonEmpty) match
-                  case (Some(baseline), true) => verified(attempted, baseline, held, request, dynamic, brightness)
+                  case (Some(baseline), true) => verified(attempted, baseline, held, request, cameraTrack, brightness)
                   case _                      => Future.successful(attempted)
 
   /** Checks a hold against the picture, and gives it back to automatic if holding changed what the camera sees.
@@ -484,8 +419,8 @@ private[fe] object Camera:
       attempted: ControlOutcome,
       baseline: Double,
       held: Seq[String],
-      request: js.Dynamic => Future[Unit],
-      dynamic: js.Dynamic,
+      request: Constraint => Future[Unit],
+      track: CameraInterop.Track,
       brightness: () => Option[Double]
   ): Future[ControlOutcome] =
     after(verifyAfterMillis).flatMap: _ =>
@@ -493,9 +428,7 @@ private[fe] object Camera:
         case Some(now) if changedBy(baseline, now) =>
           dom.console.info(f"Holding moved the picture from $baseline%.0f to $now%.0f; giving the camera back its own")
           val releases = held.map: mode =>
-            val back = js.Dynamic.literal()
-            back.updateDynamic(mode)("continuous")
-            request(back).recover { case _ => () }
+            request(Constraint.text(mode, "continuous")).recover { case _ => () }
           Future
             .sequence(releases)
             .map: _ =>
@@ -503,20 +436,24 @@ private[fe] object Camera:
                 reason = f"released: holding moved the picture from $baseline%.0f to $now%.0f",
                 held = Seq.empty,
                 skipped = attempted.skipped ++ held,
-                settled = Some(js.JSON.stringify(dynamic.getSettings()))
+                settled = track.settings.map(_.json)
               )
         case _ => Future.successful(attempted)
 
   /** Waits until two consecutive readings of the camera's settings agree, and never less than the settling floor, or
     * until the wait is given up on.
     */
-  private def whenSteady(dynamic: js.Dynamic, waited: Int = 0, before: js.Dynamic = null): Future[js.Dynamic] =
-    val now = dynamic.getSettings()
+  private def whenSteady(
+      track: CameraInterop.Track,
+      waited: Int = 0,
+      before: Option[Properties] = None
+  ): Future[Properties] =
+    val now = track.settings.getOrElse(Properties.empty)
     if settledEnough(waited, before, now) then Future.successful(now)
     else if waited >= steadyGiveUpMillis then
       dom.console.info(s"Metering had not settled after ${steadyGiveUpMillis}ms; holding what it had reached")
       Future.successful(now)
-    else after(steadyPollMillis).flatMap(_ => whenSteady(dynamic, waited + steadyPollMillis, now))
+    else after(steadyPollMillis).flatMap(_ => whenSteady(track, waited + steadyPollMillis, Some(now)))
 
   private def after(millis: Int): Future[Unit] =
     val settled = scala.concurrent.Promise[Unit]()
@@ -577,13 +514,7 @@ private[fe] object Camera:
     * a browser actually measures -- and answering that way costs a quarter of the picture.
     */
   private def sizeRequest(width: Int, height: Int): dom.MediaTrackConstraints =
-    js.Dynamic
-      .literal(
-        width = js.Dynamic.literal(ideal = width),
-        height = js.Dynamic.literal(ideal = height),
-        aspectRatio = js.Dynamic.literal(ideal = width.toDouble / height)
-      )
-      .asInstanceOf[dom.MediaTrackConstraints]
+    CameraInterop.sizeConstraints(width, height)
 
   /** Whether two frames show the same picture at different sizes, rather than different pictures.
     *
@@ -618,14 +549,14 @@ private[fe] object Camera:
     * already sending has the proportions the device actually wants.
     */
   private def deliveredSize(track: dom.MediaStreamTrack): Option[(Int, Int)] =
-    val dynamic = track.asInstanceOf[js.Dynamic]
-    if js.isUndefined(dynamic.getSettings) then None
-    else
-      val settings = dynamic.getSettings()
-      for
-        width <- Option(settings.width).filterNot(js.isUndefined).map(_.asInstanceOf[Int]).filter(_ > 0)
-        height <- Option(settings.height).filterNot(js.isUndefined).map(_.asInstanceOf[Int]).filter(_ > 0)
-      yield (width, height)
+    CameraInterop
+      .track(track)
+      .settings
+      .flatMap: settings =>
+        for
+          width <- settings.number("width").map(_.toInt).filter(_ > 0)
+          height <- settings.number("height").map(_.toInt).filter(_ > 0)
+        yield (width, height)
 
   /** Releases the camera. Without this the indicator light stays on and the device stays locked to this tab. */
   def stop(stream: dom.MediaStream): Unit =
@@ -640,21 +571,20 @@ private[fe] object Camera:
   def detach(element: dom.HTMLVideoElement): Unit =
     try
       element.pause()
-      element.asInstanceOf[js.Dynamic].srcObject = null
+      CameraInterop.detach(element)
       element.removeAttribute("src")
       element.load()
     catch case _: Throwable => ()
 
   /** The stream's actual size, which may differ from what was asked for. */
   def resolution(stream: dom.MediaStream): Option[(Int, Int)] =
-    stream
-      .getVideoTracks()
-      .headOption
-      .flatMap: track =>
-        val settings = track.asInstanceOf[js.Dynamic].getSettings()
+    CameraInterop
+      .firstVideoTrack(stream)
+      .flatMap(_.settings)
+      .flatMap: settings =>
         for
-          width <- Option(settings.width.asInstanceOf[js.UndefOr[Int]]).flatMap(_.toOption)
-          height <- Option(settings.height.asInstanceOf[js.UndefOr[Int]]).flatMap(_.toOption)
+          width <- settings.number("width").map(_.toInt)
+          height <- settings.number("height").map(_.toInt)
         yield (width, height)
 
   /** Whether the picture should be flipped for the viewer.
@@ -669,34 +599,17 @@ private[fe] object Camera:
 
   /** Which way the open camera points, as the track itself reports it. */
   def facing(stream: dom.MediaStream): Option[String] =
-    setting(stream, "facingMode").map(_.toString)
+    setting(stream, "facingMode")
 
   def deviceIdOf(stream: dom.MediaStream): Option[String] =
-    setting(stream, "deviceId").map(_.toString).filter(_.nonEmpty)
+    setting(stream, "deviceId").filter(_.nonEmpty)
 
-  private def setting(stream: dom.MediaStream, name: String): Option[js.Any] =
-    stream
-      .getVideoTracks()
-      .headOption
-      .flatMap: track =>
-        val settings = track.asInstanceOf[js.Dynamic].getSettings()
-        Option(settings.selectDynamic(name)).filterNot(js.isUndefined).map(_.asInstanceOf[js.Any])
+  private def setting(stream: dom.MediaStream, name: String): Option[String] =
+    CameraInterop.firstVideoTrack(stream).flatMap(_.settings).flatMap(_.text(name))
 
   /** Every camera this device exposes. Empty when the browser offers no enumeration at all. */
   def videoInputs(): Future[Seq[CameraDevice]] =
-    val devices = dom.window.navigator.asInstanceOf[js.Dynamic].mediaDevices
-    if js.isUndefined(devices) || js.isUndefined(devices.enumerateDevices) then Future.successful(Seq.empty)
-    else
-      devices
-        .enumerateDevices()
-        .asInstanceOf[js.Promise[js.Array[js.Dynamic]]]
-        .toFuture
-        .map: found =>
-          found.toSeq
-            .filter(device => device.kind.asInstanceOf[String] == "videoinput")
-            .map(device => CameraDevice(device.deviceId.asInstanceOf[String], device.label.asInstanceOf[String]))
-            .filter(_.deviceId.nonEmpty)
-        .recover { case _ => Seq.empty }
+    CameraInterop.videoInputs().map(_.map(device => CameraDevice(device.deviceId, device.label)))
 
   /** The camera after this one, wrapping around; `None` when there is nothing to switch to. */
   def nextDevice(devices: Seq[CameraDevice], current: Option[String]): Option[CameraDevice] =
@@ -730,10 +643,7 @@ private[fe] object Camera:
             Option(other.getMessage).map(_.trim).filter(_.nonEmpty).getOrElse("The camera could not be started.")
 
   private def errorName(error: Throwable): String =
-    error match
-      case js.JavaScriptException(value) =>
-        Option(value.asInstanceOf[js.Dynamic].name).map(_.toString).getOrElse("")
-      case _ => ""
+    CameraInterop.exceptionName(error)
 
 /** A camera this device offers. The label is only populated once permission has been granted, which is why the list is
   * read after the first stream opens rather than before.

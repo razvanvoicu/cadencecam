@@ -4,10 +4,11 @@ import com.raquo.airstream.state.Var
 import org.scalajs.dom
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.scalajs.js
-import scala.scalajs.js.JSON
 import scala.scalajs.js.Thenable.Implicits.*
 import sgrv.api.{PeerRole, PeerSignal, PeerSignals}
 import sgrv.fe.HttpService
+import sgrv.fe.browser.WebRtcInterop
+import sgrv.fe.browser.WebRtcInterop.{Candidate, Channel, Peer}
 import zio.json.*
 
 /** Direct links between the counting browser and whichever browsers are watching it.
@@ -28,15 +29,9 @@ private[fe] object PeerLink:
   /** How often a counter looks for a watcher that has appeared since. Slower: nothing is waiting on it. */
   val pollWhileIdleMillis = 3000
 
-  /** No servers configured, deliberately. Both devices are on the same network, so the candidates each browser finds
-    * for itself are enough; TURN would relay through a server, which is the thing being escaped.
-    */
-  private[live] val configuration: js.Dynamic = js.Dynamic.literal(iceServers = js.Array())
-
   private[live] val channelLabel = "cadencecam"
 
-  def available: Boolean =
-    !js.isUndefined(js.Dynamic.global.RTCPeerConnection) && js.Dynamic.global.RTCPeerConnection != null
+  def available: Boolean = WebRtcInterop.available
 
   /** A name for one watching device, so its exchange can be told from another's. */
   private[live] def newPeerId(): String =
@@ -63,9 +58,9 @@ private[fe] final class PeerLink(
     * connections, and an offer, an answer and a set of candidates belong to exactly one of them.
     */
   private final class Link(val peerId: String):
-    var connection: Option[js.Dynamic] = None
-    var channel: Option[js.Dynamic] = None
-    var waiting = Vector.empty[js.Dynamic]
+    var connection: Option[Peer] = None
+    var channel: Option[Channel] = None
+    var waiting = Vector.empty[Candidate]
     var remoteReady = false
     var acted = Set.empty[String]
 
@@ -77,11 +72,11 @@ private[fe] final class PeerLink(
   /** A watcher's own name, fixed for the life of this link; a counter answers to whatever names arrive. */
   private val mine = newPeerId()
 
-  def isOpen: Boolean = links.values.exists(link => link.channel.exists(_.readyState.asInstanceOf[String] == "open"))
+  def isOpen: Boolean = links.values.exists(link => link.channel.exists(_.readyState == "open"))
 
   /** Sends to every open link. A counter says the same thing to each dashboard; a watcher has only the one. */
   def send(text: String): Boolean =
-    val open = links.values.flatMap(_.channel).filter(_.readyState.asInstanceOf[String] == "open")
+    val open = links.values.flatMap(_.channel).filter(_.readyState == "open")
     open.foldLeft(false): (sent, channel) =>
       try
         channel.send(text)
@@ -127,94 +122,75 @@ private[fe] final class PeerLink(
       case Some(existing) => existing
       case None           =>
         val link = Link(peerId)
-        val peer = js.Dynamic.newInstance(js.Dynamic.global.RTCPeerConnection)(configuration)
+        // No servers configured, deliberately. Both devices are on the same network, so the candidates each browser
+        // finds for itself are enough; TURN would relay through a server, which is the thing being escaped.
+        val peer = WebRtcInterop.peer()
         link.connection = Some(peer)
         links = links.updated(peerId, link)
 
-        peer.onicecandidate = { (event: js.Dynamic) =>
-          val candidate = event.candidate
-          if candidate != null && !js.isUndefined(candidate) then
-            file(PeerSignal(role, "candidate", JSON.stringify(candidate.toJSON()), peerId))
-        }: js.Function1[js.Dynamic, Unit]
-        peer.oniceconnectionstatechange = { (_: js.Dynamic) => report(link, "ice") }: js.Function1[js.Dynamic, Unit]
-        peer.onicegatheringstatechange = { (_: js.Dynamic) => report(link, "gathering") }: js.Function1[
-          js.Dynamic,
-          Unit
-        ]
-        peer.onconnectionstatechange = { (_: js.Dynamic) =>
+        peer.onIceCandidate(candidate => file(PeerSignal(role, "candidate", candidate.json, peerId)))
+        peer.onIceConnectionStateChange(() => report(link, "ice"))
+        peer.onIceGatheringStateChange(() => report(link, "gathering"))
+        peer.onConnectionStateChange: () =>
           report(link, "connection")
-          peer.connectionState.asInstanceOf[String] match
+          peer.status.connection match
             case "failed" | "closed" | "disconnected" => forget(link)
             case _                                    => ()
-        }: js.Function1[js.Dynamic, Unit]
 
         role match
           case PeerRole.Watcher =>
             adopt(link, peer.createDataChannel(channelLabel))
             val _ = peer
               .createOffer()
-              .asInstanceOf[js.Promise[js.Dynamic]]
-              .toFuture
-              .flatMap(offer =>
-                peer.setLocalDescription(offer).asInstanceOf[js.Promise[js.Any]].toFuture.map(_ => offer)
-              )
-              .map(offer => file(PeerSignal(role, "offer", JSON.stringify(offer), peerId)))
+              .flatMap(offer => peer.setLocalDescription(offer).map(_ => offer))
+              .map(offer => file(PeerSignal(role, "offer", offer.json, peerId)))
           case PeerRole.Counter =>
-            peer.ondatachannel = { (event: js.Dynamic) => adopt(link, event.channel) }: js.Function1[js.Dynamic, Unit]
+            peer.onDataChannel(channel => adopt(link, channel))
         link
 
   private def forget(link: Link): Unit =
     shutDown(link)
     links = links - link.peerId
-    watchers.set(links.values.count(one => one.channel.exists(_.readyState.asInstanceOf[String] == "open")))
+    watchers.set(links.values.count(one => one.channel.exists(_.readyState == "open")))
     if !isOpen then
       phase.set(if wanted then "connecting" else "off")
       onClosed()
       // A counter goes back to watching for whoever appears next; a watcher tries again under the same name.
       if wanted then poll(if role == PeerRole.Counter then pollWhileIdleMillis else pollWhileConnectingMillis)
 
-  private def adopt(link: Link, created: js.Dynamic): Unit =
+  private def adopt(link: Link, created: Channel): Unit =
     link.channel = Some(created)
-    created.onopen = { (_: js.Dynamic) =>
-      watchers.set(links.values.count(one => one.channel.exists(_.readyState.asInstanceOf[String] == "open")))
+    created.onOpen: () =>
+      watchers.set(links.values.count(one => one.channel.exists(_.readyState == "open")))
       phase.set("direct")
       // A counter keeps looking: another dashboard may still want a link of its own.
       if role == PeerRole.Watcher then stopPolling() else poll(pollWhileIdleMillis)
       onOpen()
-    }: js.Function1[js.Dynamic, Unit]
-    created.onmessage = { (event: js.Dynamic) => onMessage(event.data.asInstanceOf[String]) }: js.Function1[
-      js.Dynamic,
-      Unit
-    ]
-    created.onclose = { (_: js.Dynamic) => forget(link) }: js.Function1[js.Dynamic, Unit]
+    created.onMessage(onMessage)
+    created.onClose(() => forget(link))
 
   /** Files what a link is doing, so a pairing that fails can be read afterwards rather than watched live. */
   private def report(link: Link, what: String): Unit =
     link.connection.foreach: peer =>
-      val note = js.Dynamic.literal(
-        what = what,
-        connection = peer.connectionState,
-        ice = peer.iceConnectionState,
-        gathering = peer.iceGatheringState,
-        signalling = peer.signalingState,
-        channel = link.channel.map(_.readyState).getOrElse("none").asInstanceOf[js.Any],
-        links = links.size,
-        held = link.waiting.size
+      val note = WebRtcInterop.diagnosticJson(
+        what,
+        peer.status,
+        link.channel.map(_.readyState).getOrElse("none"),
+        links.size,
+        link.waiting.size
       )
-      file(PeerSignal(role, "state", JSON.stringify(note), link.peerId))
+      file(PeerSignal(role, "state", note, link.peerId))
 
-  private def flush(link: Link, peer: js.Dynamic): Unit =
+  private def flush(link: Link, peer: Peer): Unit =
     link.remoteReady = true
     val held = link.waiting
     link.waiting = Vector.empty
     held.foreach(candidate => add(peer, candidate))
 
-  private def add(peer: js.Dynamic, candidate: js.Dynamic): Unit =
+  private def add(peer: Peer, candidate: Candidate): Unit =
     try
       val _ = peer
         .addIceCandidate(candidate)
-        .asInstanceOf[js.Promise[js.Any]]
-        .toFuture
         .recover { case error => dom.console.warn(s"A candidate was refused: ${error.getMessage}") }
     catch case _: Throwable => dom.console.warn("A candidate could not be added")
 
@@ -260,29 +236,23 @@ private[fe] final class PeerLink(
 
   private def apply(link: Link, signal: PeerSignal): Unit =
     link.connection.foreach: peer =>
-      val state = peer.signalingState.asInstanceOf[String]
+      val state = peer.signalingState
       signal.kind match
         // Only while this end is still waiting to be told: one arriving later belongs to an attempt that has moved on.
         case "offer" if role == PeerRole.Counter && state == "stable" =>
-          val description = JSON.parse(signal.body).asInstanceOf[js.Dynamic]
+          val description = WebRtcInterop.Description.parse(signal.body)
           val _ = peer
             .setRemoteDescription(description)
-            .asInstanceOf[js.Promise[js.Any]]
-            .toFuture
             .map(_ => flush(link, peer))
-            .flatMap(_ => peer.createAnswer().asInstanceOf[js.Promise[js.Dynamic]].toFuture)
-            .flatMap(answer =>
-              peer.setLocalDescription(answer).asInstanceOf[js.Promise[js.Any]].toFuture.map(_ => answer)
-            )
-            .map(answer => file(PeerSignal(role, "answer", JSON.stringify(answer), link.peerId)))
+            .flatMap(_ => peer.createAnswer())
+            .flatMap(answer => peer.setLocalDescription(answer).map(_ => answer))
+            .map(answer => file(PeerSignal(role, "answer", answer.json, link.peerId)))
         case "answer" if role == PeerRole.Watcher && state == "have-local-offer" =>
-          val description = JSON.parse(signal.body).asInstanceOf[js.Dynamic]
+          val description = WebRtcInterop.Description.parse(signal.body)
           val _ = peer
             .setRemoteDescription(description)
-            .asInstanceOf[js.Promise[js.Any]]
-            .toFuture
             .map(_ => flush(link, peer))
         case "candidate" =>
-          val candidate = JSON.parse(signal.body).asInstanceOf[js.Dynamic]
+          val candidate = WebRtcInterop.Candidate.parse(signal.body)
           if link.remoteReady then add(peer, candidate) else link.waiting = link.waiting :+ candidate
         case _ => ()

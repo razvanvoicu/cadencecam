@@ -2,8 +2,12 @@ package sgrv.fe.acquire
 
 import munit.FunSuite
 import scala.scalajs.js
+import sgrv.fe.browser.CameraInterop.{Constraint, Properties, Property}
 
 class CameraSuite extends FunSuite:
+
+  private def numbers(entries: (String, Double)*): Properties =
+    Properties(entries.map((name, value) => name -> Property.Number(value))*)
 
   private def aspect(width: Int, height: Int): Double = width.toDouble / height
 
@@ -114,29 +118,33 @@ class CameraSuite extends FunSuite:
     assertEquals(CameraDevice.nameOf(CameraDevice("a", "   "), 0), "Camera 1")
 
   test("only the controls a camera says it can hold manually are asked for"):
-    val capabilities = js.Dynamic.literal(
-      exposureMode = js.Array("none", "manual", "continuous"),
-      whiteBalanceMode = js.Array("continuous"),
-      focusMode = js.Array("manual", "single-shot")
+    val capabilities = Properties(
+      "exposureMode" -> Property.Modes(Seq("none", "manual", "continuous")),
+      "whiteBalanceMode" -> Property.Modes(Seq("continuous")),
+      "focusMode" -> Property.Modes(Seq("manual", "single-shot"))
     )
 
     assertEquals(Camera.manualCapable(capabilities).map(_.mode), Seq("exposureMode", "focusMode"))
 
   test("a camera that reports no control modes is asked for nothing"):
-    assertEquals(Camera.manualCapable(js.Dynamic.literal()), Seq.empty)
+    assertEquals(Camera.manualCapable(Properties.empty), Seq.empty)
 
   test("a camera reporting the controls but not manual is asked for nothing"):
-    val automaticOnly = js.Dynamic.literal(
-      exposureMode = js.Array("continuous"),
-      whiteBalanceMode = js.Array("continuous"),
-      focusMode = js.Array("continuous")
+    val automaticOnly = Properties(
+      "exposureMode" -> Property.Modes(Seq("continuous")),
+      "whiteBalanceMode" -> Property.Modes(Seq("continuous")),
+      "focusMode" -> Property.Modes(Seq("continuous"))
     )
 
     assertEquals(Camera.manualCapable(automaticOnly), Seq.empty)
 
   test("a capability reported as something other than a list of modes is ignored, not trusted"):
     // Browsers vary in what they report here, and a malformed entry must not take the camera down with it.
-    val odd = js.Dynamic.literal(exposureMode = "manual", whiteBalanceMode = 3, focusMode = js.Array("manual"))
+    val odd = Properties(
+      "exposureMode" -> Property.Text("manual"),
+      "whiteBalanceMode" -> Property.Number(3),
+      "focusMode" -> Property.Modes(Seq("manual"))
+    )
 
     assertEquals(Camera.manualCapable(odd).map(_.mode), Seq("focusMode"))
 
@@ -146,55 +154,55 @@ class CameraSuite extends FunSuite:
     assert(Camera.settleBeforeLockMillis >= 500 && Camera.settleBeforeLockMillis <= 3000)
 
   test("holding a control still carries the value it settled on"):
-    val settled = js.Dynamic.literal("exposureTime" -> 312.5, "colorTemperature" -> 4200)
+    val settled = numbers("exposureTime" -> 312.5, "colorTemperature" -> 4200)
 
     val exposure = Camera.pinning(ManualControl("exposureMode", Seq("exposureTime")), settled).get
 
-    assertEquals(exposure.exposureTime.asInstanceOf[Double], 312.5)
+    assertEquals(exposure.number("exposureTime"), Some(312.5))
 
   test("the value request carries no mode, and the mode request carries no value"):
     // The two go in separate calls, the mode first. A camera still in automatic discards a value sent alongside the
     // switch, so a combined request leaves it manual at whatever the driver defaults to -- the darkest end of the
     // range, which is exactly what the last attempt produced.
-    val settled = js.Dynamic.literal("exposureTime" -> 312.5)
+    val settled = numbers("exposureTime" -> 312.5)
     val control = ManualControl("exposureMode", Seq("exposureTime"))
 
     val value = Camera.pinning(control, settled).get
-    assert(js.isUndefined(value.selectDynamic("exposureMode")), "the value request must not carry the mode")
+    assert(!value.contains("exposureMode"), "the value request must not carry the mode")
 
     val mode = Camera.switching(control)
-    assertEquals(mode.exposureMode.asInstanceOf[String], "manual")
-    assert(js.isUndefined(mode.selectDynamic("exposureTime")), "the mode request must not carry the value")
+    assertEquals(mode.text("exposureMode"), Some("manual"))
+    assert(!mode.contains("exposureTime"), "the mode request must not carry the value")
 
   test("every control switches to manual by its own mode name"):
     Camera.manualControls.foreach: control =>
-      assertEquals(Camera.switching(control).selectDynamic(control.mode).asInstanceOf[String], "manual")
+      assertEquals(Camera.switching(control).text(control.mode), Some("manual"))
 
   test("a control the camera reports no value for is left automatic rather than pinned to nothing"):
     // Cameras advertise a manual mode while reporting no current value for it, and asking for the mode alone tells
     // the camera to stop deciding without saying what to do instead. What it then picks is nothing in particular:
     // this is the case that turned a correct exposure dark a second after opening.
-    val settled = js.Dynamic.literal("exposureTime" -> 312.5)
+    val settled = numbers("exposureTime" -> 312.5)
 
     assertEquals(Camera.pinning(ManualControl("focusMode", Seq("focusDistance")), settled), None)
     assertEquals(Camera.pinning(ManualControl("whiteBalanceMode", Seq("colorTemperature")), settled), None)
 
   // What two real cameras reported about themselves, taken from their recorded traces.
   private val samsungA53 = (
-    js.Dynamic.literal(
-      exposureTime = js.Dynamic.literal(min = 0.42, max = 1000),
-      iso = js.Dynamic.literal(min = 50, max = 3200),
-      colorTemperature = js.Dynamic.literal(min = 2850, max = 7000),
-      focusDistance = js.Dynamic.literal(min = 0.1, max = 3.6)
+    Properties(
+      "exposureTime" -> Property.Range(0.42, 1000),
+      "iso" -> Property.Range(50, 3200),
+      "colorTemperature" -> Property.Range(2850, 7000),
+      "focusDistance" -> Property.Range(0.1, 3.6)
     ),
-    js.Dynamic.literal(exposureTime = 600, iso = 0, colorTemperature = 0, focusDistance = 0)
+    numbers("exposureTime" -> 600, "iso" -> 0, "colorTemperature" -> 0, "focusDistance" -> 0)
   )
   private val pixel10 = (
-    js.Dynamic.literal(
-      exposureTime = js.Dynamic.literal(min = 0.26345, max = 160000.01084),
-      iso = js.Dynamic.literal(min = 21, max = 5333)
+    Properties(
+      "exposureTime" -> Property.Range(0.26345, 160000.01084),
+      "iso" -> Property.Range(21, 5333)
     ),
-    js.Dynamic.literal(exposureTime = 83.27803, iso = 100)
+    numbers("exposureTime" -> 83.27803, "iso" -> 100)
   )
   private val exposure = ManualControl("exposureMode", Seq("exposureTime", "iso"))
 
@@ -223,30 +231,30 @@ class CameraSuite extends FunSuite:
     val (capabilities, settings) = pixel10
     val held = Camera.pinning(exposure, settings, capabilities).get
 
-    assertEquals(held.exposureTime.asInstanceOf[Double], 83.27803)
-    assertEquals(held.iso.asInstanceOf[Double], 100.0)
+    assertEquals(held.number("exposureTime"), Some(83.27803))
+    assertEquals(held.number("iso"), Some(100.0))
 
   test("a value outside the range its own camera declares is not a reading, at either end"):
-    val capabilities = js.Dynamic.literal(iso = js.Dynamic.literal(min = 50, max = 3200))
+    val capabilities = Properties("iso" -> Property.Range(50, 3200))
 
-    assertEquals(Camera.reading("iso", js.Dynamic.literal(iso = 49), capabilities), None)
-    assertEquals(Camera.reading("iso", js.Dynamic.literal(iso = 3201), capabilities), None)
-    assert(Camera.reading("iso", js.Dynamic.literal(iso = 50), capabilities).isDefined, "the ends are in range")
-    assert(Camera.reading("iso", js.Dynamic.literal(iso = 3200), capabilities).isDefined)
+    assertEquals(Camera.reading("iso", numbers("iso" -> 49), capabilities), None)
+    assertEquals(Camera.reading("iso", numbers("iso" -> 3201), capabilities), None)
+    assert(Camera.reading("iso", numbers("iso" -> 50), capabilities).isDefined, "the ends are in range")
+    assert(Camera.reading("iso", numbers("iso" -> 3200), capabilities).isDefined)
 
   test("a value with no declared range is taken as it comes, having nothing to be checked against"):
-    assert(Camera.reading("exposureTime", js.Dynamic.literal(exposureTime = 312.5), js.Dynamic.literal()).isDefined)
+    assert(Camera.reading("exposureTime", numbers("exposureTime" -> 312.5), Properties.empty).isDefined)
 
   test("a control is held only when every value it governs is a reading"):
-    val settings = js.Dynamic.literal(exposureTime = 312.5)
+    val settings = numbers("exposureTime" -> 312.5)
 
     assertEquals(Camera.pinning(exposure, settings), None)
-    assert(Camera.pinning(exposure, js.Dynamic.literal(exposureTime = 312.5, iso = 100)).isDefined)
+    assert(Camera.pinning(exposure, numbers("exposureTime" -> 312.5, "iso" -> 100)).isDefined)
 
   test("a control handed back goes to continuous, the camera's own automatic"):
     // Sent when a value is refused after the mode has already left automatic: a hold that fails must leave the camera
     // where it started, not at wherever the driver puts an unheld control.
-    assertEquals(Camera.releasing(exposure).exposureMode.asInstanceOf[String], "continuous")
+    assertEquals(Camera.releasing(exposure).text("exposureMode"), Some("continuous"))
 
   test("a hold that darkens the picture is released, whatever the camera says it holds"):
     // The S23 Ultra reported an exposure of 299.94234 and an ISO of 50 on six openings in scenes of different
@@ -283,7 +291,7 @@ class CameraSuite extends FunSuite:
     assert(!Camera.changedBy(100.0, Double.PositiveInfinity))
 
   test("a camera reporting no settings at all is left entirely alone"):
-    val nothing = js.Dynamic.literal()
+    val nothing = Properties.empty
 
     assert(Camera.manualControls.forall(control => Camera.pinning(control, nothing).isEmpty))
 
@@ -303,9 +311,9 @@ class CameraSuite extends FunSuite:
     // The fault this replaces: the controls were pinned on a timer a second and a half in, while a recorded trace
     // shows the picture still climbing out of the figure's arrival until about three seconds. What got frozen was a
     // half-converged value, which is why the view darkened on every handset.
-    val climbing = js.Dynamic.literal("exposureTime" -> 40.0, "iso" -> 320)
-    val arrived = js.Dynamic.literal("exposureTime" -> 83.3, "iso" -> 100)
-    val same = js.Dynamic.literal("exposureTime" -> 83.3, "iso" -> 100)
+    val climbing = numbers("exposureTime" -> 40.0, "iso" -> 320)
+    val arrived = numbers("exposureTime" -> 83.3, "iso" -> 100)
+    val same = numbers("exposureTime" -> 83.3, "iso" -> 100)
 
     assert(!Camera.steady(climbing, arrived), "still moving")
     assert(Camera.steady(arrived, same), "two readings that agree")
@@ -317,42 +325,48 @@ class CameraSuite extends FunSuite:
     // opens are commonly identical -- metering has not begun, rather than having finished -- and two identical
     // readings satisfy the steadiness test on their own, so the controls were pinned a quarter of a second in at
     // whatever the sensor started with.
-    val opening = js.Dynamic.literal("exposureTime" -> 40.0, "iso" -> 320)
-    val unmoved = js.Dynamic.literal("exposureTime" -> 40.0, "iso" -> 320)
+    val opening = numbers("exposureTime" -> 40.0, "iso" -> 320)
+    val unmoved = numbers("exposureTime" -> 40.0, "iso" -> 320)
 
     assert(Camera.steady(opening, unmoved), "the readings do agree")
-    assert(!Camera.settledEnough(Camera.steadyPollMillis, opening, unmoved), "but far too early to believe them")
-    assert(Camera.settledEnough(Camera.settleBeforeLockMillis, opening, unmoved), "believed once the floor has passed")
+    assert(!Camera.settledEnough(Camera.steadyPollMillis, Some(opening), unmoved), "but far too early to believe them")
+    assert(
+      Camera.settledEnough(Camera.settleBeforeLockMillis, Some(opening), unmoved),
+      "believed once the floor has passed"
+    )
 
   test("metering that is still moving is not settled, however long it has been waited on"):
-    val climbing = js.Dynamic.literal("exposureTime" -> 40.0, "iso" -> 320)
-    val arrived = js.Dynamic.literal("exposureTime" -> 83.3, "iso" -> 100)
+    val climbing = numbers("exposureTime" -> 40.0, "iso" -> 320)
+    val arrived = numbers("exposureTime" -> 83.3, "iso" -> 100)
 
-    assert(!Camera.settledEnough(Camera.steadyGiveUpMillis, climbing, arrived))
+    assert(!Camera.settledEnough(Camera.steadyGiveUpMillis, Some(climbing), arrived))
 
   test("the first reading has nothing to be compared against and settles nothing"):
-    val first = js.Dynamic.literal("exposureTime" -> 83.3, "iso" -> 100)
+    val first = numbers("exposureTime" -> 83.3, "iso" -> 100)
 
-    assert(!Camera.settledEnough(Camera.steadyGiveUpMillis, null, first))
+    assert(!Camera.settledEnough(Camera.steadyGiveUpMillis, None, first))
 
   test("a setting the camera reports as absent on both readings counts as steady"):
-    val bare = js.Dynamic.literal("exposureTime" -> 83.3)
+    val bare = numbers("exposureTime" -> 83.3)
 
-    assert(Camera.steady(bare, js.Dynamic.literal("exposureTime" -> 83.3)))
+    assert(Camera.steady(bare, numbers("exposureTime" -> 83.3)))
 
   test("a value the camera would not actually hold is counted as refused"):
     // Accepting the request and then sitting somewhere else is the failure that cannot be seen from "held":
     // four stops dark is not a rounding difference, while sensor quantisation is.
-    val asked = js.Dynamic.literal("exposureTime" -> 83.3, "iso" -> 100)
+    val asked = Constraint(
+      "exposureTime" -> sgrv.fe.browser.CameraInterop.Setting.Number(83.3),
+      "iso" -> sgrv.fe.browser.CameraInterop.Setting.Number(100)
+    )
 
-    assertEquals(Camera.refused(asked, js.Dynamic.literal("exposureTime" -> 83.3, "iso" -> 100)), Seq.empty)
-    assertEquals(Camera.refused(asked, js.Dynamic.literal("exposureTime" -> 84.0, "iso" -> 101)), Seq.empty)
-    assertEquals(Camera.refused(asked, js.Dynamic.literal("exposureTime" -> 83.3, "iso" -> 21)), Seq("iso"))
-    assertEquals(Camera.refused(asked, js.Dynamic.literal("exposureTime" -> 8.0, "iso" -> 100)), Seq("exposureTime"))
+    assertEquals(Camera.refused(asked, numbers("exposureTime" -> 83.3, "iso" -> 100)), Seq.empty)
+    assertEquals(Camera.refused(asked, numbers("exposureTime" -> 84.0, "iso" -> 101)), Seq.empty)
+    assertEquals(Camera.refused(asked, numbers("exposureTime" -> 83.3, "iso" -> 21)), Seq("iso"))
+    assertEquals(Camera.refused(asked, numbers("exposureTime" -> 8.0, "iso" -> 100)), Seq("exposureTime"))
 
   test("a setting the camera stops reporting is not counted as refused"):
     // Absent is not wrong: some browsers report a setting only while it is automatic.
-    assertEquals(Camera.refused(js.Dynamic.literal("colorTemperature" -> 4200), js.Dynamic.literal()), Seq.empty)
+    assertEquals(Camera.refused(Constraint.number("colorTemperature", 4200), Properties.empty), Seq.empty)
 
   test("holding the controls still is switched on"):
     // On, with the evidence it was waiting for: on one handset the brightness of the whole frame -- the part of the

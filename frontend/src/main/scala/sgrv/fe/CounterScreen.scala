@@ -25,6 +25,7 @@ import sgrv.fe.acquire.{
   TraceCapture
 }
 import sgrv.fe.live.PeerLink
+import sgrv.fe.browser.CameraInterop
 import zio.json.*
 
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -115,11 +116,7 @@ private[fe] object CounterScreen:
     // Set on the element rather than as Laminar attributes: playsinline in particular is what stops iOS taking the
     // preview fullscreen, and it has to be a real attribute on the node before play() is called.
     def prepare(element: dom.HTMLVideoElement): Unit =
-      val media = element.asInstanceOf[js.Dynamic]
-      media.autoplay = true
-      media.muted = true
-      element.setAttribute("playsinline", "")
-      element.setAttribute("webkit-playsinline", "")
+      CameraInterop.preparePreview(element)
 
     var lastPublished = Option.empty[LiveReading]
 
@@ -305,7 +302,7 @@ private[fe] object CounterScreen:
               )
               val element = video.ref
               prepare(element)
-              element.asInstanceOf[js.Dynamic].srcObject = opened.asInstanceOf[js.Any]
+              CameraInterop.attach(element, opened)
               val _ = element.play()
               // Taken from the element rather than from the track, and re-taken whenever it changes. The element's
               // intrinsic size is what is actually being painted; a track's reported settings can describe the frame
@@ -315,15 +312,13 @@ private[fe] object CounterScreen:
               //
               // Assigned rather than added, so restarting the camera replaces these handlers instead of stacking
               // another copy on the same element.
-              val media = element.asInstanceOf[js.Dynamic]
-              val noteShape: js.Function1[dom.Event, Unit] = _ =>
+              val noteShape: dom.Event => Unit = _ =>
                 val shown = element.videoWidth
                 val tall = element.videoHeight
                 if shown > 0 && tall > 0 then
                   frame.ref.style.setProperty("--frame-aspect", (shown.toDouble / tall).toString)
                   cameraState.set(CameraState.Streaming(shown, tall))
-              media.onloadedmetadata = noteShape
-              media.onresize = noteShape
+              CameraInterop.onShapeChanged(element)(noteShape)
               val (width, height) = Camera.resolution(opened).getOrElse((0, 0))
               if width > 0 && height > 0 then
                 frame.ref.style.setProperty("--frame-aspect", (width.toDouble / height).toString)
