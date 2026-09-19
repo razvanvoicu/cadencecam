@@ -11,9 +11,18 @@ import zio.json.*
 
 /** One account, and the counting sessions it has held.
   *
-  * The account document is named by a keyed digest of the email, and carries only which session is in progress and when
-  * a rep was last counted. The sessions themselves are a subcollection and are kept after they close: a finished set is
-  * the record worth having, and only its successor is live.
+  * The account document is named by a keyed digest of the email (see [[AccountKey]]), and carries which session is in
+  * progress, which browser is counting into it, when that browser last reported, and the account's settings. The
+  * sessions themselves are a subcollection and are kept after they close: a finished set is the record worth having --
+  * it is what the history lists -- and only the one in progress is live.
+  *
+  * {{{
+  *   CountingSessions/{keyed digest of the email}           activeSession, counter, lastRepAt, settings
+  *     sessions/{session id}                                startedAt, completedAt, endedBy, counter,
+  *                                                          reps, repsAt, cadenceSum, elapsedSeconds
+  *       traces/{trace id}                                  one captured recording (see TraceSchema)
+  *       signals/{auto id}                                  one step of a peer exchange
+  * }}}
   */
 private[sessions] object AccountSchema:
   val collection = "CountingSessions"
@@ -30,8 +39,11 @@ private[sessions] object AccountSchema:
     */
   val activeSession = "activeSession"
 
-  /** When a rep was last counted, which is what the idle timeout reads. Traffic does not touch it: a phone left on the
-    * bench between suites is idle however many readings its socket is sending.
+  /** When the counting device last reported, which is what the idle timeout reads.
+    *
+    * Named for the rep it was meant to date, but moved by every accepted report, and a counter reports every ten
+    * seconds whether or not a rep has been counted since. So what closes a session for being idle is a counter that has
+    * stopped reporting -- its page closed, its phone asleep -- rather than an exerciser resting in front of one.
     */
   val lastRepAt = "lastRepAt"
   val startedAt = "startedAt"
@@ -65,15 +77,13 @@ private[sessions] enum SessionEnd:
 private[sessions] object AccountSessions:
   val idleVariable = "COUNTING_IDLE_MINUTES"
 
-  /** How long a session may go without a rep before it is closed. Ten minutes: long enough to set up between suites and
-    * to argue with a camera, short enough that a session left open overnight is not still open in the morning.
+  /** How long a session may go without a report before it is closed. Ten minutes: long enough to set up between suites
+    * and to argue with a camera, short enough that a session left open overnight is not still open in the morning.
     */
   val defaultIdle: Duration = Duration.ofMinutes(10)
 
-  /** Whether a session has gone quiet for longer than it is allowed to.
-    *
-    * Reads when a rep was last counted, not when the device last spoke: a phone on the bench between suites is idle
-    * however many readings its socket is sending, and that is the state this is meant to end.
+  /** Whether a session has gone quiet for longer than it is allowed to, judged by the mark [[AccountSchema.lastRepAt]]
+    * holds. A session that has never been marked has only just opened, and is not closed for it.
     */
   def goneQuiet(lastRepAt: Option[Instant], now: Instant, idleAfter: Duration): Boolean =
     lastRepAt.exists(quiet => quiet.isBefore(now.minus(idleAfter)))
@@ -159,13 +169,18 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
             case other => ZIO.succeed(AccountState(other, counter))
 
   /** Takes the counter's role: joins the session in progress, or opens one when there is none. */
-  def takeCounting(name: String, email: String, browserSession: String, now: Instant): Task[String] =
+  def takeCounting(name: String, browserSession: String, now: Instant): Task[String] =
     state(name, now).flatMap: current =>
       current.active match
-        case Some(session) => hand(name, session, browserSession, now).as(session)
-        case None          => start(name, email, browserSession, now)
+        case Some(session) => hand(name, session, browserSession).as(session)
+        case None          => start(name, browserSession, now)
 
-  private def start(name: String, email: String, browserSession: String, now: Instant): Task[String] =
+  /** Opens a session: a new document under the account, and the account's pointer to it.
+    *
+    * Its id begins with the moment it opened, so a listing of the subcollection is in the order the workouts happened
+    * even before anything sorts it.
+    */
+  private def start(name: String, browserSession: String, now: Instant): Task[String] =
     val session = f"${now.toEpochMilli}%d-${scala.util.Random.nextInt(0x1000)}%03x"
     val opened = Map[String, AnyRef](
       AccountSchema.startedAt -> stamp(now),
@@ -188,7 +203,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
     yield session
 
   /** Moves the counter's role to another device without ending the session. */
-  private def hand(name: String, session: String, browserSession: String, now: Instant): Task[Unit] =
+  private def hand(name: String, session: String, browserSession: String): Task[Unit] =
     val moved = Map[String, AnyRef](AccountSchema.counter -> browserSession)
     for
       _ <- GoogleFuture.fromApiFuture(
@@ -200,7 +215,9 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       _ <- GoogleFuture.fromApiFuture(account(name).set(moved.asJava, com.google.cloud.firestore.SetOptions.merge()))
     yield ()
 
-  /** Records what a workout has measured so far, which is also what keeps the session from going idle. */
+  /** Records what a workout has measured so far. Also moves the account's idle mark, whatever the count: see
+    * [[AccountSchema.lastRepAt]].
+    */
   def counted(
       name: String,
       session: String,

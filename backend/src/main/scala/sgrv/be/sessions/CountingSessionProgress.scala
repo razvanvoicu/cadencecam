@@ -9,14 +9,15 @@ import zio.{Cause, Clock, ZIO}
 import zio.http.{Header, Method, Request, Response, Routes, Status, handler}
 import zio.json.*
 
-/** Accepts the acquirer's running total into its counting session.
+/** Accepts what the counting device has measured so far into the account's session.
   *
-  * Which session is written to comes from the browser's own session cookie, not from the request body: a client can
-  * report its count, but not choose whose count it is.
+  * Which session is written to comes from who is signed in, never from the request body: a client can report its count,
+  * but not choose whose count it is. And only the device the account's record names as its counter may write: any other
+  * is answered with a conflict, which is how a device that has been taken over learns it.
   *
-  * The route is deliberately cheap and frequent. Beyond recording progress for the dashboard to read, a request every
-  * few seconds is what keeps a scale-to-zero Cloud Run instance from being reclaimed underneath an acquirer that is
-  * mid-workout and, from the platform's point of view, idle.
+  * The route is deliberately cheap and frequent. Beyond keeping the workout's record current for the history, a request
+  * every ten seconds is what keeps a scale-to-zero Cloud Run instance from being reclaimed underneath an acquirer that
+  * is mid-workout and, from the platform's point of view, idle.
   */
 object CountingSessionProgress extends BackendPlugin:
   type Requires = Firestore & SessionStore
@@ -56,7 +57,7 @@ object CountingSessionProgress extends BackendPlugin:
         case _                                     => ZIO.fail(Unauthenticated)
       }
       // Which browser session is reporting, so a device that has been taken over can be told.
-      mine <- ZIO.fromOption(CountingSessionListener.documentId(request)).orElseFail(NotCounting)
+      mine <- ZIO.fromOption(CountingSessionListener.browserSession(request)).orElseFail(NotCounting)
       body <- request.body.asString.mapError(error => Malformed(describe(error)))
       progress <- ZIO.fromEither(CountingSessionProgress.reported(body)).mapError(Malformed.apply)
       firestore <- ZIO.service[Firestore]
@@ -66,7 +67,7 @@ object CountingSessionProgress extends BackendPlugin:
       now <- Clock.instant
       state <- keeper.state(account, now).mapError(WriteFailed.apply)
       // Another device has the role: say so rather than recording a count from a device that has been stood down.
-      // With no relay left to tell it, this is how a displaced counter finds out.
+      // Nothing else tells it, so this is how a displaced counter finds out.
       _ <- ZIO.fail(Displaced).when(state.counter.exists(_ != mine))
       _ <- keeper
         .counted(account, session, progress.reps, progress.cadenceSum, progress.elapsedSeconds, now)

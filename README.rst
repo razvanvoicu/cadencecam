@@ -1,40 +1,98 @@
-cadencecam
+CadenceCam
 ==========
 
-A small full-stack web application template written in Scala. The frontend is
-compiled with Scala.js and served by a ZIO HTTP backend from the same deployment
-artifact.
+CadenceCam counts exercise repetitions with a phone's camera. A phone propped where it can see a repetitive
+movement — a dumbbell curl, a stair climber's rotating wheel, a stationary bicycle's pedal — counts the reps as they
+happen, and a tablet or a second phone can show the running count, the pace, and an estimate of the energy used.
 
-Technology
-----------
+The picture never leaves the phone. The browser reads only how bright each quarter of the frame is, ten times a
+second, and counts the movement from that; no photo or video is recorded or uploaded.
 
-* Scala 3.8.4
-* Scala.js and Laminar for the browser application
-* ZIO HTTP for the backend server
-* ZIO Logging for console logging
-* Google OAuth 2.0 (google-api-client) for "Login with Google", optionally with additional Google API scopes
-* Google Cloud Firestore for browser-session records
-* ClassGraph for discovering independently loadable, capability-checked backend plugins
-* MUnit and sbt-scoverage for backend tests and coverage
-* Selenium (in a separate ``e2etest`` project) for end-to-end browser tests against the real, running app
+It is a Scala 3 web application: a Scala.js frontend served by a ZIO HTTP backend from one deployment artifact, with
+Firestore for storage. The backend's infrastructure — Google login, browser sessions, discovered and
+capability-checked plugins — began as a reusable web-application template, and the later sections of this document
+describe it in those terms.
+
+Using CadenceCam
+----------------
+
+CadenceCam is deployed at https://cadencecam.raz.sg and is free to use by anyone with a Google account. Of that
+account it uses only your name and email address. Read the `privacy policy <https://cadencecam.raz.sg/privacy.html>`_
+and the `terms of service <https://cadencecam.raz.sg/tos.html>`_; both are also in the ☰ menu on every screen, where
+they open in a tab of their own.
+
+You need a phone for the camera and, if you want a separate display, a tablet or a second phone signed in to the same
+Google account. Both run in the browser; either can also be installed to the home screen from the browser's menu.
+
+1. **Count.** Sign in on the phone. If nothing is counting for your account yet, it goes straight to the **Counter**
+   screen and asks for the camera. Prop it where the moving part of the exercise fills a good share of the picture,
+   and start. For the first fifteen seconds or so the counter works out the cadence; then the count appears, including
+   the reps done while it was working it out. The badge beside the status line says how far the movement stands out
+   from the background: green counts reliably, amber is marginal, red is likely to miss reps. ↺ starts the count over,
+   which is how to discard the movement of getting into position.
+2. **Watch.** Sign in on the tablet and choose **Dashboard**. It connects directly to the counting phone — the two
+   need to be on the same network — and shows reps and calories, each with the pace over the last ten reps and a
+   projection to the next half-hour mark. Its ↺ resets the counter from across the room.
+3. **Settings** (dashboard or counter menu): your weight, and the exercises you do, each with a factor and a choice of
+   whether energy is worked out from the rep count or from the rep frequency, where faster reps count for more.
+   Calories are ``measure × weight in kg × factor / 100``; the measure is the number of reps, or for frequency the sum
+   of each rep's rate in reps per second. The factor is yours to calibrate against your equipment, and starts at 1.25.
+4. **History** (dashboard menu): every workout, newest first, with when it started, how long it ran, its reps and its
+   calories. Any workout can be deleted, and the history's own menu exports the list as a CSV file.
+5. **Default to dashboard on / off** (dashboard menu): makes this device open straight on the dashboard at every
+   start. It is remembered by this browser only, so the phone signed in to the same account still opens its camera.
+6. **Delete all my data** (dashboard menu): removes every workout, recording and setting kept for the account, then
+   signs you out.
+
+On the counter, the menu switches between cameras, and **Camera controls** set exposure and sensitivity by hand when
+automatic exposure gets the picture wrong (**Back to automatic** undoes that). **Capture signal trace** uploads the
+last few minutes of the four brightness signals, for working on the detector. Only one device counts for an account at
+a time: choosing **Take over counting** on another device sends the current counter back to its home screen. A workout
+ends when you log out, or ten minutes after the counter last reported — when its page is closed or its phone sleeps.
 
 How it works
 ------------
 
-The home page offers a "Login with Google" link. After a successful Google
-login the page instead greets the user with ``Hello, <Name>!``. If Google
-returns no non-empty name, the verified email address is displayed instead.
+**The counter** runs entirely in the phone's browser (``sgrv.fe.acquire``). ``FrameSampler`` draws the camera
+preview into a tiny off-screen canvas ten times a second and takes the mean luma of each quadrant of the frame,
+producing four brightness signals that ``QuadrantSignals`` keeps for six minutes. On every sample ``RepCounter``
+re-analyses the last fifteen seconds of each quadrant: a 0.5–2 Hz band-pass filter (``Biquad``), peak detection by
+prominence and minimum spacing (``PeakDetector``), and rejection of peaks that do not stand up against the reps
+before them or never return (``RepAnalysis``). Nothing is counted until two quadrants agree on the cadence. Each
+agreeing quadrant then keeps its own tally from its own peaks, and the count shown is the largest tally another
+quadrant corroborates to within a couple of reps; it never goes down. ``RepCountStore`` keeps the count in
+``localStorage``, so a reload mid-set resumes it. ``Camera`` opens the camera's widest mode and, once metering has
+settled, holds its exposure, white balance and focus still, then checks the picture against the one automatic had
+produced and lets go if holding changed it. The detector's tuning is gathered in ``DetectorSettings``; the values
+settled by replaying recorded traces say so in their comments.
 
-Once signed in, the greeting is followed by a role selection. This device can act as the **signal acquirer** —
-the phone whose camera watches the periodic movement — or as the **dashboard** showing the live rep count.
-Choosing one opens that role's screen, which currently holds a placeholder and a control returning to the
-selection. The choice is persisted per device, so reloading the capture phone returns it to capturing, while a
-different account signing in on the same device starts back at the selection.
+**Watching** keeps the server out of the path. A watching device and the counter open a WebRTC data channel between
+them (``sgrv.fe.live.PeerLink``). The offer, the answer and the ICE candidates are exchanged through Firestore by the
+``/live/signal`` routes, and no STUN or TURN server is configured, which is why the two must share a network. The
+counter sends a ``LiveReading`` whenever what it would say changes — the count, its status line, the elapsed time,
+the accumulated cadence — and the dashboard works pace, calories and projections out of those (``sgrv.fe.Effort``).
+The dashboard's two commands, reset and capture a trace, travel back on the same channel as ``LiveCommand``.
 
-"About" and "Logout" controls also appear in the upper-right corner after sign-in. About opens a centered modal
-and fetches the app version, UTC build timestamp, build operating system, Scala version, and Scala.js version from
-the authenticated ``GET /about`` route. Logout invokes ``POST /logout`` and returns the browser to the signed-out
-home page only after the server has revoked the Google grant and removed the browser session.
+**The account's session** is the record a workout leaves behind (``sgrv.be.sessions``). Taking the counter's role
+(``POST /live/acquirer``) opens a session in Firestore, or moves the one in progress to this device. The counter then
+reports its count, cadence and elapsed time every ten seconds (``POST /countingSession/reps``). A report from a device
+that is no longer the counter is refused with ``409``, which is how a displaced device learns to stand down. Logging
+out closes the session, and so does ten minutes without a report; closed sessions are the history. See
+`Data model`_.
+
+**The bench** (``sgrv.fe.bench``, offered only with ``#test`` at the end of the address) is a development
+instrument. A desktop screen animates a figure at a known cadence for a phone on a tripod to count, compares the
+count with the truth as it goes, files what it observes as test events (``POST /test/event``), and has the counter
+capture a signal trace after each test (``POST /countingSession/trace``). Abandoning a run deletes its events and
+traces (``POST /test/run/discard``).
+
+Every shape the two ends exchange is defined once, in the ``shared`` project (``sgrv.api``), together with the route
+it travels on where it has one, so the frontend and the backend cannot drift apart. The ☰ menu on every screen carries
+**About**, the two documents and — once signed in — **Logout**. About shows the signed-in account, the build
+information from the authenticated ``GET /about`` route, and the frontend build the browser is actually running;
+before sign-in it shows only the last. Logout invokes ``POST /logout`` and returns the browser to the signed-out home
+page only after the server has revoked the Google grant and removed the browser session. The login screen explains
+what the app does before asking anyone to sign in.
 
 The backend owns the static-file routes, but application API routes are not
 coupled to ``Main``. ``RouteDiscovery`` scans the ``sgrv.be`` package on the
@@ -51,10 +109,23 @@ those generic facilities. Consequently, adding a plugin does not require adding 
 
 The Scala.js linker runs as a backend resource generator. Its ``main.js`` and
 source map are copied into the backend's managed ``web`` resources beside the
-hand-written HTML, CSS, web-app manifest, favicon, and PWA icons. Consequently, one backend
+hand-written HTML, CSS, web-app manifest, favicon, PWA icons, and the two documents. Consequently, one backend
 build contains and serves the complete application. A second resource generator captures the version, build
 timestamp, build OS, Scala version, and Scala.js plugin version in a packaged ``build-info.properties`` resource
 for ``/about``.
+
+Technology
+----------
+
+* Scala 3.8.4
+* Scala.js and Laminar for the browser application, with zio-json for the shapes shared with the backend
+* WebRTC data channels between a counting device and the devices watching it
+* ZIO HTTP for the backend server, and ZIO Logging for console logging
+* Google OAuth 2.0 (google-api-client) for "Login with Google", requesting only ``openid email profile``
+* Google Cloud Firestore for browser sessions, the accounts' workouts and settings, and pairing messages
+* ClassGraph for discovering independently loadable, capability-checked backend plugins
+* MUnit for frontend and backend tests, and sbt-scoverage for backend coverage
+* Selenium (in a separate ``e2etest`` project) for end-to-end browser tests against the real, running app
 
 Running locally
 ---------------
@@ -108,71 +179,108 @@ refresh behind session renewal); forcing IPv4 avoids that entirely.
 Routes and caching
 ------------------
 
+Static files are wired directly in ``Main``, and reserved against conflicting routes from discovered plugins.
+``index.html`` is always ``no-cache``, so a launch discovers a new build. Everything else static is cached for
+``STATIC_ASSET_CACHE_MAX_AGE_SECONDS``, which both ``test.env`` and ``prod.env`` currently set to ``0`` (see
+`Running locally`_).
+
 .. list-table::
    :header-rows: 1
-   :widths: 24 52 24
+   :widths: 34 66
 
-   * - Route
+   * - Static route
      - Content
-     - Cache policy
-   * - ``/``
-     - ``index.html``
-     - ``no-cache``
-   * - ``/index.html``
-     - ``index.html``
-     - ``no-cache``
+   * - ``/``, ``/index.html``
+     - The page that loads the application
+   * - ``/main.js``, ``/main.js.map``
+     - The linked Scala.js application and its source map
    * - ``/style.css``
      - Hand-written stylesheet
-     - 5 minutes for ``run``; 1 day for production images
-   * - ``/favicon.ico``
-     - Packaged application icon
-     - 5 minutes for ``run``; 1 day for production images
-   * - ``/icon-192.png`` / ``/icon-512.png``
-     - Installable-app icons declared by the web-app manifest
-     - 5 minutes for ``run``; 1 day for production images
    * - ``/manifest.webmanifest``
      - PWA identity, launch behavior, colors, and icons
-     - 5 minutes for ``run``; 1 day for production images
-   * - ``/main.js``
-     - Linked Scala.js application
-     - 5 minutes for ``run``; 1 day for production images
-   * - ``/main.js.map``
-     - Scala.js source map
-     - 5 minutes for ``run``; 1 day for production images
-   * - ``/debug``
-     - Conditional Debug-plugin route; backend system signature requiring sign-in and ``?pwd=``
-     - ``no-store``
-   * - ``/auth/login``
-     - Redirect to the Google login page
-     - Default
-   * - ``/auth/callback``
+   * - ``/favicon.ico``, ``/icon-192.png``, ``/icon-512.png``
+     - The application icon, for browser tabs and home screens
+   * - ``/icon-maskable-192.png``, ``/icon-maskable-512.png``
+     - The same icon inside the safe zone Android's launcher masks cut to
+   * - ``/privacy.html``, ``/tos.html``
+     - The privacy policy and the terms of service: self-contained pages that need neither the application nor a
+       session
+
+Every other route comes from a discovered plugin and answers with ``Cache-Control: no-store``, except the two OAuth
+redirects.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 16 50
+
+   * - Route
+     - Access
+     - Purpose
+   * - ``GET /auth/login``
+     - Public
+     - Redirects to Google's login page
+   * - ``GET /auth/callback``
+     - Public
      - Completes the Google login, then redirects to ``/``
-     - Default
-   * - ``/me``
-     - Signed-in user as JSON, or ``401``
-     - ``no-store``
+   * - ``GET /me``
+     - Public
+     - The signed-in user as JSON, or ``401``
    * - ``POST /refreshSession``
-     - Validates the stored Google refresh token; renews Firestore/cookie expiry and reports that expiry in a header
-     - ``no-store``
+     - Public
+     - Validates the stored Google refresh token; renews Firestore/cookie expiry and reports it in a header
    * - ``POST /logout``
-     - Revokes Google authorization, deletes the Firestore session, and expires authentication cookies
-     - ``no-store``
+     - Signed in
+     - Revokes Google authorization, deletes the browser session, closes the account's counting session, and expires
+       the authentication cookies
    * - ``GET /about``
-     - Authenticated build metadata as JSON
-     - ``no-store``
+     - Signed in
+     - Build metadata as JSON
+   * - ``GET /live/acquirer``
+     - Signed in
+     - Whether the account already has a device counting
+   * - ``POST /live/acquirer``
+     - Signed in
+     - Takes the counter's role for this browser, opening the account's session when it has none
+   * - ``POST /live/signal``, ``GET /live/signal``
+     - Signed in
+     - Files one step of a WebRTC exchange; hands over what the other end has filed since a cursor
+   * - ``POST /countingSession/reps``
+     - Signed in
+     - The counter's progress report; ``409`` when this browser is no longer the counter
+   * - ``POST /countingSession/trace``
+     - Signed in
+     - Files a captured signal recording under the workout in progress
+   * - ``GET /countingSession/history``
+     - Signed in
+     - The account's workouts, newest first
+   * - ``POST /countingSession/history/discard``
+     - Signed in
+     - Deletes one workout, with its recordings and pairing messages
+   * - ``GET /account/settings``, ``PUT /account/settings``
+     - Signed in
+     - Reads and replaces the account's weight and exercises
+   * - ``DELETE /account/data``
+     - Signed in
+     - Deletes everything kept for the account
+   * - ``POST /test/event``
+     - Signed in
+     - Files one observation from a bench run
+   * - ``POST /test/run/discard``
+     - Signed in
+     - Deletes an abandoned bench run's events and recordings
+   * - ``GET /debug``
+     - Signed in, and ``?pwd=``
+     - Conditional Debug plugin: the backend's system signature
 
 Each plugin declares an ``AccessPolicy``; see `Adding a backend plugin`_. ``/auth/login``, ``/auth/callback``, and
 ``/me`` use ``AccessPolicy.Public`` because they must serve visitors without an existing session. When linked,
 the Debug plugin uses ``AuthenticatedAndAdminPassword``, so reaching ``/debug`` needs both a session and the
 admin password (`Admin-protected routes`_). Session refresh is public so it can recover an expired session; it
 requires the opaque cookie and a still-valid stored Google refresh token before extending Firestore and reissuing
-the ``HttpOnly`` cookie. Logout and About use ``Authenticated``. Logout consumes the resulting authenticated
-request context to reach the signed-in user's stored Google refresh token, revoking their Google credentials and
-invalidating the current session without a second Firestore lookup; About reports packaged build metadata.
-Static routes
-(``/``, ``/index.html``, ``/favicon.ico``, both PWA icons, ``/manifest.webmanifest``,
-``/style.css``, ``/main.js``, and ``/main.js.map``) are wired directly in ``Main`` and are
-reserved against dynamically loaded route conflicts.
+the ``HttpOnly`` cookie. Everything else uses ``Authenticated``. Logout consumes the resulting authenticated request
+context to reach the signed-in user's stored Google refresh token, revoking their Google credentials and
+invalidating the current session without a second Firestore lookup. Every route that reads or writes an account's
+data takes the account from the session, never from the request, so no request can name somebody else's.
 
 The Scala.js frontend continues to use ``/me`` as its read-only startup check. A successful result enables the
 Scala-written ``SessionRefreshWorker``, which renews immediately and reads ``X-Session-Expires-At`` from the
@@ -186,6 +294,12 @@ and Laminar's reactive projection, so DOM updates remain declarative and the two
 separately. On page load, transient operations are normalized and authentication returns to ``Unknown`` until
 ``/me`` confirms the HttpOnly cookie against the backend; persisted state is never treated as proof of
 authentication.
+
+The browser keeps three other things of its own, each under its own key and each read defensively, so storage
+that is missing or full costs a convenience rather than the app: the running count, with its cadence and clock,
+under ``sgrv.rep-count.v2`` (``RepCountStore``; resumed only within an hour of its last change); the device's own
+start-up preference under ``default_to_dashboard``, with the one-shot ``sgrv.present-roles-on-next-start`` marker
+that makes turning it off take effect at the next start (``StartPreference``); and the session-renewal state below.
 
 Session-renewal infrastructure lives separately in ``sgrv.fe.refreshstate`` and persists only ``RefreshState``
 under ``sgrv.refresh-state.v1``. That package has no dependency on any application-specific state, so the
@@ -209,15 +323,56 @@ before they expire.
 PWA installation
 ----------------
 
-The application is installable from supporting browsers. ``index.html`` declares ``manifest.webmanifest``, the
-192×192 and 512×512 PNG icons, theme colors, and an Apple touch icon. The manifest launches the installed
-application at ``/`` in a standalone window. Installation does not enable application-shell or offline caching;
-the app needs a connection to launch and use backend data.
+The application is installable from supporting browsers. ``index.html`` declares ``manifest.webmanifest``, the 192×192
+and 512×512 PNG icons, theme colors, and an Apple touch icon. The manifest launches the installed application at ``/``
+in a standalone window, and lists each icon twice: once as ``any``, and once as ``maskable``, drawn inside the central
+safe zone that Android launchers cut their own shape from. Without the maskable pair a Pixel shows the plain icon
+shrunk onto a white disk. The icons are drawn as SVG under ``scripts/icon/``, whose README describes how the PNGs and
+the favicon are produced from them. Installation does not enable application-shell or offline caching; the app needs a
+connection to launch and use backend data.
 
 Installation requires HTTPS in a deployed environment; browsers also accept ``localhost`` and ``127.0.0.1`` for
 local development. Use the browser's install action after loading the application. Both image-building tasks
 verify that the manifest, favicon, and required PNG icons are present in the packaged backend JAR before
 staging their Docker context.
+
+Data model
+----------
+
+Everything the backend keeps is in the project's ``(default)`` Firestore database, in three collections.
+
+``Access``
+   One document per browser session, expired by a TTL policy; see `Login with Google`_.
+
+``CountingSessions``
+   One document per account, named by a keyed digest of the account's email — HMAC-SHA256 under ``ACCOUNT_KEY`` —
+   so no email appears in a document path, and nobody holding the database can confirm whether an address has an
+   account without also holding the key. ``AccountSchema`` in ``AccountSessions.scala`` is the authority on the
+   fields:
+
+   .. code-block:: text
+
+      CountingSessions/{digest}      activeSession, counter, lastRepAt, settings (AccountSettings as JSON)
+        sessions/{session id}        startedAt, completedAt, endedBy, counter,
+                                     reps, repsAt, cadenceSum, elapsedSeconds
+          traces/{trace id}          one captured signal recording (TraceSchema)
+          signals/{auto id}          one step of a WebRTC exchange
+
+   ``activeSession`` points at the workout in progress, so "one session per account" is a property of the shape
+   rather than of a query. ``counter`` is a SHA-256 of the counting browser's session key: it says which device may
+   report, and a device taking the role over changes it without starting a new workout. Every accepted report moves
+   ``lastRepAt``; a session whose mark is older than ``COUNTING_IDLE_MINUTES`` (ten by default) is closed as ``Idle``
+   by whichever request next looks at it — there is no timer. Closed sessions are kept, because they are the
+   history, and a calorie figure is never stored: only what it is worked out from, since the weight and the factor
+   behind it can change afterwards.
+
+``TestEvents``
+   One document per bench observation, filed with the email of the account that ran the bench.
+
+``ACCOUNT_KEY`` comes from the file named by ``ACCOUNT_KEY_PATH`` in the shared configuration — one line of at
+least 32 characters, such as the output of ``openssl rand -hex 32`` — and every launch and deployment task hands it
+to the backend. Without it no account can be named: reads come back empty, writes answer ``503``, and no session
+opens. There is deliberately no unkeyed fallback, which would give up the property the key exists for.
 
 Login with Google
 -----------------
@@ -244,6 +399,7 @@ A complete configuration has this shape:
 .. code-block:: text
 
    OAUTH_CONFIG_PATH=oauth.config.json
+   ACCOUNT_KEY_PATH=account.key
    # ADMIN_PASSWORD_PATH=admin.pwd
    LOCAL_BASE_URL=http://localhost:<local-port>
    ARTIFACT_BASE_URL=https://<standalone-host>
@@ -255,8 +411,8 @@ A complete configuration has this shape:
    ARTIFACT_REGISTRY_REPOSITORY=<repository-name>
    GCLOUD_SERVICE_ACCOUNT=<runtime-service-account-email>
 
-Relative paths in ``OAUTH_CONFIG_PATH`` and ``ADMIN_PASSWORD_PATH`` are resolved from the directory containing
-``config.env``. This makes the configuration and its referenced secret files portable as one shared directory,
+Relative paths in ``OAUTH_CONFIG_PATH``, ``ACCOUNT_KEY_PATH`` and ``ADMIN_PASSWORD_PATH`` are resolved from the
+directory containing ``config.env``. This makes the configuration and its referenced secret files portable as one shared directory,
 while every development machine needs only its own small ``APPCONFIGPATH`` locator.
 
 The compulsory OAuth JSON must use Google's standard ``Web application`` structure
@@ -607,12 +763,12 @@ Four properties are deliberate:
 * **The logout event is raised only after the logout really happened** — after Google revocation and after the
   browser session is deleted — so a listener never records an ending that did not occur.
 
-``sgrv.be.sessions.CountingSessionListener`` is the worked example. On login it opens a document in the
-``CountingSessions`` collection recording the user and the start time; on logout it sets ``completedAt`` on that
-same document rather than deleting it, so the history survives for later analysis. Its document id is a SHA-256
-of the session key, which makes the write idempotent — a replayed callback resumes the existing record rather
-than opening a second one. Note that nothing expires this collection, unlike ``Access``: these records
-accumulate deliberately.
+``sgrv.be.sessions.CountingSessionListener`` is the worked example. A login opens nothing: every device that
+signs in reaches the same screens and only one of them counts, so a counting session is opened when a device takes
+the counter's role instead. A logout, from any device, closes the account's session in progress and records why
+(``endedBy``), leaving it in place as a workout in the history. The same object derives a browser's identity from
+its session key by hashing, as recommended above, and ``CountingSessionContributor`` reports that identity on
+``/me``.
 
 Adding to the /me response
 --------------------------
@@ -636,6 +792,9 @@ Each contribution is filed under its contributor's id, so two can never collide:
 .. code-block:: json
 
    {"email": "...", "name": "...", "extra": {"example": {"hello": "..."}}}
+
+This app's own contribution is ``counting-session``: the digest of the browser's session key that the account's
+record names as its counter while that browser is counting.
 
 ``CurrentUser.extra`` is absent rather than empty when nothing contributes, so an application with no
 contributors sees exactly the payload this route has always returned. A contributor may return ``None`` to add
@@ -689,14 +848,22 @@ the shared config, it additionally runs the Debug-plugin tests; without that opt
 The frontend tests need Node.js installed; without it, run ``sbt backend/test`` and, when enabled,
 ``sbt debugPlugin/test``.
 
-The backend and Debug-plugin tests cover server configuration and static assets; nominal plugin discovery; typed intersection
-capability resolution; missing-capability skips; access-policy gating; API incompatibility, activation-failure,
-and route-conflict isolation; request-log formatting; debug signature generation; OAuth configuration and URL generation (including
-``GOOGLE_SERVICES`` parsing and the resulting scope list), user-name fallback, authentication JSON, logout
-revocation/invalidation ordering and cookie expiry, session-renewal outcomes, and discovery of the
-authentication routes. They use deterministic test data; they do not call Google or a live
-Firestore API. Generate an scoverage report for the
-backend with:
+The backend and Debug-plugin tests cover server configuration and static assets; nominal plugin discovery; typed
+intersection capability resolution; missing-capability skips; access-policy gating; API incompatibility,
+activation-failure, and route-conflict isolation; request-log formatting; debug signature generation; OAuth
+configuration and URL generation (including ``GOOGLE_SERVICES`` parsing and the resulting scope list), user-name
+fallback, authentication JSON, logout revocation/invalidation ordering and cookie expiry, session-renewal outcomes,
+and discovery of every route; and, for the app's own routes, the account key, the idle rule, the validation of
+progress reports, recordings, settings and test events, and that every field of a shared type is written. They use
+deterministic test data; they do not call Google or a live Firestore API, so the Firestore queries themselves are
+exercised only by running the app.
+
+The frontend tests run the detector against synthetic signals, several of them built to reproduce failures first
+seen in recorded traces (the filter, peak detection, the tally and its corroboration, the rest phase and the
+signal-strength bands), and cover the camera's settle-and-hold rules, the dashboard's arithmetic (pace, projections, calories, factors), the CSV export, the
+stored count and start-up preference, the frontend state's persistence, and the bench's motion and scoring.
+
+Generate an scoverage report for the backend with:
 
 .. code-block:: console
 
@@ -792,14 +959,15 @@ With that session live, run:
    sbt e2etest/testAuthenticated
 
 This fails immediately, with a clear message, if the backend or test browser aren't already up — unlike
-``e2etest/test``, it never launches or tears down either itself. It attaches Selenium to the running Chrome via
-the Chrome DevTools Protocol's ``debuggerAddress`` option instead of launching a fresh browser (calling
-``ChromeDriver.quit()`` on such an attached session only ends that WebDriver session; it does not close the
-real browser window), and runs ``sgrv.e2e.SignedInE2ESuite``: it opens the About modal and asserts the
-authenticated ``/about`` route filled in every build-information field, then walks the role selection — into the
-acquirer screen and back, then into the dashboard screen and back. Since it attaches to the same
-coverage-instrumented backend
-``launchTestBrowser`` started, this traffic accumulates into the same measurement data as everything else.
+``e2etest/test``, it never launches or tears down either itself. It attaches Selenium to the running Chrome via the
+Chrome DevTools Protocol's ``debuggerAddress`` option instead of launching a fresh browser (calling
+``ChromeDriver.quit()`` on such an attached session only ends that WebDriver session; it does not close the real
+browser window), and runs ``sgrv.e2e.SignedInE2ESuite``: it opens About from the menu and asserts it shows the
+signed-in account and every build-information field, then goes to the role picker and walks each role — into the
+dashboard and back, then into the counter, taking over if another device holds the role, and back. Entering the
+counter is real: it takes the role for the signed-in account and opens a workout in its history. Since it attaches to
+the same coverage-instrumented backend ``launchTestBrowser`` started, this traffic accumulates into the same
+measurement data as everything else.
 
 Rendering README.rst to HTML
 -----------------------------
@@ -860,10 +1028,13 @@ available locally. The deploying account needs permission to push to that reposi
 configured runtime identity separately needs the Firestore permissions used by the backend, and the deploying
 user needs ``roles/iam.serviceAccountUser`` on it.
 
-The service is deployed with ``--max-instances 1``. The dashboard is fed from the acquirer's own connection
-in the instance's memory, so a second instance could hold one end of a pair without the other and deliver
-nothing, in a way that would not reproduce locally where there is only ever one process. Raise the limit only
-together with a way for a dashboard to reach the instance holding its acquirer.
+The service is deployed with ``--max-instances 1``. The cap was needed while live readings were relayed through
+an instance's memory, where a counter and its dashboard landing on different instances heard nothing from each
+other. Readings now travel directly between the devices and every request reads its state from Firestore, so nothing
+in the design depends on a single instance any more; the cap also bounds how many instances a burst of traffic can
+start.
+
+The service answers at https://cadencecam.raz.sg, a domain mapped to it in Cloud Run and set as ``PUBLIC_BASE_URL``.
 
 The staged runtime libraries include the packaged ``sharedJVM`` project explicitly. Inter-project sbt
 dependencies otherwise appear on the backend runtime classpath as class directories rather than JAR files and
@@ -924,41 +1095,56 @@ Repository layout
 
 .. code-block:: text
 
-   build.sbt
-   firebase.json
-   project/AppConfigBuild.scala
-   project/OAuthBuild.scala
-   project/AdminBuild.scala
-   project/LocalConfigBuild.scala
-   project/PublicBaseUrlBuild.scala
-   project/Dependencies.scala
-   project/plugins.sbt
-   frontend/src/main/scala/sgrv/fe/Main.scala
-   frontend/src/main/scala/sgrv/fe/FrontendState.scala
-   frontend/src/main/scala/sgrv/fe/HttpService.scala
-   frontend/src/main/scala/sgrv/fe/refreshstate/
-   backend/src/main/scala/sgrv/be/BackendEnvironment.scala
-   backend/src/main/scala/sgrv/be/Main.scala
-   backend/src/main/scala/sgrv/be/auth/
-   backend/src/main/scala/sgrv/be/about/
-   backend/src/main/scala/sgrv/be/core/
-   debug-plugin/src/main/scala/sgrv/be/debug/
-   debug-plugin/src/test/scala/sgrv/be/debug/
-   backend/src/main/resources/prod.env
-   backend/src/main/resources/test.env
-   backend/src/main/resources/Dockerfile
-   backend/src/main/resources/web/
-   backend/src/test/scala/
-   e2etest/src/test/scala/
-   scripts/stopapp.ps1
+   build.sbt                                   the build, including the run, artifact and deployGCloud tasks
+   project/                                    build helpers: shared configuration, OAuth, account key, origins
+   firebase.json                               the local Firestore emulator
+   shared/src/main/scala/sgrv/api/             every shape and path the two ends exchange
+     Api.scala                                   /me, /about, progress reports, signal recordings
+     Live.scala                                  readings, commands and pairing between devices; presence;
+                                                 the bench's test events and run discards
+     Settings.scala                              the account's weight and exercises; deleting its data
+     Workouts.scala                              the history, and deleting one workout
+     Documents.scala                             the privacy policy and the terms
+   frontend/src/main/scala/sgrv/fe/
+     Main.scala                                  the application: every screen and panel, and start-up
+     FrontendState.scala                         what the browser persists, and the screens
+     Effort.scala                                the dashboard's arithmetic: pace, calories, projections
+     Menu.scala, Readouts.scala                  pieces several screens share
+     StartPreference.scala                       the device's "default to dashboard" preference
+     WorkoutCsv.scala                            the history as a CSV file
+     Device.scala, HttpService.scala             the handset's name; every request's way out
+     acquire/                                    the counter: camera, sampling, detector, reporting
+     live/PeerLink.scala                         the direct link between a counter and its watchers
+     bench/                                      the test bench behind #test
+     refreshstate/                               session renewal, independent of the application
+   backend/src/main/scala/sgrv/be/
+     Main.scala                                  static routes, discovery, and the server
+     BackendEnvironment.scala                    the host's capabilities
+     auth/                                       Google login, browser sessions, /me, logout, renewal
+     core/                                       plugin, listener and contributor discovery; access policies
+     store/                                      the Firestore client
+     about/                                      GET /about
+     sessions/                                   the app's routes: accounts, counting sessions, history,
+                                                 settings, pairing, recordings, test events
+   backend/src/main/resources/
+     prod.env, test.env                          environment-neutral runtime settings
+     Dockerfile, runApp                          the image and its launcher
+     web/                                        index.html, style.css, manifest, icons, privacy.html, tos.html
+   backend/src/test/scala/                     backend tests
+   frontend/src/test/scala/                    frontend tests
+   debug-plugin/                               the optional, separately packaged Debug plugin
+   e2etest/src/test/scala/                     Selenium suites
+   scripts/icon/                               the icon's SVG sources and how the PNGs are made from them
+   scripts/stopapp.ps1                         stops a local server by port, on Windows
 
-Forking this template
-----------------------
+Forking this repository
+-----------------------
 
 Forking this repository to start a new project means replacing every piece of data specific to *this*
-deployment — a GCP project, an OAuth client, a couple of secret files, a handful of settings — while everything
-else described above (plugin discovery, capability resolution and access policies, the session store, session
-renewal) is generic infrastructure that keeps working unchanged underneath your own routes.
+deployment — a GCP project, an OAuth client, a few secret files, a handful of settings — while the infrastructure
+described above (plugin discovery, capability resolution and access policies, the session store, session renewal)
+keeps working unchanged underneath your own routes. CadenceCam itself is the part to replace: ``sgrv.be.sessions``,
+the frontend outside ``refreshstate``, and the app's shapes in ``sgrv.api``.
 
 What absolutely needs changing
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -985,6 +1171,7 @@ What absolutely needs changing
      on the Google OAuth client.
    * ``GCP_PROJECT_ID``, ``FIRESTORE_DATABASE_ID`` — your new project and its database, normally ``(default)``,
      which every app under that project shares. The backend never creates it.
+   * ``ACCOUNT_KEY_PATH`` — a fresh random key of your own, if you keep account-keyed data (see `Data model`_).
    * ``GCLOUD_REGION``, ``ARTIFACT_REGISTRY_REPOSITORY``, and ``GCLOUD_SERVICE_ACCOUNT`` — the Cloud Run target.
    * ``ARTIFACT_PORT`` — the port baked into a standalone artifact. ``LOCAL_BASE_URL`` supplies the local run
      port; Cloud Run supplies its own ``PORT``. The backend never silently chooses a port.
@@ -1008,7 +1195,8 @@ Worth changing, but not load-bearing
   the Docker image tag *and* the Cloud Run service name, so changing it deploys a new service at a new URL.
 * The ``<title>`` and Apple app title in ``backend/src/main/resources/web/index.html``, plus ``name``,
   ``short_name``, ``description``, and colors in ``backend/src/main/resources/web/manifest.webmanifest`` — these
-  control the installed app's identity and launch appearance. Replace the favicon and both PNG icons as a set.
+  control the installed app's identity and launch appearance. Replace the favicon and the four PNG icons as a set;
+  ``scripts/icon/`` shows how this app's were made.
 * The ``sgrv.be`` / ``sgrv.fe`` package names. Purely a naming choice, but if you rename them, also update
   ``RouteDiscovery.discover``'s ``.acceptPackages("sgrv.be")`` filter in
   ``backend/src/main/scala/sgrv/be/core/RouteDiscovery.scala`` to match — otherwise route discovery silently

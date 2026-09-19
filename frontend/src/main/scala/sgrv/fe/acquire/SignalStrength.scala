@@ -40,7 +40,7 @@ private[fe] object SignalStrength:
     else if margin >= AdequateAbove then Adequate
     else Weak
 
-  /** What to show: the margin to one decimal, which is a multiple of the bar the movement must clear. */
+  /** What to show: the margin to one decimal, as a multiple of the prominence floor. */
   def label(margin: Double): String = f"$margin%.1f×"
 
   /** Deliberately not called confidence or quality.

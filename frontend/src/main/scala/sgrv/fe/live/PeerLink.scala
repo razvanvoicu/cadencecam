@@ -16,9 +16,9 @@ import zio.json.*
   * goes through one while they are being introduced -- an offer, an answer and a handful of candidates, filed under the
   * account's session -- and after that the readings go straight across.
   *
-  * That is what removes the problem a relay could not solve: a room held in one server process requires both devices to
-  * land in that same process, which nothing about scaling guarantees. Two browsers that have exchanged candidates do
-  * not care which instance introduced them, or whether it is still running.
+  * That is what removes the problem a server-side relay could not solve: a room held in one server process requires
+  * both devices to land in that same process, which nothing about scaling guarantees. Two browsers that have exchanged
+  * candidates do not care which instance introduced them, or whether it is still running.
   */
 private[fe] object PeerLink:
 

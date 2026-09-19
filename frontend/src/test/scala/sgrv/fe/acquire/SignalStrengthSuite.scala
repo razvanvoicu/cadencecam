@@ -26,7 +26,7 @@ class SignalStrengthSuite extends FunSuite:
     assertEquals(SignalStrength.of(SignalStrength.AdequateAbove - 0.01), SignalStrength.Weak)
 
   test("a movement only just above the background is weak, not merely adequate"):
-    // One is the threshold itself: a peak that only just cleared the bar it had to clear.
+    // One is the floor itself: a peak that only just cleared it.
     assertEquals(SignalStrength.of(1.0), SignalStrength.Weak)
     assertEquals(SignalStrength.of(0.0), SignalStrength.Weak)
 
@@ -34,7 +34,7 @@ class SignalStrengthSuite extends FunSuite:
     assertEquals(SignalStrength.label(3.24), "3.2×")
     assertEquals(SignalStrength.label(1.0), "1.0×")
 
-  test("a channel reports how far its peaks stood above the bar they had to clear"):
+  test("a channel reports how far its peaks stood out, against the floor they had to clear"):
     val settings = DetectorSettings()
     // A clean cadence well above the floor.
     val strong = Seq.tabulate(400)(i => 120.0 + 12.0 * math.sin(2 * math.Pi * i / 12.5))

@@ -1,7 +1,9 @@
 package sgrv.fe.acquire
 
-/** Tuning for the detector. Every threshold here was reasoned about rather than measured, and the acquisition design
-  * expects them to be settled empirically; they are gathered in one place so that can happen.
+/** Tuning for the detector, gathered in one place so it can be settled against recordings rather than argued about.
+  *
+  * The values began as reasoning. Several have since been measured against recorded signals, and where one has, its
+  * comment says against how many recordings and what the change did; the rest are still the reasoned value.
   */
 private[fe] final case class DetectorSettings(
     sampleRateHz: Double = 10.0,
@@ -81,10 +83,10 @@ private[fe] final case class DetectorSettings(
     /** How tall a peak must stand against the peaks of the last few reps before it counts.
       *
       * The threshold a peak clears is the greater of the prominence floor and a multiple of the amplitude around it,
-      * and the second term is self-defeating against noise: when a window holds nothing but noise, the bar is set by
-      * that noise, and noise peaks routinely exceed one and a half times their own RMS. So when a set ends and the
-      * movement slides out of the window, the bar decays after it and the camera's own speckle starts counting -- one
-      * recording gained eleven reps that way after the movement had stopped.
+      * and the second term is self-defeating against noise: when a window holds nothing but noise, the threshold is set
+      * by that noise, and noise peaks routinely exceed one and a half times their own RMS. So when a set ends and the
+      * movement slides out of the window, the threshold decays after it and the camera's own speckle starts counting --
+      * one recording gained eleven reps that way after the movement had stopped.
       *
       * Judged against the movement rather than against the window: peaks within a set are all of a size, while noise
       * after one is a fraction of what preceded it. Measured across sixty-four recordings, cool-down noise stood at
@@ -130,7 +132,7 @@ private[fe] final case class ChannelAnalysis(
     power: Double,
     peaks: Seq[Int],
     periodSamples: Option[Double],
-    /** How far a typical peak here stood above the bar it had to clear, as a multiple of that bar.
+    /** How far a typical peak here stood out, as a multiple of the prominence floor every peak has to clear.
       *
       * One is a movement only just distinguishable from the background; measured runs that counted correctly sat above
       * three, and one that lost reps sat under two. `None` when there were no peaks to judge.
@@ -196,7 +198,7 @@ private[fe] object RepAnalysis:
     // Peaks are reported against the whole window, so the caller's index arithmetic stays unaffected by the skip.
     val measured = PeakDetector.measured(settled, settings.minimumDistanceSamples, threshold)
     // Against the last few reps of this channel, so the camera's own speckle cannot start counting once the movement
-    // has left the window and the adaptive bar has decayed after it.
+    // has left the window and the adaptive threshold has decayed after it.
     val standing = standingOut(settled, measured.map(_._1), periodOf(measured.map(_._1)), settings)
     // Against the quadrant's own brightness, so a peak the movement never came back from -- the object leaving the
     // frame for good -- is not mistaken for the round trip a rep is.
@@ -205,30 +207,19 @@ private[fe] object RepAnalysis:
     // standing delay behind the movement, so where it comes from is not a detail.
     val peaks = PeakDetector.returning(samples, found, returnWindow(found, settings), settings.returnFraction)
     // Of the peaks that survived, not of everything the detector looked at: this says how far the movement being
-    // counted stands above the bar, and a peak that was rejected is not being counted.
+    // counted stands above the threshold, and a peak that was rejected is not being counted.
     val kept = peaks.toSet
     val prominences = measured.collect {
       case (index, prominence) if kept.contains(index + settings.settlingSamples) => prominence
     }.sorted
     // Against the fixed floor rather than the adaptive threshold. The threshold rises with the scene's own
     // activity, so dividing by it flatters a quiet scene: measured against real recordings, a camera shaken by
-    // typing scored higher that way than a movement that counted perfectly. The floor is the bar a movement
-    // actually has to clear, and it does not move.
+    // typing scored higher that way than a movement that counted perfectly. The floor is the threshold every
+    // movement has to clear at the least, and it does not move.
     val margin = Option.when(prominences.nonEmpty && settings.prominenceFloor > 0):
       prominences(prominences.size / 2) / settings.prominenceFloor
     ChannelAnalysis(quadrant, filtered, power, peaks, periodOf(peaks), margin)
 
-  /** How long to wait for a peak's movement to come back: the time one rep takes here.
-    *
-    * A peak is held back until there is enough signal after it to judge, so this wait is the count's standing delay
-    * behind the movement. Taking it from the slowest cadence the band admits made that delay two seconds whatever the
-    * cadence, which at 0.8Hz is most of two reps -- and the trough a rep returns through arrives half a period after
-    * its peak, so a whole period of the cadence actually being kept is already generous. Measured over sixty-five
-    * recordings it brought the delay from 2.1s to 1.3s without changing a count.
-    *
-    * Bounded both ways: never shorter than the closest two peaks may fall, and never longer than the old fixed wait, so
-    * an implausible period cannot make it wait longer than it used to.
-    */
   /** The peaks that stand up against the last few reps before them.
     *
     * A peak is measured against the tallest thing in the preceding stretch of its own channel. Within a set that is
@@ -237,8 +228,8 @@ private[fe] object RepAnalysis:
     * period when nothing is happening and pay for it in adaptiveness while something is.
     *
     * Taken from the signal rather than from the peaks already credited, which matters: a memory that only learned from
-    * accepted peaks would stop learning the moment it started rejecting, and a scene that dimmed would ratchet the bar
-    * up out of reach and never count again.
+    * accepted peaks would stop learning the moment it started rejecting, and a scene that dimmed would ratchet the
+    * threshold up out of reach and never count again.
     */
   private[acquire] def standingOut(
       settled: Seq[Double],
@@ -255,6 +246,17 @@ private[fe] object RepAnalysis:
       val tallest = settled.slice(from, index + 1).maxOption.getOrElse(0.0)
       tallest <= 0 || settled(index) >= settings.peakHeightShare * tallest
 
+  /** How long to wait for a peak's movement to come back: the time one rep takes here.
+    *
+    * A peak is held back until there is enough signal after it to judge, so this wait is the count's standing delay
+    * behind the movement. Taking it from the slowest cadence the band admits made that delay two seconds whatever the
+    * cadence, which at 0.8Hz is most of two reps -- and the trough a rep returns through arrives half a period after
+    * its peak, so a whole period of the cadence actually being kept is already generous. Measured over sixty-five
+    * recordings it brought the delay from 2.1s to 1.3s without changing a count.
+    *
+    * Bounded both ways: never shorter than the closest two peaks may fall, and never longer than the old fixed wait, so
+    * an implausible period cannot make it wait longer than it used to.
+    */
   private[acquire] def returnWindow(peaks: Seq[Int], settings: DetectorSettings): Int =
     periodOf(peaks)
       .map(period => period.round.toInt.max(settings.minimumDistanceSamples).min(settings.maximumGapSamples))
@@ -282,13 +284,6 @@ private[fe] object RepAnalysis:
       case (Some(a), Some(b)) if a > 0 && b > 0 => math.abs(a - b) / math.max(a, b) <= tolerance
       case _                                    => false
 
-  /** The strongest pair of channels whose periods agree, with the stronger of the two leading.
-    *
-    * The acquisition design settled on this rather than a vote across all four, because a movement may only cross two
-    * quadrants: the condition is that two agree, not that most do. Peak timing is then taken from one channel alone —
-    * the quadrants carry the same period but different phase, so fusing their peaks would smear the timing the count
-    * depends on.
-    */
   /** Keeps a channel that is already leading, paired with whichever other channel best agrees with it. */
   def hold(
       channels: Seq[ChannelAnalysis],
@@ -300,6 +295,13 @@ private[fe] object RepAnalysis:
       partner <- channels.filter(_.quadrant != quadrant).filter(agree(leader, _, tolerance)).maxByOption(_.power)
     yield (leader, partner)
 
+  /** The strongest pair of channels whose periods agree, with the stronger of the two leading.
+    *
+    * The acquisition design settled on this rather than a vote across all four, because a movement may only cross two
+    * quadrants: the condition is that two agree, not that most do. Peak timing is then taken from one channel alone —
+    * the quadrants carry the same period but different phase, so fusing their peaks would smear the timing the count
+    * depends on.
+    */
   def select(channels: Seq[ChannelAnalysis], tolerance: Double): Option[(ChannelAnalysis, ChannelAnalysis)] =
     val pairs = for
       first <- channels
@@ -339,7 +341,8 @@ private[fe] final class RepCounter(settings: DetectorSettings = DetectorSettings
   private var authoritative: Option[Quadrant] = None
   private var state: LockState = LockState.Acquiring(0, settings.minimumSamplesForLock)
 
-  /** How far the strongest channel's peaks stood above their threshold, whether or not a cadence was found.
+  /** How far the strongest channel's peaks stood out, as a multiple of the prominence floor, whether or not a cadence
+    * was found.
     *
     * Kept even while searching, because that is when it is most worth knowing: a movement too faint to count looks from
     * the outside exactly like no movement at all, and this tells the two apart.

@@ -5,8 +5,8 @@ import org.scalajs.dom
 /** Draws one quadrant's recent samples as a scrolling trace: oldest at the left edge, newest at the right.
   *
   * A debugging aid for validating the acquisition end to end — that the camera is sampled steadily, that movement in
-  * front of a quadrant shows up in that quadrant's series, and that the timing looks like 10 Hz. Not part of the
-  * detector, and expected to be switched off once it has done its job.
+  * front of a quadrant shows up in that quadrant's series, and that the timing looks like 10 Hz. Drawn beneath the
+  * camera on the counter's screen, one pane per quadrant. Not part of the detector.
   */
 private[fe] object SignalGraph:
   /** Five seconds of a 10 Hz signal. Wide enough to show several cycles of a 0.5-2 Hz movement. */

@@ -3,7 +3,7 @@ package sgrv.fe
 import com.raquo.laminar.api.L.*
 import sgrv.fe.acquire.SignalStrength
 
-/** The rows the acquirer and the dashboard both show.
+/** The rows the counter and the bench both show: the large reading, and the reset control beside the status line.
   *
   * Shared as builders rather than duplicated as markup, because "exactly the same format" is a promise that copies
   * cannot keep: the two would agree on the day they were written and drift on the first change to either. Built from

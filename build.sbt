@@ -28,7 +28,7 @@ val initialAppConfig = AppConfigBuild.load(appConfigFile, supportedAppConfigKeys
 val initialOAuthConfigFile = initialAppConfig.requiredPath("OAUTH_CONFIG_PATH")
 
 // gcloud's own well-known Application Default Credentials location, baked into the standalone `artifact` image
-// (only) so `docker run` can reach Firestore/Sheets outside a GCP platform's own workload identity. The Cloud Run
+// (only) so `docker run` can reach Firestore outside a GCP platform's own workload identity. The Cloud Run
 // image never includes this file. Generate it with `gcloud auth application-default login`. Optional: if missing,
 // the standalone image is still built, but the container will need credentials supplied another way.
 val adcFile = file(
@@ -355,7 +355,8 @@ lazy val backend = (project in file("backend"))
     run / fork := true,
     run / connectInput := true,
     // Some networks hand out AAAA (IPv6) records for googleapis.com without actually routing IPv6, which makes
-    // outbound Sheets/Drive calls fail with NoRouteToHostException; prefer IPv4 to avoid that.
+    // outbound Google calls -- the OAuth token exchange, session renewal -- fail with NoRouteToHostException; prefer
+    // IPv4 to avoid that.
     run / javaOptions += "-Djava.net.preferIPv4Stack=true",
     appBuildConfig := AppConfigBuild.load(appConfigFile, supportedAppConfigKeys),
     localOAuthConfigFile := appBuildConfig.value.requiredPath("OAUTH_CONFIG_PATH"),
@@ -801,9 +802,11 @@ lazy val root = {
                   "--port",
                   "8080",
                   "--allow-unauthenticated",
-                  // One instance, because the dashboard is fed from the acquirer's connection in memory: with two,
-                  // the pair can land on different instances and the fan-out silently delivers nothing. Lift this
-                  // only together with a way for a dashboard to reach the instance holding its acquirer.
+                  // Capped at one. The cap was needed while live readings were relayed through an instance's
+                  // memory, where a counter and its dashboard landing on two instances heard nothing from each other.
+                  // Readings now travel directly between the devices and every request reads its state from
+                  // Firestore, so nothing in the design requires it any more; it also bounds how many instances a
+                  // burst of traffic can start.
                   "--max-instances",
                   "1",
                   "--env-vars-file",

@@ -5,9 +5,9 @@ import scala.scalajs.js
 
 /** Where a suite has got to.
   *
-  * `Pausing` is not idleness. The detector confirms a rep from samples that follow it and reports over a socket, so the
-  * last reps of a set arrive after the movement has stopped; a test scored the instant the animation ends would mark
-  * those as missing. The pause is part of the measurement.
+  * `Pausing` is not idleness. The detector confirms a rep from samples that follow it and its reading then travels to
+  * the bench, so the last reps of a set arrive after the movement has stopped; a test scored the instant the animation
+  * ends would mark those as missing. The pause is part of the measurement.
   */
 private[fe] enum Stage:
   case Idle
@@ -251,10 +251,10 @@ private[fe] object Bench:
 
   /** How many times to ask for a reset before starting a test without one.
     *
-    * The command travels over a socket that is expected to drop -- a phone locking its screen, a platform bounding how
-    * long a request may live -- and it was sent once, blind. Three times over four and a half seconds is a long way
-    * past any of that, and a test that still has no acknowledgement is recorded as unconfirmed rather than quietly
-    * trusted.
+    * The command travels over the direct link to the counting device, and that link drops -- a phone locking its
+    * screen, a network changing under it. Sent once, blind, it was sometimes lost. Three times over four and a half
+    * seconds is a long way past any of that, and a test that still has no acknowledgement is recorded as unconfirmed
+    * rather than quietly trusted.
     */
   val ResetAttempts = 3
 

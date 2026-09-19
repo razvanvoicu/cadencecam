@@ -16,12 +16,12 @@ class AccountSessionsSuite extends munit.FunSuite:
   test("a session that has not counted for longer than the timeout has gone quiet"):
     assert(AccountSessions.goneQuiet(Some(now.minusSeconds(11 * 60)), now, tenMinutes))
 
-  test("quiet is measured from the last rep, not from the last thing the device said"):
-    // A phone left on the bench between suites keeps its socket busy and counts nothing; that is the state the
-    // timeout exists to end, so readings must not hold a session open.
-    val lastRep = Some(now.minusSeconds(30 * 60))
+  test("a session whose last mark is long past has gone quiet, however long ago it opened"):
+    // The mark is moved by every report the counter makes, so this is a counter that stopped reporting half an hour
+    // ago: its page closed, or its phone asleep.
+    val lastReport = Some(now.minusSeconds(30 * 60))
 
-    assert(AccountSessions.goneQuiet(lastRep, now, tenMinutes))
+    assert(AccountSessions.goneQuiet(lastReport, now, tenMinutes))
 
   test("a session that has never counted is not closed for being quiet"):
     // It has just opened; the operator is still framing the camera.

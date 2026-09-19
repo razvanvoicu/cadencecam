@@ -33,8 +33,8 @@ private[fe] final class RepProgressReporter(
 
   /** Called when the server says another device now holds the counter's role.
     *
-    * With no relay left to carry a stand-down message, this is how a displaced device learns: its next report is
-    * refused, because the account's record names somebody else as the counter.
+    * Nothing else carries a stand-down, so this is how a displaced device learns: its next report is refused with a
+    * conflict, because the account's record names somebody else as the counter.
     */
   var onDisplaced: () => Unit = () => ()
 
@@ -74,7 +74,7 @@ private[fe] final class RepProgressReporter(
             case Success(_) => ()
 
 private[fe] object RepProgressReporter:
-  /** Frequent enough to keep the backend warm and the dashboard close to live, without making the record hot. */
+  /** Frequent enough to keep the backend warm and the session's record close to current, without making it hot. */
   val DefaultIntervalMillis: Int = 10 * 1000
 
   private def message(error: Throwable): String =

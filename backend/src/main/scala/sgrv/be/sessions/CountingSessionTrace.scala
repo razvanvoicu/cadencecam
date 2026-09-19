@@ -1,7 +1,9 @@
 package sgrv.be.sessions
 
+import com.google.cloud.Timestamp
 import com.google.cloud.firestore.Firestore
 import java.security.SecureRandom
+import java.time.Instant
 import sgrv.api.SignalTrace
 import sgrv.be.BackendCapabilities
 import sgrv.be.auth.SessionStore
@@ -10,11 +12,54 @@ import zio.{Cause, Clock, ZIO}
 import zio.http.{Header, Method, Request, Response, Routes, Status, handler}
 import zio.json.*
 
+/** How a recording is stored: one document in the `traces` collection under the workout it was captured in.
+  *
+  * The field names are the recording's own, so the test that every field of [[SignalTrace]] is written can be a
+  * comparison of two sets.
+  */
+private[sessions] object TraceSchema:
+  val capturedAt = "capturedAt"
+  val sampleRateHz = "sampleRateHz"
+  val samples = "samples"
+  val reps = "reps"
+  val lock = "lock"
+  val note = "note"
+
+  /** What the camera said about itself, and what became of its controls.
+    *
+    * Stored because they were not: the phones have been sending these since the field existed and every one was dropped
+    * here, which turned a question about a device into an absence, and an absence into a wrong conclusion about why a
+    * picture was darkening.
+    */
+  val camera = "camera"
+  val device = "device"
+  val controls = "controls"
+  val controlsAtSample = "controlsAtSample"
+
+  /** A recording as the fields it is filed with.
+    *
+    * The samples are stored as their JSON text rather than as Firestore arrays. Thousands of numbers would otherwise be
+    * indexed element by element, for a document nothing will ever be queried by: the recording is read back whole or
+    * not at all.
+    */
+  def fields(trace: SignalTrace, at: Instant): Map[String, AnyRef] =
+    Map[String, AnyRef](
+      capturedAt -> Timestamp.ofTimeSecondsAndNanos(at.getEpochSecond, at.getNano),
+      sampleRateHz -> java.lang.Double.valueOf(trace.sampleRateHz),
+      samples -> trace.samples.toJson,
+      reps -> java.lang.Long.valueOf(trace.reps.toLong),
+      lock -> trace.lock
+    ) ++ trace.note.map(note -> _)
+      ++ trace.camera.map(camera -> _)
+      ++ trace.device.map(device -> _)
+      ++ trace.controls.map(controls -> _)
+      ++ trace.controlsAtSample.map(at => controlsAtSample -> java.lang.Long.valueOf(at.toLong))
+
 /** Accepts a captured recording of the acquirer's signals and files it under the session that produced it.
   *
-  * Kept for offline work rather than for the app to read back. Every threshold in the detector was chosen by reasoning
-  * about signals nobody had recorded, and each guess made that way has been wrong in a different direction; a real
-  * recording turns a question about behaviour into something that can be replayed rather than argued about.
+  * Kept for offline work rather than for the app to read back. The detector's thresholds were first chosen by reasoning
+  * about signals nobody had recorded, and each guess made that way was wrong in a different direction; a real recording
+  * turns a question about behaviour into something that can be replayed rather than argued about.
   */
 object CountingSessionTrace extends BackendPlugin:
   type Requires = Firestore & SessionStore
@@ -27,8 +72,8 @@ object CountingSessionTrace extends BackendPlugin:
   override val routes: Routes[Requires & RequestContext, Nothing] =
     Routes(Method.POST / "countingSession" / "trace" -> handler((request: Request) => apply(request)))
 
-  /** A minute of four channels at ten hertz is a few tens of kilobytes; ten times that is not a recording of this app
-    * but a mistake or an abuse, and is refused before it reaches Firestore.
+  /** The longest recording this app makes is six minutes at ten hertz, 3,600 samples a channel. Anything much longer is
+    * not a recording of this app but a mistake or an abuse, and is refused before it reaches Firestore.
     */
   private[sessions] val maximumSamplesPerChannel = 6000
 
@@ -55,7 +100,7 @@ object CountingSessionTrace extends BackendPlugin:
       now <- Clock.instant
       traceId <- ZIO.succeed(CountingSessionTrace.traceId())
       _ <- keeper
-        .recordTrace(account, session, traceId, CountingSessionStore(firestore).traceFields(trace, now))
+        .recordTrace(account, session, traceId, TraceSchema.fields(trace, now))
         .mapError(WriteFailed.apply)
       _ <- ZIO.logInfo(s"Captured a signal trace of ${trace.samples.size} channels for session $session")
     yield traceId

@@ -17,13 +17,14 @@ private[fe] enum CaptureState:
   case Captured(reps: Int)
   case Failed(message: String)
 
-/** Sends a minute of the four quadrant signals to the counting session that produced them.
+/** Sends the four quadrant signals -- as much of them as the buffer holds, up to six minutes -- to the workout that
+  * produced them.
   *
-  * The point is to stop guessing. Every threshold in the detector was set by reasoning about signals nobody had
-  * recorded, and each guess has been wrong in a different direction — a movement that terminates in its own quadrant, a
-  * filter ringing at rep cadence, setup movement that turned out to be accidentally rhythmic. A real recording, of real
-  * lighting, can be replayed against a changed detector as often as a question needs asking, which no amount of
-  * reasoning about synthetic curls can substitute for.
+  * The point is to stop guessing. The detector's thresholds were first set by reasoning about signals nobody had
+  * recorded, and each guess made that way was wrong in a different direction — a movement that terminates in its own
+  * quadrant, a filter ringing at rep cadence, setup movement that turned out to be accidentally rhythmic. A real
+  * recording, of real lighting, can be replayed against a changed detector as often as a question needs asking, which
+  * no amount of reasoning about synthetic curls can substitute for.
   */
 private[fe] object TraceCapture:
 

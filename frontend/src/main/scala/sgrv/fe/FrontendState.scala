@@ -52,8 +52,13 @@ private[fe] object Present:
     case UserState.Restoring(_, displayName) => Some(displayName)
     case _                                   => None
 
-/** The role this device plays in a session. A signed-in device starts at [[Screen.Selection]] and stays on whichever
-  * role it was given until the user goes back, so reopening the app on the capture phone returns it to capturing.
+/** The role this device plays: the role picker, the counter, the dashboard, or the bench.
+  *
+  * Where a signed-in device starts is settled once `/me` confirms the session: on the dashboard if the device has been
+  * told to default to it (see [[StartPreference]]); on the screen it was already on if the same account is returning
+  * after a reload, which is what keeps a counting phone counting; and otherwise at [[Screen.Selection]], moving
+  * straight on to the counter when the account has nothing counting yet. It then stays on whichever role it was given
+  * until the user goes back.
   */
 private[fe] enum Screen:
   case Selection
@@ -62,8 +67,8 @@ private[fe] enum Screen:
 
   /** A dashboard that also produces the movement being counted, for measuring the detector against a known truth.
     *
-    * The backend cannot tell it from an ordinary dashboard, and should not: it watches the same readings and sends the
-    * same commands. What it adds is on this side -- it knows exactly how many reps it displayed.
+    * The counting device cannot tell it from an ordinary dashboard, and should not: it watches the same readings and
+    * sends the same commands. What it adds is on this side -- it knows exactly how many reps it displayed.
     */
   case Bench
 
@@ -118,8 +123,9 @@ private[fe] object LogoutState:
 private[fe] final case class FrontendState(
     user: UserState,
     screen: Screen,
-    /** The counting session this login belongs to, as reported by `/me`. Persisted so a reload still knows which record
-      * it is working against before `/me` has answered again.
+    /** The digest the backend knows this browser's session by, as `/me` reports it -- the same value the account's
+      * record names as its counter while this device is counting. Kept with the rest of the state; nothing on this side
+      * reads it.
       */
     countingSessionId: Option[String],
     aboutState: AboutState,

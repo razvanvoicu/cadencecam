@@ -7,7 +7,7 @@ import scala.scalajs.js
 private[fe] final case class Sample(atMillis: Double, quadrants: Map[Quadrant, Double]):
   def brightness(quadrant: Quadrant): Double = quadrants.getOrElse(quadrant, 0.0)
 
-/** Turns the camera preview into the ~10 Hz signal the rep detector will run on.
+/** Turns the camera preview into the ~10 Hz signal the rep detector runs on.
   *
   * Each tick draws the current video frame into a deliberately tiny offscreen canvas and averages that instead of the
   * full frame: the browser downscales in hardware, so a sample costs a few thousand pixel reads rather than the best

@@ -457,10 +457,10 @@ class RepCounterSuite extends FunSuite:
     assertEquals(RepAnalysis.corroborated(Seq(10, 90), margin), None, "two channels far apart agree about nothing")
 
   test("speckle left behind when a set ends does not start counting"):
-    // The failure this exists for. The bar a peak must clear is the greater of the fixed floor and a multiple of the
-    // amplitude around it, and the second term cannot reject noise: a window holding only noise sets a bar that noise
-    // clears, since peaks routinely exceed one and a half times their own RMS. One recording gained eleven reps after
-    // its movement had stopped, as the bar decayed behind the departing set.
+    // The failure this exists for. The threshold a peak must clear is the greater of the fixed floor and a multiple of
+    // the amplitude around it, and the second term cannot reject noise: a window holding only noise sets a threshold
+    // that noise clears, since peaks routinely exceed one and a half times their own RMS. One recording gained eleven
+    // reps after its movement had stopped, as the threshold decayed behind the departing set.
     val settings = DetectorSettings()
     val reps = Seq(0.0, 20.0, 0.0, 20.0, 0.0, 20.0, 0.0, 20.0, 0.0, 20.0, 0.0)
     val afterwards = Seq(0.0, 6.0, 0.0, 6.0, 0.0, 6.0, 0.0)
@@ -476,7 +476,7 @@ class RepCounterSuite extends FunSuite:
     assertEquals(standing.size, 5, "every rep of the set must survive")
 
   test("a movement that dims as the lighting does is still counted"):
-    // The opposite failure, and the more dangerous one because it is silent: a bar anchored to what the scene used to
+    // The opposite failure, and the more dangerous one because it is silent: a threshold anchored to what the scene used to
     // look like ratchets out of reach as a room darkens and the count simply stops. Auto-exposure was measured moving
     // the amplitude by as much as forty per cent in ten seconds, so this is not hypothetical.
     val settings = DetectorSettings()

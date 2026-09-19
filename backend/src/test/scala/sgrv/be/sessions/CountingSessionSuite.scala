@@ -30,23 +30,25 @@ class CountingSessionSuite extends munit.FunSuite:
       )
     )
 
-  test("the id is a stable, opaque derivation of the session key"):
-    val id = CountingSessionListener.documentId("session-key")
+  test("the browser's identity is a stable, opaque derivation of its session key"):
+    val id = CountingSessionListener.browserSession("session-key")
 
-    assertEquals(id, CountingSessionListener.documentId("session-key"))
-    assertNotEquals(id, CountingSessionListener.documentId("another-key"))
+    assertEquals(id, CountingSessionListener.browserSession("session-key"))
+    assertNotEquals(id, CountingSessionListener.browserSession("another-key"))
     assertEquals(id.length, 64)
     assert(id.forall(character => character.isDigit || ('a' to 'f').contains(character)), id)
-    // The opaque session key must not be recoverable from, or present in, the derived id.
+    // The session key authenticates the browser; it must not be recoverable from, or present in, the derived id.
     assert(!id.contains("session-key"))
 
-  test("the contributor reports the id derived from the session cookie"):
+  test("the contributor reports the identity derived from the session cookie"):
     assertEquals(
       run(details.extras(context(Some("session-key")))),
-      Map(CountingSession.Key -> Json.Obj("sessionId" -> Json.Str(CountingSessionListener.documentId("session-key"))))
+      Map(
+        CountingSession.Key -> Json.Obj("sessionId" -> Json.Str(CountingSessionListener.browserSession("session-key")))
+      )
     )
 
-  test("no session cookie means no counting session is named"):
+  test("no session cookie means no identity is reported"):
     assertEquals(run(details.extras(context(None))), Map.empty[String, Json])
 
   test("a progress report is read from the body"):
@@ -63,12 +65,15 @@ class CountingSessionSuite extends munit.FunSuite:
   test("a negative total is rejected rather than clamped, since nothing legitimate produces one"):
     assertEquals(CountingSessionProgress.reps("""{"reps":-1}"""), Left("Negative rep count -1"))
 
-  test("the route writes to the session named by the cookie, not by the caller"):
-    // The document id is never accepted from the request body: it is derived from the browser's own session key,
-    // so a client can report its count without being able to choose whose count it is.
+  test("which device is reporting comes from its cookie, not from anything it says"):
+    // The identity the account's record is compared against is never accepted from the request body: it is derived
+    // from the browser's own session key, so a device cannot claim to be the counter it is not.
     val request = context(Some("session-key")).request
 
-    assertEquals(CountingSessionListener.documentId(request), Some(CountingSessionListener.documentId("session-key")))
+    assertEquals(
+      CountingSessionListener.browserSession(request),
+      Some(CountingSessionListener.browserSession("session-key"))
+    )
 
   test("the progress route is discovered on the classpath, and asks the host for Firestore"):
     // Discovery is a classpath scan, so a plugin can compile perfectly and still never be reached. Against a registry
@@ -82,8 +87,8 @@ class CountingSessionSuite extends munit.FunSuite:
     assertEquals(skipped, Some(Set("firestore", "session-store")))
 
   test("the presence route is discovered on the classpath"):
-    // What replaced the relay's own presence check. A device asks this before taking the counter's role, and a plugin
-    // that compiles but is never scanned would have every device believe the account was free.
+    // A device asks this before taking the counter's role, and a plugin that compiles but is never scanned would have
+    // every device believe the account was free.
     val statuses = run(RouteDiscovery.discover(CapabilityRegistry.empty))
 
     val skipped = statuses.collectFirst:
@@ -92,9 +97,9 @@ class CountingSessionSuite extends munit.FunSuite:
     assertEquals(skipped, Some(Set("firestore", "session-store")))
 
   test("the account's session is both asked about and taken on the same path"):
-    // Taking the role is what opens the account's session, and it used to be done by the relay's socket. When the
-    // relay went, nothing opened a session at all: every later request that needed one found none, which reached the
-    // frontend as an unauthorised report and signed people out about ten seconds after they had signed in.
+    // Taking the role is what opens the account's session. When nothing did, every later request that needed one
+    // found none, which reached the frontend as an unauthorised report and signed people out about ten seconds after
+    // they had signed in.
     val patterns = AcquirerPresenceRoute.routes.routes.map(_.routePattern)
 
     assert(patterns.exists(_.matches(Method.GET, Path(AcquirerPresence.Path))), "asked about")
@@ -126,8 +131,8 @@ class CountingSessionSuite extends munit.FunSuite:
     val huge = trace(samples = CountingSessionTrace.maximumSamplesPerChannel + 1)
 
     assert(CountingSessionTrace.parse(huge.toJson).isLeft)
-    // The buffer's own minute is comfortably inside the limit.
-    assert(CountingSessionTrace.parse(trace(samples = 600).toJson).isRight)
+    // The longest recording the app makes -- its whole six-minute buffer -- is inside the limit.
+    assert(CountingSessionTrace.parse(trace(samples = 3600).toJson).isRight)
 
   test("a nonsensical sample rate is refused, since a replay could not interpret it"):
     assert(CountingSessionTrace.parse(trace(rate = 0.0).toJson).isLeft)
@@ -149,15 +154,15 @@ class CountingSessionSuite extends munit.FunSuite:
     // it", which sent a diagnosis the wrong way for two rounds of testing.
     val carried = classOf[SignalTrace].getDeclaredFields.map(_.getName).toSet
     val stored = Set(
-      CountingSessionSchema.sampleRateHz,
-      CountingSessionSchema.samples,
-      CountingSessionSchema.reps,
-      CountingSessionSchema.lock,
-      CountingSessionSchema.note,
-      CountingSessionSchema.camera,
-      CountingSessionSchema.device,
-      CountingSessionSchema.controls,
-      CountingSessionSchema.controlsAtSample
+      TraceSchema.sampleRateHz,
+      TraceSchema.samples,
+      TraceSchema.reps,
+      TraceSchema.lock,
+      TraceSchema.note,
+      TraceSchema.camera,
+      TraceSchema.device,
+      TraceSchema.controls,
+      TraceSchema.controlsAtSample
     )
 
     assertEquals(carried -- stored, Set.empty[String], "a recording carries fields this store does not write")

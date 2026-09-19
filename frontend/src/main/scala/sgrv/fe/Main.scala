@@ -101,9 +101,10 @@ object Main:
 
     /** Raised while this device waits to be told whether to displace another one that is already counting.
       *
-      * One acquirer per account is enforced by the relay, which stands the older device down. That is the right outcome
-      * and the wrong way to arrive at it unannounced: on a bench with four handsets signed into one account, a phone
-      * that silently stopped counting looked like a phone that had crashed. So it is asked for first.
+      * One acquirer per account is enforced by the account's record: whichever device took the role last is named as
+      * the counter, and the one it replaced stands down when its next report is refused. That is the right outcome and
+      * the wrong way to arrive at it unannounced: on a bench with four handsets signed into one account, a phone that
+      * silently stopped counting looked like a phone that had crashed. So it is asked for first.
       */
     val takeoverPending = Var(false)
 
@@ -161,11 +162,6 @@ object Main:
           case Success(Left(details))   => dom.console.warn(s"Ignoring unreadable account settings: $details")
           case Failure(error) => dom.console.warn(s"Could not read the account settings: ${errorMessage(error)}")
 
-    /** Becomes the acquirer, asking first if the account already has one.
-      *
-      * The check can fail -- an offline device, a signed-out session -- and a failure here must not stand between
-      * someone and their camera, so it proceeds. The relay still guarantees there is only one.
-      */
     /** Where a fresh login lands: counting if the account has no counter, the choice of roles if it has.
       *
       * The check can fail -- an offline device, a session that has just expired -- and a failure must not stand between
@@ -182,6 +178,12 @@ object Main:
             accountCounting.set(false)
             show(Screen.Acquirer)
 
+    /** Becomes the acquirer, asking first if the account already has one.
+      *
+      * The check can fail -- an offline device, a signed-out session -- and a failure here must not stand between
+      * someone and their camera, so it proceeds. Taking the role is what settles it: there is only ever one counter,
+      * because the account's record names one.
+      */
     def acquireRole(): Unit =
       http
         .get(AcquirerPresence.Path)
@@ -268,12 +270,6 @@ object Main:
             val message = Option(error.getMessage).map(_.trim).filter(_.nonEmpty).getOrElse("The request failed.")
             stateStore.update(_.copy(logoutState = LogoutState.Failed(message)))
 
-    /** The menu for the screens that have no header of their own to hang one from.
-      *
-      * A menu rather than the row of links it replaces, so that every screen in the app opens the same sheet with the
-      * same entries in it. The two documents are why: whichever screen somebody happens to be on when they go looking
-      * for a privacy policy is the screen it has to be on.
-      */
     /** Removes everything the account holds, then signs out.
       *
       * Signing out afterwards because what is left otherwise is a session pointing at an account that no longer exists:
@@ -294,6 +290,12 @@ object Main:
           case Failure(error) =>
             stateStore.update(_.copy(logoutState = LogoutState.Failed(errorMessage(error))))
 
+    /** The menu for the screens that have no header of their own to hang one from: the role picker and the bench.
+      *
+      * A menu rather than the row of links it replaces, so that every screen in the app opens the same sheet with the
+      * same entries in it. The two documents are why: whichever screen somebody happens to be on when they go looking
+      * for a privacy policy is the screen it has to be on.
+      */
     def userActions: Element =
       val open = Var(false)
       div(
@@ -384,16 +386,6 @@ object Main:
         case Screen.Dashboard => dashboard()
         case Screen.Bench     => BenchView(http, () => show(Screen.Selection))
 
-    /** Watches the count arriving from whichever device is acquiring for this account.
-      *
-      * It holds no count of its own. Everything shown here is a copy of what the acquirer last said, and the two
-      * controls ask that device to do the things its own controls do rather than acting locally — so the acquirer stays
-      * the single authority on the tally, and a dashboard that has been away simply catches up.
-      *
-      * Laid out as a column of rows sized by their content, with the panel taking what is left. Nothing is positioned
-      * absolutely and no row has a fixed height, so a landscape arrangement later is a change of direction on the
-      * container rather than a rewrite.
-      */
     /** The account's workouts, newest first, and the throwing away of any one of them.
       *
       * Read when the panel opens rather than kept: a history is looked at occasionally and changes rarely, and a copy
@@ -450,7 +442,7 @@ object Main:
           failed.set(None)
           val document =
             WorkoutCsv.of(listed, accountSettings.now(), millis => new js.Date(millis).toISOString())
-          val blob = dom.Blob(js.Array(document), dom.BlobPropertyBag(`type` = "text/csv;charset=utf-8"))
+          val blob = dom.Blob(js.Array(document), new dom.BlobPropertyBag { `type` = "text/csv;charset=utf-8" })
           val address = dom.URL.createObjectURL(blob)
           val anchor = dom.document.createElement("a").asInstanceOf[dom.html.Anchor]
           anchor.href = address
@@ -840,6 +832,16 @@ object Main:
         )
       )
 
+    /** Watches the count arriving from whichever device is acquiring for this account.
+      *
+      * It holds no count of its own. Everything shown here is a copy of what the acquirer last said, and the two
+      * controls ask that device to do the things its own controls do rather than acting locally — so the acquirer stays
+      * the single authority on the tally, and a dashboard that has been away simply catches up.
+      *
+      * Laid out as a column of rows sized by their content, with the panel taking what is left. Nothing is positioned
+      * absolutely and no row has a fixed height, so a landscape arrangement later is a change of direction on the
+      * container rather than a rewrite.
+      */
     def dashboard(): Element =
       val menuOpen = Var(false)
       val live = Var(Option.empty[LiveState])
@@ -885,20 +887,18 @@ object Main:
       val caloriesAtBoundary =
         figure((_, minutes, calories, _, burn) => burn.flatMap(Effort.atBoundary(calories, _, minutes)), Effort.grouped)
 
-      /** Three situations that a single "waiting" would render identical, told apart.
+      /** What the link and the counter behind it are doing, in the counter's own words where it has any.
         *
-        * A dashboard whose own link is down, one connected to an account with nothing counting, and one connected to a
-        * device that has not yet found a cadence are different problems with different remedies, and only the last of
-        * them is the app working normally.
+        * Until a counting device answers there is no link, and that is also how an account with nothing counting looks
+        * from here: both say they are connecting. Once readings arrive, the counter's status line is repeated word for
+        * word, so the two screens cannot describe the same moment differently.
         */
       val status = live.signal
         .combineWith(connected.signal)
         .map:
-          case (_, false)                               => "Connecting…"
-          case (Some(LiveState(true, Some(latest))), _) => latest.status
-          case (Some(LiveState(true, None)), _)         => "Waiting for the first rep"
-          case (Some(LiveState(false, _)), _)           => "No device is counting yet"
-          case (None, _)                                => StatusLine.Waiting
+          case (_, false)                            => "Connecting…"
+          case (Some(LiveState(_, Some(latest))), _) => latest.status
+          case _                                     => StatusLine.Waiting
 
       def readUpdate(text: String): Unit =
         text.fromJson[LiveState] match
@@ -1117,12 +1117,6 @@ object Main:
         element.setAttribute("playsinline", "")
         element.setAttribute("webkit-playsinline", "")
 
-      // Measured rather than assumed: if the sampling loop stalls, the reading drops instead of the view claiming
-      // a rate it is not achieving.
-      val measuredHz = Var(Option.empty[Double])
-      var firstSampleAt = Option.empty[Double]
-      var sampleCount = 0
-
       var lastPublished = Option.empty[LiveReading]
 
       /** Sends a reading only when it says something new.
@@ -1180,17 +1174,9 @@ object Main:
         signalMargin.set(reading.margin)
         publish()
         tick.update(_ + 1)
-        sampleCount += 1
-        firstSampleAt match
-          case None        => firstSampleAt = Some(sample.atMillis)
-          case Some(start) =>
-            val elapsed = sample.atMillis - start
-            if elapsed > 0 then measuredHz.set(Some((sampleCount - 1) * 1000.0 / elapsed))
 
-      /** Zeroes the tally without disturbing the detection behind it. Reached from this device's own control and from a
-        * watching one, which must mean the same thing on both.
-        */
-      /** Starts counting over from nothing: the tally, the detector, and the signal behind them.
+      /** Starts counting over from nothing: the tally, the detector, and the signal behind them. Reached from this
+        * device's own control and from a watching one, which must mean the same thing on both.
         *
         * A full wipe rather than a zeroed tally. The button exists to discard what accrued while the user was getting
         * into position, and leaving the buffer would keep that movement working against them twice over -- its peaks
@@ -1237,7 +1223,7 @@ object Main:
           )
         else capture.set(CaptureState.Failed("nothing recorded yet"))
 
-      /** Carries readings out to whatever is watching, and the two commands back.
+      /** Acts on what a watching device asks: a reset, or a recording of the signal.
         *
         * The acquirer is the authority throughout: a command is a request to do the same thing this device's own
         * controls do, not a way to set the count from outside.
@@ -1246,12 +1232,7 @@ object Main:
         text.fromJson[LiveCommand] match
           case Right(LiveCommand.Reset)              => resetCount()
           case Right(LiveCommand.CaptureTrace(note)) => captureTrace(note)
-          case Right(LiveCommand.Displaced)          =>
-            // Another device has taken the role. Leaving this screen is what releases the camera; staying would
-            // leave a phone counting into a room it no longer owns, with its own tally still climbing on screen.
-            dom.console.info("Another device is now counting for this account; standing down")
-            show(Screen.Selection)
-          case Left(details) => dom.console.warn(s"Ignoring an unreadable command: $details")
+          case Left(details)                         => dom.console.warn(s"Ignoring an unreadable command: $details")
 
       /** The counting end of the direct link. It answers offers rather than making them: a counter with nobody watching
         * has nothing to offer, and a watcher appearing is what starts the exchange.
@@ -1261,7 +1242,8 @@ object Main:
         PeerRole.Counter,
         obey,
         onOpen = () => dom.console.info("A watching device is reading the count directly"),
-        onClosed = () => dom.console.info("The direct link closed; readings go back over the relay")
+        onClosed =
+          () => dom.console.info("The direct link closed; nothing reads the count until a watcher offers again")
       )
 
       def release(): Unit =
@@ -1274,9 +1256,6 @@ object Main:
         // can keep the camera powered and its indicator lit after the view has gone. Letting go of it here is what
         // actually turns the camera off.
         Camera.detach(video.ref)
-        firstSampleAt = None
-        sampleCount = 0
-        measuredHz.set(None)
         signals.clear()
         restOffsets.set(Map.empty)
         // Detection starts over from nothing, but what was already counted stands: switching cameras mid-set is a
@@ -1826,12 +1805,11 @@ object Main:
 
     renderOnDomContentLoaded(dom.document.body, app)
 
-  /** What `/me` told us: who is signed in, and whichever counting session the backend filed alongside them. */
+  /** What `/me` told us: who is signed in, and the identity the backend knows this browser's session by. */
   private[fe] final case class MeResult(user: UserState, countingSessionId: Option[String])
 
-  private def parseUser(
-      json: String
-  ): MeResult = // Extract the user's name from the Google account. Default to the email address if the name is not available.
+  /** Reads `/me`: the name comes from the Google account, and falls back to the email address when it has none. */
+  private def parseUser(json: String): MeResult =
     json
       .fromJson[CurrentUser]
       .fold(

@@ -12,7 +12,7 @@ class SampleQueueSuite extends FunSuite:
     assert(QuadrantSignals.Recorded > QuadrantSignals.DetectionWindow, "keeping less than is analysed makes no sense")
 
   test("the window still holds enough slow reps to be counted"):
-    // The window was shortened so the prominence bar stops carrying stale history. The limit on how far it can go is
+    // The window was shortened so the prominence threshold stops carrying stale history. The limit on how far it can go is
     // the sustained-movement rule: after the filter's settling samples are dropped, what is left must still hold the
     // peaks that rule demands, at the slowest cadence the band-pass admits. Asserted rather than assumed, so the two
     // cannot be tuned apart.

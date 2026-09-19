@@ -20,5 +20,5 @@ private[fe] object StatusLine:
     case LockState.Locked(_, _, periodSeconds) =>
       f"Counting · $periodSeconds%.1fs/rep"
 
-  /** What a watching device shows before its first reading arrives, or once the acquirer has gone away. */
+  /** What a watching device shows once its link is open and before the first reading has arrived over it. */
   val Waiting = "Waiting for the acquirer…"

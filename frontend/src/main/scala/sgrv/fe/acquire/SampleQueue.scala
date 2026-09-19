@@ -56,12 +56,12 @@ private[fe] final class QuadrantSignals(val capacity: Int = QuadrantSignals.Reco
 private[fe] object QuadrantSignals:
   /** How much of the signal the detector reasons over: fifteen seconds at the 10 Hz sampling rate.
     *
-    * This window sets the bar as well as finding the peaks. The prominence threshold scales with the window's own
-    * activity, so a minute-long window carried a whole minute of history into that bar: the last rep of a set went
-    * uncounted for twenty to thirty seconds, waiting for the movement that preceded it to age out, and a test that
-    * followed a stronger one spent its first half-minute failing to clear a threshold set by the previous test.
-    * Measured against real recordings, fifteen seconds brought that delay down to seven and eleven seconds with the
-    * counts unchanged at exactly a hundred.
+    * This window sets the threshold as well as finding the peaks. The prominence threshold scales with the window's own
+    * activity, so a minute-long window carried a whole minute of history into it: the last rep of a set went uncounted
+    * for twenty to thirty seconds, waiting for the movement that preceded it to age out, and a test that followed a
+    * stronger one spent its first half-minute failing to clear a threshold set by the previous test. Measured against
+    * real recordings, fifteen seconds brought that delay down to seven and eleven seconds with the counts unchanged at
+    * exactly a hundred.
     *
     * The floor under it is the sustained-movement rule: five peaks are needed before anything counts, and after the
     * filter's settling samples are dropped this window holds about six cycles of the slowest cadence the band admits.

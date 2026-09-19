@@ -16,8 +16,8 @@ import zio.json.*
   * counting device's requests happen to reach.
   *
   * Taking the role lives here too, on the same path, because the two are one question asked twice — who is counting,
-  * and let it be this device. It used to be done by the relay's socket, and when the relay went the taking went with
-  * it: nothing opened the account's session any more, so every later request that needed one found none.
+  * and let it be this device. It is also what opens the account's session when it has none: every later request that
+  * writes to a session -- a progress report, a recording, a pairing message -- needs one to have been opened here.
   */
 object AcquirerPresenceRoute extends BackendPlugin:
   type Requires = Firestore & SessionStore
@@ -55,7 +55,7 @@ object AcquirerPresenceRoute extends BackendPlugin:
   private def take(request: Request): ZIO[Requires & RequestContext, Nothing, Response] =
     ZIO.serviceWithZIO[RequestContext]:
       case RequestContext.Authenticated(_, user) =>
-        CountingSessionListener.documentId(request) match
+        CountingSessionListener.browserSession(request) match
           // Unreachable while the request is authenticated, since authentication is the cookie; answered rather than
           // assumed away, because opening no record is the one outcome that must not look like success.
           case None =>
@@ -78,7 +78,7 @@ object AcquirerPresenceRoute extends BackendPlugin:
             for
               keeper <- AccountSessions.store(firestore)
               now <- Clock.instant
-              session <- keeper.takeCounting(named, email, browserSession, now)
+              session <- keeper.takeCounting(named, browserSession, now)
               _ <- ZIO.logInfo(s"Counting for $email in session $session")
             yield noStore(Response.status(Status.NoContent))
       yield response

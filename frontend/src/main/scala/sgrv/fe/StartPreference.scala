@@ -6,14 +6,14 @@ import scala.util.control.NonFatal
 
 /** Which screen a device opens on, when its owner has said.
   *
-  * A tablet propped by the stair climber is a dashboard and nothing else, and making it pick "Dashboard" from the
-  * role screen at every start is a tap nobody needs. So a device can be told to default to the dashboard, and it
-  * remembers that in its own storage: this is a fact about the device, not about the account, and the phone signed
-  * into the same account must go on opening its camera.
+  * A tablet propped by the stair climber is a dashboard and nothing else, and making it pick "Dashboard" from the role
+  * screen at every start is a tap nobody needs. So a device can be told to default to the dashboard, and it remembers
+  * that in its own storage: this is a fact about the device, not about the account, and the phone signed into the same
+  * account must go on opening its camera.
   *
-  * The rest of the start-up rules are untouched. Without a preference a device does what it always did -- a fresh
-  * login goes to the counter when nothing is counting, and a device returning after a reload takes up the role it
-  * already held, which is what keeps a counting phone counting when its page is reloaded mid-set.
+  * The rest of the start-up rules are untouched. Without a preference a device does what it always did -- a fresh login
+  * goes to the counter when nothing is counting, and a device returning after a reload takes up the role it already
+  * held, which is what keeps a counting phone counting when its page is reloaded mid-set.
   */
 private[fe] object StartPreference:
 

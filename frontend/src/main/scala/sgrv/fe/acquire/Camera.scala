@@ -15,7 +15,6 @@ private[fe] enum CameraState:
   case Streaming(width: Int, height: Int)
   case Unavailable(message: String)
 
-/** A camera control that can be held still, paired with the setting that says where to hold it. */
 /** One camera control that can be taken off automatic, and every value that has to be supplied once it is.
   *
   * More than one value per mode, because they do not come apart. Switching the exposure to manual stops the camera
@@ -524,7 +523,7 @@ private[fe] object Camera:
     dom.window.setTimeout(() => settled.success(()), millis.toDouble)
     settled.future
 
-  /** Brings the frame down to the pixel budget without narrowing what it shows.
+  /** Brings the frame down to the smallest size that still meets the pixel floor, without narrowing what it shows.
     *
     * The camera opened on its widest mode, which is more pixels than the detector can use and more than a phone can
     * decode all session without heating; but reducing the size means asking again, and asking again lets the browser

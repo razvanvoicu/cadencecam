@@ -63,11 +63,12 @@ private[fe] final case class TestCase(figure: Figure, palette: Palette, cadence:
 private[fe] object TestPlan:
   /** How long to keep listening after the movement stops.
     *
-    * The detector confirms a peak from samples that follow it, and reports over a socket, so the last rep of a set
-    * arrives after the set has ended. Ending a test the moment the animation stops would score that as a miss.
+    * The detector confirms a peak from samples that follow it, and its reading then travels to the bench, so the last
+    * rep of a set arrives after the set has ended. Ending a test the moment the animation stops would score that as a
+    * miss.
     *
-    * Fifteen, down from thirty. The window the prominence bar is drawn from is fifteen seconds now, so a peak that has
-    * not been admitted within that has not been held back by the set that preceded it; it is not coming.
+    * Fifteen, down from thirty. The window the prominence threshold is drawn from is fifteen seconds now, so a peak
+    * that has not been admitted within that has not been held back by the set that preceded it; it is not coming.
     */
   val PauseSeconds = 15
 

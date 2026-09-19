@@ -69,8 +69,8 @@ private[sessions] final class DiscardedRuns(firestore: Firestore):
             counts <- ZIO.foreach(found.getDocuments.asScala.toSeq): workout =>
               val traces = workout.getReference
                 .collection(AccountSchema.traces)
-                .whereGreaterThanOrEqualTo(CountingSessionSchema.note, prefix)
-                .whereLessThan(CountingSessionSchema.note, prefix + HighestCharacter)
+                .whereGreaterThanOrEqualTo(TraceSchema.note, prefix)
+                .whereLessThan(TraceSchema.note, prefix + HighestCharacter)
               GoogleFuture.fromApiFuture(traces.get()).flatMap(hits => delete(hits.getDocuments.asScala.toSeq))
           yield counts.sum
 

@@ -53,11 +53,12 @@ final case class LiveReading(
 object LiveReading:
   given JsonCodec[LiveReading] = DeriveJsonCodec.gen[LiveReading]
 
-/** What a watching device is told: whether anything is counting for this account, and the last thing it said.
+/** What a watching device is told over its direct link to the counter: that something is counting, and the last thing
+  * it said.
   *
-  * Presence travels separately from the reading because the two answer different questions, and a dashboard that cannot
-  * tell them apart can only say "waiting" to both — which is what it says when its own socket is down as well, leaving
-  * three quite different situations looking identical.
+  * Only a counting device sends this, so `acquiring` is true in everything that arrives. A watcher on an account with
+  * nothing counting has no link to hear anything over, and says it is connecting. The field stays because both ends
+  * refuse a shape they do not know, and a dashboard and a counter on different builds must still understand each other.
   */
 @jsonNoExtraFields
 final case class LiveState(acquiring: Boolean, reading: Option[LiveReading] = None)
@@ -72,15 +73,6 @@ object LiveState:
   */
 enum LiveCommand:
   case Reset
-
-  /** Stand down: another device has taken over counting for this account.
-    *
-    * The one message on this channel the server sends of its own accord rather than relaying from a dashboard. A
-    * displaced acquirer used to have its socket closed under it and carry on regardless -- still showing a count, and
-    * still holding the camera -- which on a desk full of phones is how two devices end up counting the same set and
-    * neither of them says so.
-    */
-  case Displaced
 
   /** `note` says who asked and why, and ends up on the recording itself.
     *
@@ -149,10 +141,10 @@ object PeerRole:
 
 /** One step of the exchange two browsers need before they can talk to each other directly.
   *
-  * Carried through storage rather than through the relay, which is the whole point: the two devices must find each
-  * other without landing in the same server process, and a document they both read does not care which instance served
-  * either request. Once the link is up, readings go straight from one browser to the other and the server is out of the
-  * path entirely.
+  * Carried through storage rather than held in a server's memory, which is the whole point: the two devices must find
+  * each other without landing in the same server process, and a document they both read does not care which instance
+  * served either request. Once the link is up, readings go straight from one browser to the other and the server is out
+  * of the path entirely.
   *
   * The body is opaque here -- an offer, an answer or a candidate, as the browser produced it. Nothing on the server
   * reads it; it files it and hands it to the other end.

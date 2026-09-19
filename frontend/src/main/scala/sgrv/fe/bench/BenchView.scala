@@ -17,8 +17,9 @@ import scala.scalajs.js
   * rep count is exact by construction, and compares the detector's answer against it continuously rather than only at
   * the end.
   *
-  * To the backend it is an ordinary dashboard: it watches the same readings and sends the same commands. It runs on a
-  * desktop screen with the acquiring device on a tripod pointed at the canvas.
+  * To the counting device it is an ordinary dashboard: it watches the same readings over the same kind of direct link,
+  * and sends the same commands. It runs on a desktop screen with the acquiring device on a tripod pointed at the
+  * canvas. The app offers it only when the address bar ends in `#test`.
   */
 private[fe] object BenchView:
 
@@ -96,7 +97,7 @@ private[fe] object BenchView:
         onClosed = () => connected.set(false)
       )
 
-    /** Asks the counting device to do something, by whichever path exists. */
+    /** Asks the counting device to do something, over the direct link. Lost if the link is down, as any command is. */
     def instruct(command: LiveCommand): Unit =
       val _ = peer.send(command.toJson)
 

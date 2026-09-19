@@ -52,8 +52,8 @@ private[fe] object PeakDetector:
 
   /** Accepted peaks with how far each stood out, which the selection has already worked out.
     *
-    * Returned rather than recomputed: how far a movement stands above the bar it has to clear is worth reporting to the
-    * user, and asking for it again would mean walking the series once more for every peak.
+    * Returned rather than recomputed: how far a movement stands above the threshold it has to clear is worth reporting
+    * to the user, and asking for it again would mean walking the series once more for every peak.
     */
   def measured(
       samples: Seq[Double],
@@ -95,7 +95,7 @@ private[fe] object PeakDetector:
     * The scale is the movement's own. How far a rep falls depends on contrast, framing and distance, none of which are
     * known in advance; how far this peak fell against how far the others did is comparable across all of them. In those
     * recordings every real rep came back at least a third as far as the typical one, and every phantom less than a
-    * seventh -- so the bar sits between, and nearer the phantoms.
+    * seventh -- so the threshold sits between, and nearer the phantoms.
     */
   private[acquire] def returning(
       samples: Seq[Double],

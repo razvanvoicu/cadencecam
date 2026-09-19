@@ -9,11 +9,14 @@ import java.time.Duration
 import scala.jdk.CollectionConverters.*
 import scala.util.Using
 
-/** Exercises what only a signed-in session can reach — the role-selection funnel and the About modal — against the real
-  * backend, attaching to the visible Chrome instance `e2etest/launchTestBrowser` leaves running rather than launching a
-  * fresh, signed-out one. Requires having already signed in by hand in that window first (see `launchTestBrowser`'s
-  * instructions) — Google blocks WebDriver-controlled browsers from driving its login form directly. Run via
-  * `e2etest/testAuthenticated`, not `e2etest/test`.
+/** Exercises what only a signed-in session can reach -- the menu's About panel, and the walk in and out of each role --
+  * against the real backend, attaching to the visible Chrome instance `e2etest/launchTestBrowser` leaves running rather
+  * than launching a fresh, signed-out one. Requires having already signed in by hand in that window first (see
+  * `launchTestBrowser`'s instructions) — Google blocks WebDriver-controlled browsers from driving its login form
+  * directly. Run via `e2etest/testAuthenticated`, not `e2etest/test`.
+  *
+  * Entering the counter's role is real: it takes the role for the signed-in account, from any other device holding it,
+  * and opens a workout in that account's history, exactly as a phone would.
   */
 class SignedInE2ESuite extends munit.FunSuite:
   private val baseUrl = sys.props
@@ -50,33 +53,85 @@ class SignedInE2ESuite extends munit.FunSuite:
     driver.get(baseUrl)
     new WebDriverWait(driver, Duration.ofSeconds(20))
 
-  test("the About link opens authenticated build information in a modal"):
+  /** Waits for a screen to be drawn: the role picker, or one of the roles. A signed-in browser returns to whichever it
+    * was last on, and nothing is there until `/me` has answered.
+    */
+  private def settled(wait: WebDriverWait): Unit =
+    val _ = wait.until(ExpectedConditions.presenceOfElementLocated(By.cssSelector(".selection, .screen")))
+
+  /** Opens the current screen's menu and chooses an entry by its label. Every screen carries exactly one menu. */
+  private def choose(wait: WebDriverWait, entry: String): Unit =
+    wait.until(ExpectedConditions.elementToBeClickable(By.cssSelector(".menu-button"))).click()
+    val sheet = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(".menu-sheet.open")))
+    sheet
+      .findElements(By.cssSelector(".menu-item"))
+      .asScala
+      .find(_.getText == entry)
+      .getOrElse(fail(s"No '$entry' in the menu"))
+      .click()
+
+  private def rolePicker(wait: WebDriverWait): Unit =
+    val _ = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(".mode-choices")))
+
+  test("the menu's About opens the build information, and says who is signed in"):
     val wait = load()
+    settled(wait)
 
-    assertEquals(driver.findElement(By.cssSelector(".logout-link")).getText, "Logout")
-    wait.until(ExpectedConditions.elementToBeClickable(By.cssSelector(".about-link"))).click()
-    val dialog = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(".about-dialog")))
-    val labels = dialog.findElements(By.cssSelector(".about-details dt")).asScala.map(_.getText).toSeq
-    val values = dialog.findElements(By.cssSelector(".about-details dd")).asScala.map(_.getText).toSeq
+    choose(wait, "About")
+    // Seven once the build information has arrived: the account is shown at once, the rest when it is fetched.
+    val labels = wait
+      .until(ExpectedConditions.numberOfElementsToBe(By.cssSelector(".about-dialog .about-details dt"), 7))
+      .asScala
+      .map(_.getText)
+      .toSeq
+    val values = driver.findElements(By.cssSelector(".about-dialog .about-details dd")).asScala.map(_.getText).toSeq
 
-    assertEquals(labels, Seq("App version", "Build date", "Build OS", "Scala version", "Scala.js version"))
+    assertEquals(
+      labels,
+      Seq(
+        "Signed in as",
+        "App version",
+        "Build date",
+        "Build OS",
+        "Scala version",
+        "Scala.js version",
+        "Frontend build"
+      )
+    )
     assertEquals(values.size, labels.size)
     values.foreach(value => assert(value.nonEmpty))
-    dialog.findElement(By.cssSelector(".about-close")).click()
+    driver.findElement(By.cssSelector(".about-dialog .about-close")).click()
 
-  test("a signed-in session lands on the role selection and can enter and leave each role"):
+  test("a signed-in session can enter and leave each role from the role picker"):
     val wait = load()
+    settled(wait)
+    if driver.findElements(By.cssSelector(".mode-choices")).isEmpty then choose(wait, "Back")
+    rolePicker(wait)
 
-    val choices = wait
+    val titles = wait
       .until(ExpectedConditions.numberOfElementsToBe(By.cssSelector(".mode-choices .mode-button"), 2))
       .asScala
+      .map(_.findElement(By.cssSelector(".mode-title")).getText)
       .toSeq
-    assertEquals(choices.map(_.findElement(By.cssSelector(".mode-title")).getText), Seq("Signal acquirer", "Dashboard"))
+    // The counter's choice is worded by whether the account already has another device counting.
+    assert(Set("Counter", "Take over counting").contains(titles.head), titles.head)
+    assertEquals(titles(1), "Dashboard")
 
-    Seq(".mode-acquirer" -> "Signal acquirer", ".mode-dashboard" -> "Dashboard").foreach { case (choice, heading) =>
-      wait.until(ExpectedConditions.elementToBeClickable(By.cssSelector(choice))).click()
-      val screen = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(".screen")))
-      assertEquals(screen.findElement(By.cssSelector(".screen-title")).getText, heading)
-      screen.findElement(By.cssSelector(".back-button")).click()
-      wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(".mode-choices")))
-    }
+    wait.until(ExpectedConditions.elementToBeClickable(By.cssSelector(".mode-dashboard"))).click()
+    wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(".screen.dashboard")))
+    choose(wait, "Back")
+    rolePicker(wait)
+
+    wait.until(ExpectedConditions.elementToBeClickable(By.cssSelector(".mode-acquirer"))).click()
+    wait.until(
+      ExpectedConditions.or(
+        ExpectedConditions.visibilityOfElementLocated(By.cssSelector(".screen.acquirer")),
+        ExpectedConditions.visibilityOfElementLocated(By.cssSelector(".takeover-dialog"))
+      )
+    )
+    // Asked first when another device is counting for the account; taking over is what the role walk is testing.
+    driver.findElements(By.cssSelector(".takeover-dialog .mode-button")).asScala.headOption.foreach(_.click())
+    val counter = wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(".screen.acquirer")))
+    assertEquals(counter.findElement(By.cssSelector(".screen-title")).getText, "Counter")
+    choose(wait, "Back")
+    rolePicker(wait)

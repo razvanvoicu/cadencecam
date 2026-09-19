@@ -28,7 +28,11 @@ final case class AboutInfo(
 object AboutInfo:
   given JsonCodec[AboutInfo] = DeriveJsonCodec.gen[AboutInfo]
 
-/** What the backend's counting-session contributor files under its key in [[CurrentUser.extra]]. */
+/** What the backend's counting-session contributor files under its key in [[CurrentUser.extra]].
+  *
+  * `sessionId` is a digest of the browser's session cookie: the identity the backend knows this browser by, and the
+  * value the account's record names as its counter while this browser is counting. Not the id of a workout.
+  */
 @jsonNoExtraFields
 final case class CountingSession(sessionId: String)
 
@@ -37,10 +41,10 @@ object CountingSession:
   val Key = "counting-session"
   given JsonCodec[CountingSession] = DeriveJsonCodec.gen[CountingSession]
 
-/** How far the acquirer has counted, reported periodically into its counting session.
+/** What the counting device has measured so far, reported every ten seconds into the account's session.
   *
-  * Only the total: which device counted it, and whether a second acquirer should carry on from it, are questions the
-  * dashboard will need answered but this record does not yet decide.
+  * Which device sent it is not part of the report: the backend knows that from the session cookie, and refuses a report
+  * from any device but the one the account's record names as its counter.
   */
 @jsonNoExtraFields
 final case class RepProgress(
