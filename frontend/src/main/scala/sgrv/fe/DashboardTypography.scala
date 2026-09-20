@@ -12,16 +12,18 @@ private[fe] object DashboardTypography:
   private val LabelSelector = ".dashboard .screen-title, .clock-value, .figure-label, .footnote-label"
   private val SecondaryValueSelector = ".footnote-value"
   private val CompactSelector =
-    ".clock-value, .figure-label, .footnote-label, .footnote-value, .figure-value"
+    ".dashboard .screen-title, .clock-value, .figure-label, .footnote-label, .footnote-value, .figure-value"
   private val MeasuringSizeVw = 1.0
   private val BreathingRoom = 0.94
   private val DetailRatio = 0.6
   private val LabelCardHeightRatio = 0.10
   private val SecondaryValueCardHeightRatio = 0.14
   private val CompactBreakpoint = 768.0
-  private val CompactFootnoteLabelRatio = 0.8
-  private val CompactSecondaryValueRatio = 1.8
   private val CompactFigureRatio = 6.0
+  private val CompactTitleRatio = 1.4
+  private val CompactClockRatio = CompactFigureRatio / 2.0
+  private val CompactFootnoteLabelRatio = 1.0
+  private val CompactSecondaryValueRatio = CompactFigureRatio / 2.0
   private val CompactFigureCardHeightRatio = 0.44
 
   def fit(root: dom.html.Element): Unit =
@@ -34,6 +36,8 @@ private[fe] object DashboardTypography:
   private def fitWide(root: dom.html.Element): Unit =
     root.style.setProperty("--dashboard-label-size", s"${MeasuringSizeVw}vw")
     root.style.setProperty("--dashboard-secondary-value-size", s"${MeasuringSizeVw}vw")
+    root.style.removeProperty("--dashboard-title-size")
+    root.style.removeProperty("--dashboard-clock-size")
     root.style.removeProperty("--dashboard-footnote-label-size")
     root.style.removeProperty("--dashboard-figure-size")
 
@@ -69,6 +73,8 @@ private[fe] object DashboardTypography:
 
   private def setCompactSizes(root: dom.html.Element, baseVw: Double): Unit =
     root.style.setProperty("--dashboard-label-size", cssVw(baseVw))
+    root.style.setProperty("--dashboard-title-size", cssVw(baseVw * CompactTitleRatio))
+    root.style.setProperty("--dashboard-clock-size", cssVw(baseVw * CompactClockRatio))
     root.style.setProperty("--dashboard-footnote-label-size", cssVw(baseVw * CompactFootnoteLabelRatio))
     root.style.setProperty("--dashboard-secondary-value-size", cssVw(baseVw * CompactSecondaryValueRatio))
     root.style.setProperty("--dashboard-detail-size", cssVw(baseVw * DetailRatio))
