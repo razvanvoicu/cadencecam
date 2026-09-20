@@ -402,6 +402,11 @@ button,
   --dash-muted: #798887;
   --dash-reps: #e8b04b;
   --dash-calories: #5ec8d8;
+  /* Replaced at runtime with the smallest single-line fit across every member of each group. The fallback is itself
+     viewport-relative so the dashboard never falls back to a device-dependent fixed text size. */
+  --dashboard-label-size: 2vw;
+  --dashboard-value-size: 4vw;
+  --dashboard-detail-size: 1.2vw;
 }
 
 .screen.dashboard {
@@ -417,9 +422,9 @@ button,
 }
 
 .dashboard-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 32vw);
   align-items: flex-start;
-  justify-content: space-between;
   gap: 1rem;
 }
 
@@ -431,7 +436,9 @@ button,
 }
 
 .dashboard .screen-title {
-  font-size: 1.05rem;
+  display: block;
+  width: 100%;
+  font-size: var(--dashboard-label-size);
   font-weight: 500;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -443,19 +450,25 @@ button,
 
 .dashboard-basis {
   color: var(--dash-muted);
-  font-size: 0.8rem;
+  font-size: var(--dashboard-detail-size);
+  white-space: nowrap;
 }
 
 .dashboard-clock {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.75rem;
 }
 
 .clock-value {
+  display: block;
+  width: 100%;
   color: var(--dash-fg);
-  font-size: 1.15rem;
+  font-size: var(--dashboard-label-size);
   font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
 }
 
 /* Two cards, side by side when there is width for them and stacked when there is not. The dashboard runs on a tablet
@@ -493,10 +506,13 @@ button,
 }
 
 .figure-label {
+  display: block;
+  width: 100%;
   color: var(--dash-muted);
   font-weight: 500;
   letter-spacing: 0.2em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 /* Sized from the viewport rather than in rem: the whole point of this screen is to be legible from further away than
@@ -509,14 +525,14 @@ button,
   justify-content: center;
   flex: 1;
   min-height: 0;
-  font-size: clamp(4rem, 17vmin, 13rem);
-  /* Second, so a browser that does not know container units keeps the line above. */
-  font-size: min(clamp(4rem, 18vmin, 13rem), 20cqi);
+  width: 100%;
+  font-size: var(--dashboard-value-size);
   font-weight: 300;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.03em;
   line-height: 1.02;
   text-align: center;
+  white-space: nowrap;
 }
 
 .reps-card .figure-value {
@@ -549,24 +565,36 @@ button,
 }
 
 .footnote-label {
+  display: block;
+  width: 100%;
   color: var(--dash-muted);
   font-weight: 500;
   letter-spacing: 0.14em;
   line-height: 1.1;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .figure-label,
-.footnote-label,
+.footnote-label {
+  font-size: var(--dashboard-label-size);
+}
+
 .footnote-value {
-  /* Every word and qualifying figure in a card is read from the same distance as its headline. Keep all of them at
-     half the headline's scale instead of leaving the labels as fine print. */
-  font-size: clamp(2rem, 8.5vmin, 6.5rem);
-  /* As with the headline, the card's width is the final limit. Both terms are exactly half of its corresponding
-     headline term, so the relationship survives changes in viewport shape and card layout. */
-  font-size: min(clamp(2rem, 9vmin, 6.5rem), 10cqi);
+  display: block;
+  width: 100%;
+  font-size: var(--dashboard-value-size);
   font-weight: 300;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.reps-card .footnote-value {
+  color: var(--dash-reps);
+}
+
+.calories-card .footnote-value {
+  color: var(--dash-calories);
 }
 
 .dashboard-status {
@@ -579,12 +607,18 @@ button,
 .dashboard-status .lock-state {
   margin: 0;
   color: var(--dash-muted);
+  font-size: var(--dashboard-detail-size);
   text-align: center;
 }
 
 .dashboard .reset-button {
   border-color: var(--dash-line);
   color: var(--dash-fg);
+  font-size: var(--dashboard-label-size);
+}
+
+.dashboard .menu-button {
+  font-size: var(--dashboard-label-size);
 }
 
 /* The bench is the one screen built for a desktop in landscape: the canvas is what a camera on a tripod frames, so

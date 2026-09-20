@@ -4,6 +4,8 @@ import com.raquo.laminar.api.L.*
 import org.scalajs.dom
 import sgrv.api.{CountsBy, LiveCommand}
 
+import scala.scalajs.js
+
 /** The dashboard that watches whichever device is acquiring for this account.
   *
   * It holds no count of its own. Everything shown here is a copy of what the acquirer last said, and the two controls
@@ -66,6 +68,23 @@ private[fe] object DashboardView:
 
     def menuItem(label: String, act: () => Unit): Element = Menu.item(menuOpen, label, act)
 
+    var typographyFrame = Option.empty[Int]
+    var typographyRoot = Option.empty[dom.html.Element]
+
+    def scheduleTypography(): Unit =
+      typographyFrame.foreach(dom.window.cancelAnimationFrame)
+      typographyFrame = Some(
+        dom.window.requestAnimationFrame: _ =>
+          typographyFrame = None
+          typographyRoot.foreach(DashboardTypography.fit)
+      )
+
+    val resizeListener: js.Function1[dom.Event, Unit] = _ => scheduleTypography()
+
+    val typographyInputs = figures
+      .combineWith(boundary, settingsPanel.settings.signal)
+      .combineWith(controller.elapsedSeconds)
+
     /** One of the two cards: a headline figure, and the two smaller ones that qualify it.
       *
       * The pair below is always the rate and the projection, in that order, on both cards -- so the eye learns the
@@ -100,15 +119,25 @@ private[fe] object DashboardView:
     // Laid out as a column of rows sized by their content, with the panel taking what is left. Nothing is positioned
     // absolutely and no row has a fixed height, so a landscape arrangement later is a change of direction on the
     // container rather than a rewrite.
-    div(
+    lazy val dashboardRoot: HtmlElement = div(
       cls := "dashboard-view",
+      typographyInputs --> (_ => scheduleTypography()),
       onMountCallback { _ =>
+        typographyRoot = Some(dashboardRoot.ref)
         controller.connect()
         // Read again on arrival as well as at login: a tablet left on this screen overnight is signed in from a session
         // it has not re-established, and the settings may have been changed from the phone in the meantime.
         settingsPanel.load()
+        dom.window.addEventListener("resize", resizeListener)
+        scheduleTypography()
       },
-      onUnmountCallback(_ => controller.close()),
+      onUnmountCallback { _ =>
+        controller.close()
+        dom.window.removeEventListener("resize", resizeListener)
+        typographyFrame.foreach(dom.window.cancelAnimationFrame)
+        typographyFrame = None
+        typographyRoot = None
+      },
       div(
         cls := "screen dashboard",
         div(
@@ -173,3 +202,5 @@ private[fe] object DashboardView:
         )
       )
     )
+
+    dashboardRoot
