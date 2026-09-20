@@ -108,13 +108,16 @@ private[fe] final class HistoryPanel(api: ApiClient):
           cls := "workout-figures",
           span(
             cls := "workout-figure",
-            child.text <-- updates.map(_.reps.toString),
+            span(cls := "workout-amount", child.text <-- updates.map(_.reps.toString)),
             span(cls := "workout-unit", "reps")
           ),
           span(
             cls := "workout-figure",
-            child.text <-- updates
-              .map(_.snapshot.fold(Effort.Absent)(saved => Effort.decimal(saved.calories))),
+            span(
+              cls := "workout-amount",
+              child.text <-- updates
+                .map(_.snapshot.fold(Effort.Absent)(saved => Effort.decimal(saved.calories)))
+            ),
             span(cls := "workout-unit", "cal")
           )
         ),

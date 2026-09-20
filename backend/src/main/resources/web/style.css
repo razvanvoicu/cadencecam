@@ -1948,7 +1948,7 @@ button,
   grid-column: 2;
   grid-row: 1;
   display: grid;
-  grid-auto-flow: column;
+  grid-template-columns: max-content max-content;
   justify-content: start;
   gap: clamp(0.8rem, 2vw, 1.5rem);
   font-size: var(--history-primary-size);
@@ -1957,11 +1957,16 @@ button,
 
 .workout-figure {
   display: grid;
-  grid-auto-flow: column;
+  grid-template-columns: max-content max-content;
   align-items: baseline;
   gap: 0.3rem;
   font-size: inherit;
   font-variant-numeric: tabular-nums;
+}
+
+.workout-amount,
+.workout-unit {
+  min-width: max-content;
 }
 
 .workout-unit {
@@ -2047,6 +2052,18 @@ button,
   .workout-duration,
   .workout-meta {
     width: 100%;
+  }
+
+  .workout-figures {
+    column-gap: 0.6rem;
+  }
+
+  .workout-figure {
+    column-gap: 0.2rem;
+  }
+
+  .workout-unit {
+    letter-spacing: 0.06em;
   }
 
   .workout-date {

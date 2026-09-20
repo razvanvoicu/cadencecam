@@ -104,7 +104,7 @@ addCommandAlias(
 )
 
 ThisBuild / scalaVersion := "3.8.4"
-ThisBuild / version := "1.2.1"
+ThisBuild / version := "1.2.2"
 ThisBuild / organization := "sg.raz"
 ThisBuild / organizationName := "raz"
 ThisBuild / scalacOptions ++= Seq(
