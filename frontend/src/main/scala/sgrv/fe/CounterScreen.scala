@@ -63,6 +63,8 @@ private[fe] object CounterScreen:
     val devices = Var(Seq.empty[CameraDevice])
     val currentDevice = Var(Option.empty[String])
     val menuOpen = Var(false)
+    val workoutActive = Var(false)
+    val workoutBusy = Var(false)
     // Where each channel's peak falls within a rep, once the buffer has shown the hand at rest. Kept per quadrant and
     // retained: the opening stillness scrolls out of the minute, but what it established stays true, and a leader
     // switch should show that leader's own offset rather than the previous one's.
@@ -80,6 +82,13 @@ private[fe] object CounterScreen:
             val phase = offsets.get(channel).fold("")(offset => f" · φ$offset%.2f")
             StatusLine.of(state) + phase
           case other => StatusLine.of(other)
+    val shownStatus = statusText
+      .combineWith(workoutActive.signal, workoutBusy.signal)
+      .map:
+        case (_, true, true)           => "Stopping…"
+        case (_, false, true)          => "Starting…"
+        case (_, false, false)         => "Ready"
+        case (detector, true, false)   => detector
     var latestStatus = StatusLine.of(LockState.Acquiring(0, 0))
     val counter = RepCounter()
     val reporter = RepProgressReporter(api.http)
@@ -103,8 +112,6 @@ private[fe] object CounterScreen:
     val adjustOpen = Var(false)
     val roleRequests = RequestScope()
     val workoutRequests = RequestScope()
-    val workoutActive = Var(false)
-    val workoutBusy = Var(false)
     // Frozen at Start so editing settings during a workout cannot rewrite what that workout means in history.
     var workoutSettings: AccountSettings = settingsPanel.settings.now()
 
@@ -135,9 +142,9 @@ private[fe] object CounterScreen:
         LiveReading(
           repCount.now(),
           math.round(counter.repsPerMinute).toDouble,
-          latestStatus,
+          if workoutActive.now() then latestStatus else "Ready",
           Device.describe(),
-          counting = lock.now().isInstanceOf[LockState.Locked],
+          counting = workoutActive.now() && !workoutBusy.now() && lock.now().isInstanceOf[LockState.Locked],
           active = workoutActive.now(),
           // Both carry whatever a previous page load left behind, for the same reason the count does: a watching device
           // must not see a set restart because the phone showing it reloaded.
@@ -509,7 +516,7 @@ private[fe] object CounterScreen:
         ),
         Readouts.reading(repCount.signal.map(_.toString), "reps"),
         Readouts.controls(
-          statusText,
+          shownStatus,
           workoutActive.signal,
           workoutBusy.signal,
           () => startWorkout(),

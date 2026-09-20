@@ -32,7 +32,7 @@ private[fe] final class DashboardController(http: HttpService):
     .combineWith(connected.signal)
     .map:
       case (_, false)                            => "Connecting…"
-      case (Some(LiveState(_, Some(latest))), _) => latest.status
+      case (Some(LiveState(_, Some(latest))), _) => if latest.active then latest.status else "Ready"
       case _                                     => StatusLine.Waiting
 
   private def readUpdate(text: String): Unit =

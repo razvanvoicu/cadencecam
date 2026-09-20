@@ -54,6 +54,10 @@ private[fe] object BenchView:
     // every set, and saying so in red teaches whoever is watching to ignore the colour.
     val hasCadence = Var(false)
     val breakRemaining = Var(Option.empty[Int])
+    // Begin asks the counter to open a workout first. The first active reading is the acknowledgement; only then may a
+    // reset and the moving figure begin, otherwise the reset can race the counter's asynchronous Start request.
+    var beginWhenActive = false
+    var onWorkoutStarted: () => Unit = () => ()
 
     // Which handset is counting and which of its cameras is aimed at the screen. Chosen here because neither can be
     // read from the counting device: its user-agent names an engine and an OS, Chrome reports every Android model as
@@ -80,6 +84,9 @@ private[fe] object BenchView:
             // not anything else changed, so the absence of this is real evidence that the command went missing.
             if latest.reps == 0 then resetConfirmed = true
             hasCadence.set(latest.counting)
+            if beginWhenActive && latest.active then
+              beginWhenActive = false
+              onWorkoutStarted()
           if !state.acquiring then statusText.set("No device is counting yet")
         case Left(details) => dom.console.warn(s"Ignoring an unreadable update: $details")
 
@@ -134,6 +141,7 @@ private[fe] object BenchView:
     def beginAt(index: Int): Unit =
       if index >= plan.size then
         stage.set(Stage.Finished)
+        instruct(LiveCommand.Stop)
         report("suite-finished", 0.0)
       else
         acquired.set(0)
@@ -179,6 +187,8 @@ private[fe] object BenchView:
         Bench.SettleAfterResetMillis.toDouble
       )
 
+    onWorkoutStarted = () => resetThen(0)
+
     /** Stops the suite where it stands and unfiles everything it has written.
       *
       * For a run that has gone wrong while it is still going wrong -- a notification, a knocked camera, a phone that
@@ -203,6 +213,7 @@ private[fe] object BenchView:
       lastComparison = Comparison(0, 0, 0.0, withinTolerance = true)
       statusText.set(StatusLine.Waiting)
       instruct(LiveCommand.Reset)
+      instruct(LiveCommand.Stop)
       val init = new dom.RequestInit:
         method = dom.HttpMethod.POST
         headers = js.Dictionary("Content-Type" -> "application/json")
@@ -473,7 +484,8 @@ private[fe] object BenchView:
             "Begin",
             onClick --> { _ =>
               suite = TestPlan.chosen(catalogue, included.now())
-              resetThen(0)
+              beginWhenActive = true
+              instruct(LiveCommand.Start)
             }
           ),
           button(cls := "bench-control", typ := "button", "Back", onClick --> (_ => onBack())),
