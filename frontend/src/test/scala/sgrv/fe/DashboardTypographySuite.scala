@@ -11,5 +11,5 @@ class DashboardTypographySuite extends munit.FunSuite:
     assertEquals(DashboardTypography.fittedVw(200.0, 0.0), None)
 
   test("the card height caps short text before it can overlap another grid row"):
-    assertEquals(DashboardTypography.heightLimitVw(400.0, 1000.0, 0.12), Some(4.8))
+    assertEquals(DashboardTypography.heightLimitVw(400.0, 1000.0, 0.10), Some(4.0))
     assertEquals(DashboardTypography.heightLimitVw(0.0, 1000.0, 0.10), None)
