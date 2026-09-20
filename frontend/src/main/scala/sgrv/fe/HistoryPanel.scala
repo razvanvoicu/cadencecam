@@ -28,6 +28,18 @@ private[fe] final class HistoryPanel(api: ApiClient):
     val menuOpen = Var(false)
     val loadRequests = RequestScope()
     val discardRequests = RequestScope()
+    var typographyFrame = Option.empty[Int]
+    var typographyRoot = Option.empty[dom.html.Element]
+
+    def scheduleTypography(): Unit =
+      typographyFrame.foreach(dom.window.cancelAnimationFrame)
+      typographyFrame = Some(
+        dom.window.requestAnimationFrame: _ =>
+          typographyFrame = None
+          typographyRoot.foreach(HistoryTypography.fit)
+      )
+
+    val resizeListener: js.Function1[dom.Event, Unit] = _ => scheduleTypography()
 
     def stopRequests(): Unit =
       loadRequests.invalidate()
@@ -91,21 +103,7 @@ private[fe] final class HistoryPanel(api: ApiClient):
       div(
         cls := "workout-row",
         cls("running") <-- updates.map(_.running),
-        div(
-          cls := "workout-when",
-          span(
-            cls := "workout-exercise",
-            child.text <-- updates.map(_.snapshot.fold("Exercise unavailable")(_.exerciseType))
-          ),
-          span(cls := "workout-date", child.text <-- updates.map(workout => when(workout.startedAtMillis))),
-          span(
-            cls := "workout-state",
-            child.text <-- updates.map: workout =>
-              val state = if workout.running then "in progress" else Effort.elapsedClock(workout.elapsedSeconds)
-              val factor = workout.snapshot.fold("factor unavailable")(saved => s"factor ${Effort.factorText(saved.exerciseFactor)}")
-              s"$state · $factor"
-          )
-        ),
+        span(cls := "workout-date", child.text <-- updates.map(workout => when(workout.startedAtMillis))),
         div(
           cls := "workout-figures",
           span(
@@ -119,6 +117,20 @@ private[fe] final class HistoryPanel(api: ApiClient):
               .map(_.snapshot.fold(Effort.Absent)(saved => Effort.decimal(saved.calories))),
             span(cls := "workout-unit", "cal")
           )
+        ),
+        span(
+          cls := "workout-duration",
+          child.text <-- updates.map: workout =>
+            val duration = if workout.running then "in progress" else Effort.elapsedClock(workout.elapsedSeconds)
+            s"Duration: $duration"
+        ),
+        span(
+          cls := "workout-meta",
+          child.text <-- updates.map: workout =>
+            val exercise = workout.snapshot.fold("Exercise unavailable")(_.exerciseType)
+            val factor =
+              workout.snapshot.fold("factor unavailable")(saved => s"factor ${Effort.factorText(saved.exerciseFactor)}")
+            s"$exercise · $factor"
         ),
         // Two taps, because this is the one control on the screen that destroys something. The confirmation is the row
         // itself rather than a dialog: what is about to go is the thing being pointed at.
@@ -135,62 +147,81 @@ private[fe] final class HistoryPanel(api: ApiClient):
               typ := "button",
               aria.label := "Delete this workout",
               title := "Delete this workout",
-              "\u00d7",
+              svg.svg(
+                svg.cls := "workout-remove-icon",
+                svg.viewBox := "0 0 24 24",
+                aria.hidden := true,
+                svg.path(svg.d := "M3 6h18 M8 6V4h8v2 M19 6l-1 14H6L5 6 M10 10v6 M14 10v6")
+              ),
               onClick --> (_ => confirming.set(Some(id)))
             )
       )
 
+    lazy val historyScreen: HtmlElement = div(
+      cls := "settings-screen history-screen",
+      role := "dialog",
+      workouts.signal --> (_ => scheduleTypography()),
+      onMountCallback { _ =>
+        typographyRoot = Some(historyScreen.ref)
+        dom.window.addEventListener("resize", resizeListener)
+        scheduleTypography()
+      },
+      div(
+        cls := "settings-header",
+        h2("History"),
+        span(
+          cls := "settings-note",
+          child.text <-- workouts.signal.map:
+            case None         => "reading…"
+            case Some(listed) => if listed.isEmpty then "" else s"${listed.size} workouts"
+        ),
+        Menu.toggle(menuOpen),
+        Menu.backdrop(menuOpen),
+        Menu.sheet(
+          menuOpen,
+          Menu.item(menuOpen, "Export as CSV", () => exportCsv()),
+          Menu.documentItems(menuOpen)
+        ),
+        button(
+          cls := "about-close",
+          typ := "button",
+          title := "Close",
+          onClick --> (_ => close()),
+          "\u00d7"
+        )
+      ),
+      child <-- failed.signal.map:
+        case None          => emptyNode
+        case Some(message) => p(cls := "error settings-error", message)
+      ,
+      div(
+        cls := "settings-body history-body",
+        child <-- workouts.signal.map:
+          case None                           => p(cls := "field-hint", "Reading your history…")
+          case Some(listed) if listed.isEmpty =>
+            p(cls := "field-hint", "Nothing counted yet. Your workouts will appear here.")
+          case Some(_) => emptyNode
+        ,
+        div(
+          cls := "workout-list",
+          children <-- workouts.signal.map(_.getOrElse(Seq.empty)).split(_.id)(row)
+        )
+      ),
+      div(
+        cls := "settings-actions",
+        button(cls := "back-button", typ := "button", "Close", onClick --> (_ => close()))
+      )
+    )
+
     div(
       cls := "settings-overlay",
       onMountCallback(_ => load()),
-      onUnmountCallback(_ => stopRequests()),
-      div(
-        cls := "settings-screen history-screen",
-        role := "dialog",
-        div(
-          cls := "settings-header",
-          h2("History"),
-          span(
-            cls := "settings-note",
-            child.text <-- workouts.signal.map:
-              case None         => "reading…"
-              case Some(listed) => if listed.isEmpty then "" else s"${listed.size} workouts"
-          ),
-          Menu.toggle(menuOpen),
-          Menu.backdrop(menuOpen),
-          Menu.sheet(
-            menuOpen,
-            Menu.item(menuOpen, "Export as CSV", () => exportCsv()),
-            Menu.documentItems(menuOpen)
-          ),
-          button(
-            cls := "about-close",
-            typ := "button",
-            title := "Close",
-            onClick --> (_ => close()),
-            "\u00d7"
-          )
-        ),
-        child <-- failed.signal.map:
-          case None          => emptyNode
-          case Some(message) => p(cls := "error settings-error", message)
-        ,
-        div(
-          cls := "settings-body history-body",
-          child <-- workouts.signal.map:
-            case None                           => p(cls := "field-hint", "Reading your history…")
-            case Some(listed) if listed.isEmpty =>
-              p(cls := "field-hint", "Nothing counted yet. Your workouts will appear here.")
-            case Some(_) => emptyNode
-          ,
-          div(
-            cls := "workout-list",
-            children <-- workouts.signal.map(_.getOrElse(Seq.empty)).split(_.id)(row)
-          )
-        ),
-        div(
-          cls := "settings-actions",
-          button(cls := "back-button", typ := "button", "Close", onClick --> (_ => close()))
-        )
-      )
+      onUnmountCallback { _ =>
+        stopRequests()
+        dom.window.removeEventListener("resize", resizeListener)
+        typographyFrame.foreach(dom.window.cancelAnimationFrame)
+        typographyFrame = None
+        typographyRoot = None
+      },
+      historyScreen
     )

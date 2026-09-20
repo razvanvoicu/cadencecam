@@ -430,8 +430,10 @@ button,
   /* Replaced at runtime with the smallest single-line fit across every member of each group. The fallback is itself
      viewport-relative so the dashboard never falls back to a device-dependent fixed text size. */
   --dashboard-label-size: 2vw;
+  --dashboard-footnote-label-size: var(--dashboard-label-size);
   --dashboard-secondary-value-size: 4vw;
   --dashboard-detail-size: 1.2vw;
+  --dashboard-figure-size: clamp(4rem, 17vmin, 13rem);
 }
 
 .screen.dashboard {
@@ -455,9 +457,10 @@ button,
 
 /* A phone needs a little more of the header for the clock. The clock still participates in the shared label-size
    calculation; this only stops its narrow grid track from being the reason every label is reduced. */
-@media (max-width: 47.999rem) {
+@media (max-width: 768px) {
   .dashboard-header {
     grid-template-columns: minmax(0, 1fr) minmax(0, 38vw);
+    align-items: center;
     gap: 3vw;
   }
 
@@ -624,8 +627,13 @@ button,
 }
 
 .figure-label,
-.footnote-label {
+.dashboard .screen-title,
+.clock-value {
   font-size: var(--dashboard-label-size);
+}
+
+.footnote-label {
+  font-size: var(--dashboard-footnote-label-size);
 }
 
 .footnote-value {
@@ -719,6 +727,25 @@ button,
     min-width: 2.2vw;
     min-height: 2.2vw;
     border-radius: 0.4vw;
+  }
+}
+
+/* At and below the breakpoint, every dashboard dimension follows one continuous measured scale. The former 12vw
+   button became 6vw one pixel later, visibly moving the clock; the clamp meets the wide rule at the boundary and keeps
+   a usable touch target as the viewport narrows. The headline is part of the same scale as the labels and footnotes,
+   so their proportions cannot drift while the window is resized. */
+@media (max-width: 768px) {
+  .figure-value {
+    font-size: var(--dashboard-figure-size);
+  }
+
+  .dashboard .menu-button {
+    --hamburger-width: clamp(1.2rem, 3.5vw, 1.7rem);
+    width: clamp(2.75rem, 6vw, 3rem);
+    height: clamp(2.75rem, 6vw, 3rem);
+    min-width: clamp(2.75rem, 6vw, 3rem);
+    min-height: clamp(2.75rem, 6vw, 3rem);
+    border-radius: clamp(0.5rem, 1vw, 0.65rem);
   }
 }
 
@@ -1778,41 +1805,28 @@ button,
 .history-screen {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  --history-heading-size: 5vw;
-  --history-primary-size: 4.2vw;
-  --history-secondary-size: 3.5vw;
-  --history-figure-size: 5vw;
-  --history-unit-size: 3vw;
+  --history-heading-size: clamp(1.1rem, 5vw, 1.8rem);
+  /* Replaced at runtime with the common single-line fit across every history item. */
+  --history-primary-size: 1rem;
+  --history-secondary-size: 0.78rem;
   font-size: var(--history-primary-size);
 }
 
-@media (min-width: 48rem) {
+@media (min-width: 769px) {
   .history-screen {
-    --history-heading-size: 2.4vw;
-    --history-primary-size: 2vw;
-    --history-secondary-size: 1.5vw;
-    --history-figure-size: 2.5vw;
-    --history-unit-size: 1.3vw;
+    --history-heading-size: clamp(1.1rem, 2.4vw, 1.8rem);
   }
 }
 
 @media (min-width: 80rem) {
   .history-screen {
-    --history-heading-size: 1.8vw;
-    --history-primary-size: 1.5vw;
-    --history-secondary-size: 1.15vw;
-    --history-figure-size: 1.9vw;
-    --history-unit-size: 1vw;
+    --history-heading-size: clamp(1.1rem, 1.8vw, 1.8rem);
   }
 }
 
 @media (min-width: 100rem) {
   .history-screen {
-    --history-heading-size: 1.2vw;
-    --history-primary-size: 1vw;
-    --history-secondary-size: 0.8vw;
-    --history-figure-size: 1.3vw;
-    --history-unit-size: 0.7vw;
+    --history-heading-size: clamp(1.1rem, 1.2vw, 1.8rem);
   }
 }
 
@@ -1849,10 +1863,13 @@ button,
 }
 
 .workout-row {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) max-content;
+  grid-template-rows: auto auto;
+  align-items: baseline;
+  column-gap: clamp(1.5rem, 4vw, 4rem);
+  row-gap: 0.45rem;
   padding: 0.85rem 1rem;
   background: var(--dash-panel);
   border: 1px solid var(--dash-line);
@@ -1865,34 +1882,52 @@ button,
   border-color: var(--dash-accent);
 }
 
-.workout-when {
-  display: grid;
-  gap: 0.2rem;
+.workout-date,
+.workout-figures,
+.workout-duration,
+.workout-meta {
+  width: 80%;
   min-width: 0;
-}
-
-.workout-exercise {
   overflow: hidden;
-  font-size: var(--history-primary-size);
-  font-weight: 500;
+  line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .workout-date {
+  grid-column: 1;
+  grid-row: 1;
   font-size: var(--history-primary-size);
+  font-variant-numeric: tabular-nums;
+  justify-self: start;
 }
 
-.workout-state {
+.workout-duration {
+  grid-column: 1;
+  grid-row: 2;
+  font-size: var(--history-primary-size);
+  font-variant-numeric: tabular-nums;
+  justify-self: start;
+}
+
+.workout-meta {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: end;
   color: var(--dash-muted);
   font-size: var(--history-secondary-size);
-  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .workout-figures {
+  grid-column: 2;
+  grid-row: 1;
   display: grid;
   grid-auto-flow: column;
-  gap: 1.1rem;
+  justify-content: start;
+  gap: clamp(0.8rem, 2vw, 1.5rem);
+  font-size: var(--history-primary-size);
+  justify-self: start;
 }
 
 .workout-figure {
@@ -1900,32 +1935,52 @@ button,
   grid-auto-flow: column;
   align-items: baseline;
   gap: 0.3rem;
-  font-size: var(--history-figure-size);
+  font-size: inherit;
   font-variant-numeric: tabular-nums;
 }
 
 .workout-unit {
   color: var(--dash-muted);
-  font-size: var(--history-unit-size);
+  font-size: inherit;
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
 .workout-remove {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: center;
   width: 2.2rem;
   height: 2.2rem;
+  padding: 0.4rem;
   background: transparent;
   border: 0;
   color: var(--dash-muted);
-  font-size: var(--history-heading-size);
-  line-height: 1;
   cursor: pointer;
 }
 
+.workout-remove-icon {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .workout-confirm {
+  position: absolute;
+  z-index: 1;
+  top: 0.55rem;
+  right: 0.55rem;
   display: grid;
   grid-auto-flow: column;
   gap: 0.4rem;
+  padding: 0.25rem;
+  background: var(--dash-panel);
+  border-radius: 9px;
 }
 
 .workout-yes,
@@ -1949,6 +2004,44 @@ button,
   background: transparent;
   border: 1px solid #262e31;
   color: inherit;
+}
+
+/* A phone keeps the icon in its own narrow track and puts every piece of content in the first. The fourth row spans
+   the content track only, leaving the same empty icon column as the rows above it. */
+@media (max-width: 768px) {
+  .workout-row {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    grid-template-rows: repeat(4, auto);
+    column-gap: 1rem;
+    row-gap: 0.35rem;
+  }
+
+  .workout-date {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .workout-figures {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .workout-duration {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .workout-meta {
+    grid-column: 1;
+    grid-row: 4;
+    justify-self: start;
+    text-align: left;
+  }
+
+  .workout-remove {
+    grid-column: 2;
+    grid-row: 1;
+  }
 }
 
 /* The one control in the app that destroys something irrecoverable, coloured like it. */

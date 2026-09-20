@@ -11,15 +11,31 @@ import org.scalajs.dom
 private[fe] object DashboardTypography:
   private val LabelSelector = ".dashboard .screen-title, .clock-value, .figure-label, .footnote-label"
   private val SecondaryValueSelector = ".footnote-value"
+  private val CompactSelector =
+    ".clock-value, .figure-label, .footnote-label, .footnote-value, .figure-value"
   private val MeasuringSizeVw = 1.0
   private val BreathingRoom = 0.94
   private val DetailRatio = 0.6
   private val LabelCardHeightRatio = 0.10
   private val SecondaryValueCardHeightRatio = 0.14
+  private val CompactBreakpoint = 768.0
+  private val CompactFootnoteLabelRatio = 0.8
+  private val CompactSecondaryValueRatio = 1.8
+  private val CompactFigureRatio = 6.0
+  private val CompactFigureCardHeightRatio = 0.44
 
   def fit(root: dom.html.Element): Unit =
+    if dom.window.innerWidth <= CompactBreakpoint then fitCompact(root)
+    else fitWide(root)
+
+  /** The wide layout already has the space to fit each role independently. Keeping that behaviour separate means the
+    * narrow fix cannot disturb the tablet and desktop layout which is already proportioned correctly.
+    */
+  private def fitWide(root: dom.html.Element): Unit =
     root.style.setProperty("--dashboard-label-size", s"${MeasuringSizeVw}vw")
     root.style.setProperty("--dashboard-secondary-value-size", s"${MeasuringSizeVw}vw")
+    root.style.removeProperty("--dashboard-footnote-label-size")
+    root.style.removeProperty("--dashboard-figure-size")
 
     val cardHeight = smallestCardHeight(root)
     val viewportWidth = dom.window.innerWidth
@@ -32,6 +48,31 @@ private[fe] object DashboardTypography:
     root.style.setProperty("--dashboard-label-size", cssVw(label))
     root.style.setProperty("--dashboard-secondary-value-size", cssVw(secondaryValue))
     root.style.setProperty("--dashboard-detail-size", cssVw(label * DetailRatio))
+
+  /** Below 768px every type role is a fixed multiple of one fitted size.
+    *
+    * The former independent fits made the clock, footnotes and figures shrink at different rates. Measuring the real
+    * rendered strings at their intended ratios retains the useful property of fitting whatever values are on screen,
+    * while choosing one multiplier means resizing cannot change the visual hierarchy.
+    */
+  private def fitCompact(root: dom.html.Element): Unit =
+    setCompactSizes(root, MeasuringSizeVw)
+    val cardHeight = smallestCardHeight(root)
+    val viewportWidth = dom.window.innerWidth
+    val widthFit = smallestFit(root, CompactSelector)
+    val heightFit = heightLimitVw(
+      cardHeight,
+      viewportWidth,
+      CompactFigureCardHeightRatio / CompactFigureRatio
+    )
+    setCompactSizes(root, heightFit.fold(widthFit)(widthFit.min))
+
+  private def setCompactSizes(root: dom.html.Element, baseVw: Double): Unit =
+    root.style.setProperty("--dashboard-label-size", cssVw(baseVw))
+    root.style.setProperty("--dashboard-footnote-label-size", cssVw(baseVw * CompactFootnoteLabelRatio))
+    root.style.setProperty("--dashboard-secondary-value-size", cssVw(baseVw * CompactSecondaryValueRatio))
+    root.style.setProperty("--dashboard-detail-size", cssVw(baseVw * DetailRatio))
+    root.style.setProperty("--dashboard-figure-size", cssVw(baseVw * CompactFigureRatio))
 
   private def smallestFit(root: dom.html.Element, selector: String): Double =
     val elements = root.querySelectorAll(selector)
