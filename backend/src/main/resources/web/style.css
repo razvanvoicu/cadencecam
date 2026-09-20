@@ -1119,6 +1119,7 @@ button,
 }
 
 .menu-sheet {
+  --menu-text-size: 4.5vw;
   position: fixed;
   z-index: 1000;
   top: calc(var(--menu-anchor-top, 0px) + 0.75vw);
@@ -1148,9 +1149,34 @@ button,
   border-radius: 6px;
   color: var(--fg);
   font: inherit;
-  font-size: 0.95rem;
+  font-size: var(--menu-text-size);
   text-align: left;
+  white-space: nowrap;
   cursor: pointer;
+}
+
+@media (min-width: 48rem) {
+  .menu-sheet {
+    --menu-text-size: 2.1vw;
+  }
+}
+
+@media (min-width: 80rem) {
+  .menu-sheet {
+    --menu-text-size: 1.5vw;
+  }
+}
+
+@media (min-width: 100rem) {
+  .menu-sheet {
+    --menu-text-size: 1.05vw;
+  }
+}
+
+@media (min-width: 160rem) {
+  .menu-sheet {
+    --menu-text-size: 0.75vw;
+  }
 }
 
 .menu-item:active {
