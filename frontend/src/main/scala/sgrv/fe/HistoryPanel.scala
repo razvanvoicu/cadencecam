@@ -2,7 +2,7 @@ package sgrv.fe
 
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
-import sgrv.api.{AccountSettings, Workout}
+import sgrv.api.Workout
 import sgrv.fe.ApiClient.ApiError
 
 import scala.concurrent.ExecutionContext.Implicits.global
@@ -13,7 +13,7 @@ import scala.scalajs.js
   * Read when the panel opens rather than kept: a history is looked at occasionally and changes rarely, and a copy held
   * from the last time it was opened would show a workout that has since been deleted from another device.
   */
-private[fe] final class HistoryPanel(api: ApiClient, accountSettings: Var[AccountSettings]):
+private[fe] final class HistoryPanel(api: ApiClient):
   /** A panel over the dashboard rather than a screen of its own, so opening it does not tear down the link to the
     * counting device and make it pair again on the way back.
     */
@@ -67,8 +67,7 @@ private[fe] final class HistoryPanel(api: ApiClient, accountSettings: Var[Accoun
       if listed.isEmpty then failed.set(Some("There is nothing to export yet."))
       else
         failed.set(None)
-        val document =
-          WorkoutCsv.of(listed, accountSettings.now(), millis => new js.Date(millis).toISOString())
+        val document = WorkoutCsv.of(listed, millis => new js.Date(millis).toISOString())
         val blob = dom.Blob(js.Array(document), new dom.BlobPropertyBag { `type` = "text/csv;charset=utf-8" })
         val address = dom.URL.createObjectURL(blob)
         val anchor = dom.document.createElement("a").asInstanceOf[dom.html.Anchor]
@@ -94,10 +93,18 @@ private[fe] final class HistoryPanel(api: ApiClient, accountSettings: Var[Accoun
         cls("running") <-- updates.map(_.running),
         div(
           cls := "workout-when",
+          span(
+            cls := "workout-exercise",
+            child.text <-- updates.map(_.snapshot.fold("Exercise unavailable")(_.exerciseType))
+          ),
           span(cls := "workout-date", child.text <-- updates.map(workout => when(workout.startedAtMillis))),
-          child <-- updates.map: workout =>
-            if workout.running then span(cls := "workout-state", "in progress")
-            else span(cls := "workout-state", Effort.elapsedClock(workout.elapsedSeconds))
+          span(
+            cls := "workout-state",
+            child.text <-- updates.map: workout =>
+              val state = if workout.running then "in progress" else Effort.elapsedClock(workout.elapsedSeconds)
+              val factor = workout.snapshot.fold("factor unavailable")(saved => s"factor ${Effort.factorText(saved.exerciseFactor)}")
+              s"$state · $factor"
+          )
         ),
         div(
           cls := "workout-figures",
@@ -109,9 +116,7 @@ private[fe] final class HistoryPanel(api: ApiClient, accountSettings: Var[Accoun
           span(
             cls := "workout-figure",
             child.text <-- updates
-              .combineWith(accountSettings.signal)
-              .map: (workout, settings) =>
-                Effort.grouped(Effort.calories(workout.reps, workout.cadenceSum, settings)),
+              .map(_.snapshot.fold(Effort.Absent)(saved => Effort.decimal(saved.calories))),
             span(cls := "workout-unit", "cal")
           )
         ),

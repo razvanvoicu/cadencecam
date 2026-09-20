@@ -1,6 +1,6 @@
 package sgrv.fe
 
-import sgrv.api.{AccountSettings, Workout}
+import sgrv.api.Workout
 
 /** The account's history as a file it can keep.
   *
@@ -14,24 +14,37 @@ private[fe] object WorkoutCsv:
   val FileName = "cadencecam-workouts.csv"
 
   val Header: Seq[String] =
-    Seq("started", "ended", "duration_seconds", "reps", "cadence_sum", "weight_kg", "factor", "counts_by", "calories")
+    Seq(
+      "started",
+      "ended",
+      "exercise_type",
+      "duration_seconds",
+      "reps",
+      "cadence_sum",
+      "weight_kg",
+      "factor",
+      "counts_by",
+      "calories"
+    )
 
   /** The whole history as one CSV document.
     *
     * `at` formats an instant, and is passed in rather than taken from the browser so this can be checked without one.
     */
-  def of(workouts: Seq[Workout], settings: AccountSettings, at: Double => String): String =
+  def of(workouts: Seq[Workout], at: Double => String): String =
     val rows = workouts.map: workout =>
+      val saved = workout.snapshot
       Seq(
         at(workout.startedAtMillis),
         workout.endedAtMillis.fold("")(at),
+        saved.fold("")(_.exerciseType),
         number(workout.elapsedSeconds, 1),
         workout.reps.toString,
         number(workout.cadenceSum, 3),
-        number(settings.weightKilograms, 1),
-        number(settings.factor, 2),
-        settings.countsBy.toString,
-        number(Effort.calories(workout.reps, workout.cadenceSum, settings), 1)
+        saved.fold("")(value => number(value.weightKilograms, 1)),
+        saved.fold("")(value => number(value.exerciseFactor, 2)),
+        saved.fold("")(_.countsBy.toString),
+        saved.fold("")(value => number(value.calories, 1))
       )
     (Header +: rows).map(_.map(escape).mkString(",")).mkString("\r\n") + "\r\n"
 

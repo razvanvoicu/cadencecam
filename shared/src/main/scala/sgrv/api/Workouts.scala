@@ -2,12 +2,23 @@ package sgrv.api
 
 import zio.json.{DeriveJsonCodec, JsonCodec, jsonNoExtraFields}
 
-/** One workout, as the history lists it.
-  *
-  * Carries what was measured rather than what was concluded from it. Calories are not stored: they depend on a weight
-  * and a factor that the account can change afterwards, and a figure computed under an old factor and kept would be a
-  * number nothing on the screen agreed with. The measurement -- reps, and the cadence accumulated over them -- is what
-  * does not change, so that is what is kept and the figures are worked out from it when they are shown.
+/** The settings and conclusion belonging to one workout at the time it was performed. Settings can change later; a
+  * history row must not silently rewrite its exercise, factor, or calories when they do.
+  */
+@jsonNoExtraFields
+final case class WorkoutSnapshot(
+    exerciseType: String,
+    calories: Double,
+    exerciseFactor: Double,
+    weightKilograms: Double,
+    countsBy: CountsBy
+)
+
+object WorkoutSnapshot:
+  given JsonCodec[WorkoutSnapshot] = DeriveJsonCodec.gen[WorkoutSnapshot]
+
+/** One workout, as the history lists it. The raw measurement remains beside the snapshot, so exports are auditable and
+  * an older workout that predates snapshots can still be read without inventing values for it.
   */
 @jsonNoExtraFields
 final case class Workout(
@@ -19,7 +30,8 @@ final case class Workout(
     /** How long the set ran, from its first counted rep. Zero for a session that never counted one. */
     elapsedSeconds: Double = 0.0,
     /** Why it ended, absent while it is still running. */
-    endedBy: Option[String] = None
+    endedBy: Option[String] = None,
+    snapshot: Option[WorkoutSnapshot] = None
 ):
   /** Whether this is the workout in progress.
     *
@@ -41,11 +53,15 @@ enum WorkoutAction:
 object WorkoutAction:
   given JsonCodec[WorkoutAction] = DeriveJsonCodec.gen[WorkoutAction]
 
-/** A workout lifecycle request. Stop carries the final measurement so closing a session cannot race its last periodic
-  * progress report and leave the history a few reps behind what the screen showed.
+/** A workout lifecycle request. Both actions carry the settings snapshot; Stop also carries the final measurement so
+  * closing a session cannot race its last periodic progress report and leave the history a few reps behind the screen.
   */
 @jsonNoExtraFields
-final case class WorkoutControl(action: WorkoutAction, progress: Option[RepProgress] = None)
+final case class WorkoutControl(
+    action: WorkoutAction,
+    progress: Option[RepProgress] = None,
+    snapshot: Option[WorkoutSnapshot] = None
+)
 
 object WorkoutControl:
   val Path = "/countingSession/control"

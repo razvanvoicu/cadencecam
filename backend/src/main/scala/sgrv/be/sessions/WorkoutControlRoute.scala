@@ -1,7 +1,7 @@
 package sgrv.be.sessions
 
 import com.google.cloud.firestore.Firestore
-import sgrv.api.{WorkoutAction, WorkoutControl, WorkoutState}
+import sgrv.api.{WorkoutAction, WorkoutControl, WorkoutSnapshot, WorkoutState}
 import sgrv.be.BackendCapabilities
 import sgrv.be.auth.SessionStore
 import sgrv.be.core.{AccessPolicy, BackendPlugin, CapabilitySet, RequestContext}
@@ -37,6 +37,10 @@ object WorkoutControlRoute extends BackendPlugin:
           .orElseFail(IllegalArgumentException("The counter carries no browser session"))
         body <- request.body.asString
         command <- ZIO.fromEither(body.fromJson[WorkoutControl]).mapError(IllegalArgumentException(_))
+        snapshot <- ZIO
+          .fromOption(command.snapshot)
+          .orElseFail(IllegalArgumentException(s"${command.action} requires the workout settings snapshot"))
+          .flatMap(value => ZIO.fromEither(validate(value)))
         progress <- command.action match
           case WorkoutAction.Start => ZIO.succeed(None)
           case WorkoutAction.Stop  =>
@@ -50,8 +54,8 @@ object WorkoutControlRoute extends BackendPlugin:
         keeper <- AccountSessions.store(firestore)
         now <- Clock.instant
         session <- command.action match
-          case WorkoutAction.Start => keeper.startWorkout(account, browser, now)
-          case WorkoutAction.Stop  => keeper.stopWorkout(account, browser, progress.get, now)
+          case WorkoutAction.Start => keeper.startWorkout(account, browser, snapshot, now)
+          case WorkoutAction.Stop  => keeper.stopWorkout(account, browser, progress.get, snapshot, now)
         response <- session match
           case Some(id) =>
             ZIO.logInfo(s"${command.action} workout $id for $email") *>
@@ -68,3 +72,13 @@ object WorkoutControlRoute extends BackendPlugin:
           ZIO.succeed(noStore(Response.status(Status.ServiceUnavailable)))
 
   private def noStore(response: Response): Response = response.addHeader(Header.CacheControl.NoStore)
+
+  private[sessions] def validate(snapshot: WorkoutSnapshot): Either[String, WorkoutSnapshot] =
+    if snapshot.exerciseType.trim.isEmpty then Left("The workout has no exercise type")
+    else if !snapshot.calories.isFinite || snapshot.calories < 0 then
+      Left(s"Calories ${snapshot.calories} is not a number at or above zero")
+    else if !snapshot.exerciseFactor.isFinite || snapshot.exerciseFactor <= 0 then
+      Left(s"Exercise factor ${snapshot.exerciseFactor} is not above zero")
+    else if !snapshot.weightKilograms.isFinite || snapshot.weightKilograms <= 0 then
+      Left(s"Weight ${snapshot.weightKilograms} is not above zero")
+    else Right(snapshot.copy(exerciseType = snapshot.exerciseType.trim))

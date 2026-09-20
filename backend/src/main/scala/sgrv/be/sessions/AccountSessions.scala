@@ -6,7 +6,7 @@ import com.google.cloud.firestore.{DocumentReference, DocumentSnapshot, Firestor
 import com.google.common.util.concurrent.MoreExecutors
 import java.time.{Duration, Instant}
 import scala.jdk.CollectionConverters.*
-import sgrv.api.{AccountSettings, RepProgress, Workout}
+import sgrv.api.{AccountSettings, CountsBy, RepProgress, Workout, WorkoutSnapshot}
 import sgrv.be.store.GoogleFuture
 import zio.{Clock, Task, ZIO}
 import zio.json.*
@@ -59,13 +59,16 @@ private[sessions] object AccountSchema:
   /** Which browser session is counting, so a takeover is a change of hand rather than a new session. */
   val counter = "counter"
 
-  /** What a workout measured. The accumulator is kept beside the count because a calorie figure is worked out from it
-    * when it is shown, rather than stored: the weight and the factor behind that figure can change afterwards.
-    */
+  /** What a workout measured, plus the settings and calorie conclusion frozen for its history row. */
   val reps = "reps"
   val repsAt = "repsAt"
   val cadenceSum = "cadenceSum"
   val elapsedSeconds = "elapsedSeconds"
+  val exerciseType = "exerciseType"
+  val calories = "calories"
+  val exerciseFactor = "exerciseFactor"
+  val weightKilograms = "weightKilograms"
+  val countsBy = "countsBy"
 
   /** What the account has set, as the JSON the two ends already agree on.
     *
@@ -140,6 +143,15 @@ private[sessions] object AccountSessionStore:
     */
   private[sessions] def workoutOf(document: com.google.cloud.firestore.DocumentSnapshot): Workout =
     def millis(field: String) = Option(document.getTimestamp(field)).map(_.toDate.toInstant.toEpochMilli.toDouble)
+    val snapshot =
+      for
+        exerciseType <- Option(document.getString(AccountSchema.exerciseType))
+        calories <- Option(document.getDouble(AccountSchema.calories)).map(_.doubleValue)
+        exerciseFactor <- Option(document.getDouble(AccountSchema.exerciseFactor)).map(_.doubleValue)
+        weightKilograms <- Option(document.getDouble(AccountSchema.weightKilograms)).map(_.doubleValue)
+        countsBy <- Option(document.getString(AccountSchema.countsBy))
+          .flatMap(value => scala.util.Try(CountsBy.valueOf(value)).toOption)
+      yield WorkoutSnapshot(exerciseType, calories, exerciseFactor, weightKilograms, countsBy)
     Workout(
       id = document.getId,
       startedAtMillis = millis(AccountSchema.startedAt).getOrElse(0.0),
@@ -147,7 +159,8 @@ private[sessions] object AccountSessionStore:
       reps = Option(document.getLong(AccountSchema.reps)).fold(0)(_.intValue),
       cadenceSum = Option(document.getDouble(AccountSchema.cadenceSum)).fold(0.0)(_.doubleValue),
       elapsedSeconds = Option(document.getDouble(AccountSchema.elapsedSeconds)).fold(0.0)(_.doubleValue),
-      endedBy = Option(document.getString(AccountSchema.endedBy))
+      endedBy = Option(document.getString(AccountSchema.endedBy)),
+      snapshot = snapshot
     )
 
 private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfter: Duration):
@@ -244,7 +257,12 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       AccountState(active, Some(browserSession))
 
   /** Opens a workout for the browser currently holding the counter role. Repeated Start requests are idempotent. */
-  def startWorkout(name: String, browserSession: String, now: Instant): Task[Option[String]] =
+  def startWorkout(
+      name: String,
+      browserSession: String,
+      workoutSnapshot: WorkoutSnapshot,
+      now: Instant
+  ): Task[Option[String]] =
     // Chosen outside the callback because Firestore may retry a transaction. Every attempt must create the same
     // session rather than leaving the caller with whichever random id the final attempt happened to choose.
     val newSession = f"${now.toEpochMilli}%d-${scala.util.Random.nextInt(0x1000)}%03x"
@@ -260,7 +278,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
             val opened = Map[String, AnyRef](
               AccountSchema.startedAt -> stamp(now),
               AccountSchema.counter -> browserSession
-            )
+            ) ++ snapshotFields(workoutSnapshot)
             val _ = transaction.create(
               reference.collection(AccountSchema.sessions).document(newSession),
               opened.asJava
@@ -283,6 +301,15 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       AccountSchema.elapsedSeconds -> java.lang.Double.valueOf(progress.elapsedSeconds)
     )
 
+  private def snapshotFields(snapshot: WorkoutSnapshot): Map[String, AnyRef] =
+    Map[String, AnyRef](
+      AccountSchema.exerciseType -> snapshot.exerciseType,
+      AccountSchema.calories -> java.lang.Double.valueOf(snapshot.calories),
+      AccountSchema.exerciseFactor -> java.lang.Double.valueOf(snapshot.exerciseFactor),
+      AccountSchema.weightKilograms -> java.lang.Double.valueOf(snapshot.weightKilograms),
+      AccountSchema.countsBy -> snapshot.countsBy.toString
+    )
+
   /** Writes the final measurement and closes the active workout in the same transaction. The counter role remains so
     * either screen can start the next workout without re-entering or re-pairing.
     */
@@ -290,6 +317,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       name: String,
       browserSession: String,
       progress: RepProgress,
+      workoutSnapshot: WorkoutSnapshot,
       now: Instant
   ): Task[Option[String]] =
     transact(name): (transaction, reference, snapshot) =>
@@ -299,7 +327,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
         .map: session =>
           val _ = transaction.set(
             reference.collection(AccountSchema.sessions).document(session),
-            progressFields(progress, now).asJava,
+            (progressFields(progress, now) ++ snapshotFields(workoutSnapshot)).asJava,
             com.google.cloud.firestore.SetOptions.merge()
           )
           end(transaction, reference, session, SessionEnd.Stopped, now, clearCounter = false)

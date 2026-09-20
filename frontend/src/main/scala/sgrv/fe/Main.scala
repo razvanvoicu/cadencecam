@@ -34,7 +34,7 @@ object Main:
     lazy val api: ApiClient = ApiClient(http)
     lazy val refreshWorker: SessionRefreshWorker = SessionRefreshWorker(http)
     lazy val settingsPanel: SettingsPanel = SettingsPanel(api)
-    lazy val historyPanel: HistoryPanel = HistoryPanel(api, settingsPanel.settings)
+    lazy val historyPanel: HistoryPanel = HistoryPanel(api)
     lazy val roles: RoleSelection =
       RoleSelection(api, show, Screen.benchOffered(dom.window.location.hash))
 

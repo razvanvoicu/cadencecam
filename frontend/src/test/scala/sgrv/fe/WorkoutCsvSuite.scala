@@ -1,47 +1,49 @@
 package sgrv.fe
 
 import munit.FunSuite
-import sgrv.api.{AccountSettings, CountsBy, ExerciseType, Workout}
+import sgrv.api.{CountsBy, Workout, WorkoutSnapshot}
 
 class WorkoutCsvSuite extends FunSuite:
 
-  private val settings = AccountSettings(
-    weightKilograms = 98.0,
-    defaultFactor = 1.25,
-    exercises = Seq(ExerciseType("stairs", "Stair climber", None, CountsBy.Frequency, 1.25)),
-    selected = Some("stairs")
-  )
-
   private def at(millis: Double): String = s"t$millis%.0f".format(millis)
 
+  private val snapshot = WorkoutSnapshot("Stair climber", 647.5, 1.25, 98.0, CountsBy.Frequency)
   private val workout =
-    Workout("w1", 1000.0, Some(2000.0), reps = 1000, cadenceSum = 528.6, elapsedSeconds = 1890.0)
+    Workout(
+      "w1",
+      1000.0,
+      Some(2000.0),
+      reps = 1000,
+      cadenceSum = 528.6,
+      elapsedSeconds = 1890.0,
+      snapshot = Some(snapshot)
+    )
 
   private def rows(document: String) = document.split("\r\n").filter(_.nonEmpty).toSeq
 
   test("the header names the measurement and what the figure was computed from"):
     // A total on its own cannot be redone by a reader who later changes their factor. The weight, the factor and the
     // measure are written beside it so the arithmetic is theirs to repeat.
-    assertEquals(rows(WorkoutCsv.of(Seq.empty, settings, at)).head.split(",").toSeq, WorkoutCsv.Header)
+    assertEquals(rows(WorkoutCsv.of(Seq.empty, at)).head.split(",").toSeq, WorkoutCsv.Header)
 
-  test("a workout is one row, with its calories worked out from the settings given"):
-    val row = rows(WorkoutCsv.of(Seq(workout), settings, at))(1).split(",").toSeq
+  test("a workout is one row, with the exercise and calorie snapshot saved with it"):
+    val row = rows(WorkoutCsv.of(Seq(workout), at))(1).split(",").toSeq
 
-    assertEquals(row(3), "1000")
-    assertEquals(row(4), "528.600")
-    assertEquals(row(5), "98.0")
-    assertEquals(row(6), "1.25")
-    assertEquals(row(7), "Frequency")
-    // 528.6 x 98 x 1.25 / 100, the same arithmetic the dashboard shows.
-    assertEquals(row(8), "647.5")
+    assertEquals(row(2), "Stair climber")
+    assertEquals(row(4), "1000")
+    assertEquals(row(5), "528.600")
+    assertEquals(row(6), "98.0")
+    assertEquals(row(7), "1.25")
+    assertEquals(row(8), "Frequency")
+    assertEquals(row(9), "647.5")
 
   test("a workout still running has no end, and says so with an empty field rather than a guess"):
-    val row = rows(WorkoutCsv.of(Seq(workout.copy(endedAtMillis = None)), settings, at))(1)
+    val row = rows(WorkoutCsv.of(Seq(workout.copy(endedAtMillis = None)), at))(1)
 
     assertEquals(row.split(",", -1)(1), "")
 
   test("every line ends the way a CSV reader expects, including the last"):
-    val document = WorkoutCsv.of(Seq(workout), settings, at)
+    val document = WorkoutCsv.of(Seq(workout), at)
 
     assert(document.endsWith("\r\n"), "the final row needs its ending too")
     assertEquals(document.split("\r\n").filter(_.nonEmpty).length, 2)

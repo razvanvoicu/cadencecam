@@ -43,11 +43,15 @@ private[fe] final class ApiClient(private[fe] val http: HttpService):
   def takeCounterRole(): ApiCall[WorkoutState] =
     sendEmptyJson[WorkoutState](AcquirerPresence.Path, dom.HttpMethod.POST, "take the counting role", "workout state")
 
-  def controlWorkout(action: WorkoutAction, progress: Option[RepProgress] = None): ApiCall[WorkoutState] =
+  def controlWorkout(
+      action: WorkoutAction,
+      progress: Option[RepProgress] = None,
+      snapshot: Option[WorkoutSnapshot] = None
+  ): ApiCall[WorkoutState] =
     sendJsonFor[WorkoutState](
       WorkoutControl.Path,
       dom.HttpMethod.POST,
-      WorkoutControl(action, progress).toJson,
+      WorkoutControl(action, progress, snapshot).toJson,
       s"${action.toString.toLowerCase} the workout",
       "workout state"
     )

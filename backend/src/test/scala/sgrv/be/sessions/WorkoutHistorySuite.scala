@@ -1,6 +1,6 @@
 package sgrv.be.sessions
 
-import sgrv.api.{AccountData, DiscardWorkout, RepProgress, Workout, WorkoutHistory}
+import sgrv.api.{AccountData, CountsBy, DiscardWorkout, RepProgress, Workout, WorkoutHistory, WorkoutSnapshot}
 import sgrv.be.core.{CapabilityRegistry, PluginStatus, RouteDiscovery}
 import zio.*
 import zio.http.{Method, Path}
@@ -26,7 +26,16 @@ class WorkoutHistorySuite extends munit.FunSuite:
   test("a history round-trips through the shape both ends agree on"):
     val history = WorkoutHistory(
       Seq(
-        Workout("w1", 1_700_000_000_000.0, Some(1_700_000_900_000.0), 247, 130.5, 900.0, Some("LoggedOut")),
+        Workout(
+          "w1",
+          1_700_000_000_000.0,
+          Some(1_700_000_900_000.0),
+          247,
+          130.5,
+          900.0,
+          Some("Stopped"),
+          Some(WorkoutSnapshot("Stair climber", 647.5, 1.25, 98.0, CountsBy.Frequency))
+        ),
         Workout("w2", 1_699_000_000_000.0)
       )
     )
@@ -34,14 +43,33 @@ class WorkoutHistorySuite extends munit.FunSuite:
     assertEquals(history.toJson.fromJson[WorkoutHistory], Right(history))
 
   test("a report carries the accumulator the history needs, and old reports still parse"):
-    // The figure is not stored, only what it is worked out from: a weight and a factor can change afterwards, and a
-    // calorie total computed under an old factor and kept would be a number nothing else on the screen agreed with.
     val full = """{"reps":247,"cadenceSum":130.5,"elapsedSeconds":900.0}"""
 
     assertEquals(CountingSessionProgress.reported(full), Right(RepProgress(247, 130.5, 900.0)))
     // A counter that predates the fields reports neither, and still counts.
     assertEquals(CountingSessionProgress.reported("""{"reps":57}"""), Right(RepProgress(57)))
     assertEquals(CountingSessionProgress.reps(full), Right(247))
+
+  test("a workout snapshot rejects values that could not describe a saved workout"):
+    val valid = WorkoutSnapshot("Stair climber", 647.5, 1.25, 98.0, CountsBy.Frequency)
+
+    assertEquals(WorkoutControlRoute.validate(valid), Right(valid))
+    assert(WorkoutControlRoute.validate(valid.copy(exerciseType = "  ")).isLeft)
+    assert(WorkoutControlRoute.validate(valid.copy(calories = Double.NaN)).isLeft)
+    assert(WorkoutControlRoute.validate(valid.copy(exerciseFactor = 0.0)).isLeft)
+    assert(WorkoutControlRoute.validate(valid.copy(weightKilograms = -1.0)).isLeft)
+
+  test("every workout snapshot field has a Firestore field"):
+    val carried = classOf[WorkoutSnapshot].getDeclaredFields.map(_.getName).toSet
+    val stored = Set(
+      AccountSchema.exerciseType,
+      AccountSchema.calories,
+      AccountSchema.exerciseFactor,
+      AccountSchema.weightKilograms,
+      AccountSchema.countsBy
+    )
+
+    assertEquals(carried -- stored, Set.empty[String])
 
   test("a report of something that is not a measurement is refused rather than filed"):
     assert(CountingSessionProgress.reported("""{"reps":-1}""").isLeft)

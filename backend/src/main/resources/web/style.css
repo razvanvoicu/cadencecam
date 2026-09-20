@@ -1678,22 +1678,82 @@ button,
 
 /* The history. It borrows the settings panel's frame, because it is the same kind of thing: a screen about the
    account rather than about the set in front of the camera. */
+.history-screen {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  --history-heading-size: 5vw;
+  --history-primary-size: 4.2vw;
+  --history-secondary-size: 3.5vw;
+  --history-figure-size: 5vw;
+  --history-unit-size: 3vw;
+  font-size: var(--history-primary-size);
+}
+
+@media (min-width: 48rem) {
+  .history-screen {
+    --history-heading-size: 2.4vw;
+    --history-primary-size: 2vw;
+    --history-secondary-size: 1.5vw;
+    --history-figure-size: 2.5vw;
+    --history-unit-size: 1.3vw;
+  }
+}
+
+@media (min-width: 80rem) {
+  .history-screen {
+    --history-heading-size: 1.8vw;
+    --history-primary-size: 1.5vw;
+    --history-secondary-size: 1.15vw;
+    --history-figure-size: 1.9vw;
+    --history-unit-size: 1vw;
+  }
+}
+
+@media (min-width: 100rem) {
+  .history-screen {
+    --history-heading-size: 1.2vw;
+    --history-primary-size: 1vw;
+    --history-secondary-size: 0.8vw;
+    --history-figure-size: 1.3vw;
+    --history-unit-size: 0.7vw;
+  }
+}
+
 .history-screen .settings-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
   gap: 0.75rem;
 }
 
+.history-screen .settings-header h2 {
+  font-size: var(--history-heading-size);
+}
+
+.history-screen .settings-note,
+.history-screen .field-hint {
+  font-size: var(--history-secondary-size);
+}
+
+.history-screen .about-close {
+  font-size: var(--history-heading-size);
+}
+
 .history-body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 0.75rem;
 }
 
 .workout-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  align-content: start;
   gap: 0.6rem;
 }
 
 .workout-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 1rem;
   padding: 0.85rem 1rem;
@@ -1709,39 +1769,47 @@ button,
 }
 
 .workout-when {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
+  display: grid;
   gap: 0.2rem;
   min-width: 0;
 }
 
+.workout-exercise {
+  overflow: hidden;
+  font-size: var(--history-primary-size);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .workout-date {
-  font-size: 0.95rem;
+  font-size: var(--history-primary-size);
 }
 
 .workout-state {
   color: var(--dash-muted);
-  font-size: 0.8rem;
+  font-size: var(--history-secondary-size);
   font-variant-numeric: tabular-nums;
 }
 
 .workout-figures {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
   gap: 1.1rem;
 }
 
 .workout-figure {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
   align-items: baseline;
   gap: 0.3rem;
-  font-size: 1.15rem;
+  font-size: var(--history-figure-size);
   font-variant-numeric: tabular-nums;
 }
 
 .workout-unit {
   color: var(--dash-muted);
-  font-size: 0.7rem;
+  font-size: var(--history-unit-size);
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
@@ -1752,13 +1820,14 @@ button,
   background: transparent;
   border: 0;
   color: var(--dash-muted);
-  font-size: 1.3rem;
+  font-size: var(--history-heading-size);
   line-height: 1;
   cursor: pointer;
 }
 
 .workout-confirm {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
   gap: 0.4rem;
 }
 
@@ -1768,7 +1837,7 @@ button,
   padding: 0 0.75rem;
   border-radius: 8px;
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--history-secondary-size);
   cursor: pointer;
 }
 

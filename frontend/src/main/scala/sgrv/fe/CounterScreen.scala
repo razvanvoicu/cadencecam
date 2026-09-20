@@ -2,7 +2,7 @@ package sgrv.fe
 
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
-import sgrv.api.{LiveCommand, LiveReading, LiveState, PeerRole, WorkoutAction}
+import sgrv.api.{AccountSettings, LiveCommand, LiveReading, LiveState, PeerRole, RepProgress, WorkoutAction, WorkoutSnapshot}
 import sgrv.fe.acquire.{
   Adjustable,
   Camera,
@@ -105,6 +105,8 @@ private[fe] object CounterScreen:
     val workoutRequests = RequestScope()
     val workoutActive = Var(false)
     val workoutBusy = Var(false)
+    // Frozen at Start so editing settings during a workout cannot rewrite what that workout means in history.
+    var workoutSettings: AccountSettings = settingsPanel.settings.now()
 
     val video = videoTag(cls := "camera-video")
     // The overlay's lines sit at 50% of this box, so the box must be exactly the frame: its aspect ratio is set from the
@@ -217,10 +219,21 @@ private[fe] object CounterScreen:
     def reportWhileActive(): Unit =
       reporter.start(() => baseline.plus(counter.reading).progress)
 
+    def workoutSnapshot(progress: RepProgress): WorkoutSnapshot =
+      WorkoutSnapshot(
+        exerciseType = workoutSettings.selectedExercise.map(_.name.trim).filter(_.nonEmpty).getOrElse("Counting"),
+        calories = Effort.calories(progress.reps, progress.cadenceSum, workoutSettings),
+        exerciseFactor = workoutSettings.factor,
+        weightKilograms = workoutSettings.weightKilograms,
+        countsBy = workoutSettings.countsBy
+      )
+
     def startWorkout(): Unit =
       if !workoutActive.now() && !workoutBusy.now() then
         workoutBusy.set(true)
-        workoutRequests.run(api.controlWorkout(WorkoutAction.Start)):
+        workoutSettings = settingsPanel.settings.now()
+        val empty = RepProgress(0)
+        workoutRequests.run(api.controlWorkout(WorkoutAction.Start, snapshot = Some(workoutSnapshot(empty)))):
           case Right(state) if state.active =>
             resetCount()
             workoutActive.set(true)
@@ -240,7 +253,9 @@ private[fe] object CounterScreen:
         workoutBusy.set(true)
         reporter.stop()
         val finalProgress = baseline.plus(counter.reading).progress
-        workoutRequests.run(api.controlWorkout(WorkoutAction.Stop, Some(finalProgress))):
+        workoutRequests.run(
+          api.controlWorkout(WorkoutAction.Stop, Some(finalProgress), Some(workoutSnapshot(finalProgress)))
+        ):
           case Right(state) if !state.active =>
             workoutActive.set(false)
             workoutBusy.set(false)
