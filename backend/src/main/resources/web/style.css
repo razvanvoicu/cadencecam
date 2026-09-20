@@ -339,15 +339,14 @@ button,
   --control-size: 2.5rem;
 }
 
-.reset-button {
+.workout-button {
   width: var(--control-size);
   height: var(--control-size);
 }
 
-.reset-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.workout-button {
+  display: grid;
+  place-items: center;
   padding: 0;
   background: transparent;
   border: 1px solid var(--border);
@@ -360,12 +359,12 @@ button,
   -webkit-tap-highlight-color: transparent;
 }
 
-.reset-button:active {
+.workout-button:active {
   background: var(--bg);
 }
 
 @media (hover: hover) {
-  .reset-button:hover {
+  .workout-button:hover {
     border-color: var(--fg);
   }
 }
@@ -634,7 +633,7 @@ button,
   text-align: center;
 }
 
-.dashboard .reset-button {
+.dashboard .workout-button {
   display: grid;
   place-items: center;
   border-color: var(--dash-line);

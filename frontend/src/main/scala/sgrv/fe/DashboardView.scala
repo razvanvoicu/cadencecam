@@ -171,14 +171,17 @@ private[fe] object DashboardView:
         ),
         div(
           cls := "dashboard-status",
-          button(
-            cls := "reset-button",
-            typ := "button",
-            "↺",
-            aria.label := "Reset the count",
-            title := "Reset the count",
-            onClick --> (_ => controller.ask(LiveCommand.Reset))
-          ),
+          child <-- controller.workoutActive.map: active =>
+            val label = if active then "Stop workout" else "Start workout"
+            button(
+              cls := "workout-button",
+              typ := "button",
+              if active then "■" else "▶",
+              aria.label := label,
+              title := label,
+              onClick --> (_ => controller.ask(if active then LiveCommand.Stop else LiveCommand.Start))
+            )
+          ,
           p(cls := "lock-state", child.text <-- controller.status)
         ),
         Menu.sheet(

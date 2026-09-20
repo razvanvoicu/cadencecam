@@ -3,7 +3,7 @@ package sgrv.fe
 import com.raquo.laminar.api.L.*
 import sgrv.fe.acquire.SignalStrength
 
-/** The rows the counter and the bench both show: the large reading, and the reset control beside the status line.
+/** The rows the counter and the bench both show: the large reading, and the workout control beside the status line.
   *
   * Shared as builders rather than duplicated as markup, because "exactly the same format" is a promise that copies
   * cannot keep: the two would agree on the day they were written and drift on the first change to either. Built from
@@ -28,29 +28,38 @@ private[fe] object Readouts:
       extra
     )
 
-  /** The reset control, the status line, and a counterweight that keeps the line centred on the panel.
+  /** The start/stop control, the status line, and a counterweight that keeps the line centred on the panel.
     *
     * The spacer matches the control's footprint exactly. Without it the line would centre on the space left over beside
     * the button, which is not the middle of anything the eye can see.
     */
   def controls(
       status: Signal[String],
-      onReset: () => Unit,
+      active: Signal[Boolean],
+      busy: Signal[Boolean],
+      onStart: () => Unit,
+      onStop: () => Unit,
       // Absent on a watching screen, which has no camera of its own to judge.
       margin: Signal[Option[Double]] = Val(None)
   ): HtmlElement =
     div(
       cls := "control-row",
-      button(
-        cls := "reset-button",
-        typ := "button",
-        // U+21BA, the anticlockwise open circle arrow: monochrome, present in the system fonts of every platform
-        // this runs on, and unambiguous without a caption.
-        "↺",
-        aria.label := "Reset the count",
-        title := "Reset the count",
-        onClick --> (_ => onReset())
-      ),
+      child <-- active
+        .combineWith(busy)
+        .map: (isActive, isBusy) =>
+          val label = if isActive then "Stop workout" else "Start workout"
+          button(
+            cls := "workout-button",
+            typ := "button",
+            disabled := isBusy,
+            // U+25B6 and U+25A0: monochrome transport controls whose meaning survives without a word inside the
+            // compact circular button. The accessible name carries that word for assistive technology.
+            if isActive then "■" else "▶",
+            aria.label := label,
+            title := label,
+            onClick --> (_ => if isActive then onStop() else onStart())
+          )
+      ,
       // Says which of the three it is doing rather than letting a stalled count look like a steady one.
       p(cls := "lock-state", child.text <-- status),
       // One gauge in the counterweight's column: how far the movement stands above the background. The noise reading

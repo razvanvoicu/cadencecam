@@ -32,6 +32,32 @@ final case class Workout(
 object Workout:
   given JsonCodec[Workout] = DeriveJsonCodec.gen[Workout]
 
+/** The deliberate lifecycle control for a workout. Login, logout and choosing the counter role do not imply either
+  * action: a workout begins and ends only at the two controls bearing these names.
+  */
+enum WorkoutAction:
+  case Start, Stop
+
+object WorkoutAction:
+  given JsonCodec[WorkoutAction] = DeriveJsonCodec.gen[WorkoutAction]
+
+/** A workout lifecycle request. Stop carries the final measurement so closing a session cannot race its last periodic
+  * progress report and leave the history a few reps behind what the screen showed.
+  */
+@jsonNoExtraFields
+final case class WorkoutControl(action: WorkoutAction, progress: Option[RepProgress] = None)
+
+object WorkoutControl:
+  val Path = "/countingSession/control"
+  given JsonCodec[WorkoutControl] = DeriveJsonCodec.gen[WorkoutControl]
+
+/** Whether the account's counter currently has a workout open. */
+@jsonNoExtraFields
+final case class WorkoutState(active: Boolean)
+
+object WorkoutState:
+  given JsonCodec[WorkoutState] = DeriveJsonCodec.gen[WorkoutState]
+
 /** The account's workouts, newest first. */
 @jsonNoExtraFields
 final case class WorkoutHistory(workouts: Seq[Workout] = Seq.empty)

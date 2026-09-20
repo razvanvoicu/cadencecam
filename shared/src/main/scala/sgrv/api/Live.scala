@@ -27,6 +27,12 @@ final case class LiveReading(
       * looking at, and colouring that as a discrepancy paints the normal opening of every set as a fault.
       */
     counting: Boolean = false,
+    /** Whether a workout is currently open and accepting reps.
+      *
+      * Separate from `counting`: a workout starts when the operator asks, while cadence lock arrives only after the
+      * detector has seen enough movement. A dashboard needs the former to choose between its Start and Stop controls.
+      */
+    active: Boolean = false,
     /** How long the set has been running, measured from its first counted rep rather than from the camera opening.
       *
       * The fifteen seconds a detector spends working out what it is looking at are not exercise, and a rate divided by
@@ -73,6 +79,8 @@ object LiveState:
   */
 enum LiveCommand:
   case Reset
+  case Start
+  case Stop
 
   /** `note` says who asked and why, and ends up on the recording itself.
     *

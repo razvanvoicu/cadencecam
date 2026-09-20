@@ -12,9 +12,9 @@ import zio.json.*
 
 /** The post box two browsers use to find each other before talking directly.
   *
-  * Everything here is filed under the account's counting session, which both devices resolve from being signed in -- so
-  * neither needs to know anything about the other, and neither needs to land in the same server process. That is the
-  * whole reason this exists: once the link is up, the readings never touch the server again.
+  * Everything here is filed under the account, which both devices resolve from being signed in -- so neither needs to
+  * know anything about the other, and neither needs to land in the same server process. It cannot be filed under a
+  * workout: the link is how a dashboard asks the counter to start the first one.
   *
   * Nothing here reads what it carries. An offer, an answer and a handful of candidates are opaque strings as the
   * browser produced them, filed and handed to the other end.
@@ -49,15 +49,14 @@ object PeerSignalling extends BackendPlugin:
         body <- request.body.asString
         signal <- ZIO.fromEither(body.fromJson[PeerSignal]).mapError(details => IllegalArgumentException(details))
         firestore <- ZIO.service[Firestore]
-        located <- AccountSessions.active(firestore, email)
-        // No session means nothing is counting, so there is nobody to pair with and nothing to file.
-        response <- located match
-          case None                     => ZIO.succeed(noStore(Response.status(Status.Conflict)))
-          case Some((account, session)) =>
+        named <- AccountKey.of(email)
+        response <- named match
+          case None          => ZIO.succeed(noStore(Response.status(Status.ServiceUnavailable)))
+          case Some(account) =>
             for
               keeper <- AccountSessions.store(firestore)
               now <- Clock.instant
-              _ <- keeper.postSignal(account, session, signal.from.toString, signal.kind, signal.body, signal.peer, now)
+              _ <- keeper.postSignal(account, signal.from.toString, signal.kind, signal.body, signal.peer, now)
             yield noStore(Response.status(Status.NoContent))
       yield response
     filed.foldZIO(
@@ -78,14 +77,14 @@ object PeerSignalling extends BackendPlugin:
           request.url.queryParams.queryParam("since").flatMap(value => scala.util.Try(Instant.parse(value)).toOption)
         )
         firestore <- ZIO.service[Firestore]
-        located <- AccountSessions.active(firestore, email)
-        answer <- located match
-          case None                     => ZIO.succeed(PeerSignals())
-          case Some((account, session)) =>
+        named <- AccountKey.of(email)
+        answer <- named match
+          case None          => ZIO.succeed(PeerSignals())
+          case Some(account) =>
             for
               keeper <- AccountSessions.store(firestore)
               now <- Clock.instant
-              found <- keeper.signalsFor(account, session, mine.toString, since, now)
+              found <- keeper.signalsFor(account, mine.toString, since, now)
               (theirs, cursor) = found
             yield PeerSignals(
               theirs.map((kind, body, peer) =>

@@ -80,13 +80,15 @@ object CountingSessionProgress extends BackendPlugin:
   private[sessions] def reported(body: String): Either[String, RepProgress] =
     body
       .fromJson[RepProgress]
-      .flatMap: progress =>
-        if progress.reps < 0 then Left(s"Negative rep count ${progress.reps}")
-        else if !progress.cadenceSum.isFinite || progress.cadenceSum < 0 then
-          Left(s"Cadence sum ${progress.cadenceSum} is not a number at or above zero")
-        else if !progress.elapsedSeconds.isFinite || progress.elapsedSeconds < 0 then
-          Left(s"Elapsed ${progress.elapsedSeconds} is not a duration")
-        else Right(progress)
+      .flatMap(validate)
+
+  private[sessions] def validate(progress: RepProgress): Either[String, RepProgress] =
+    if progress.reps < 0 then Left(s"Negative rep count ${progress.reps}")
+    else if !progress.cadenceSum.isFinite || progress.cadenceSum < 0 then
+      Left(s"Cadence sum ${progress.cadenceSum} is not a number at or above zero")
+    else if !progress.elapsedSeconds.isFinite || progress.elapsedSeconds < 0 then
+      Left(s"Elapsed ${progress.elapsedSeconds} is not a duration")
+    else Right(progress)
 
   /** The count alone, which is all most readers want of a report. */
   private[sessions] def reps(body: String): Either[String, Int] = reported(body).map(_.reps)

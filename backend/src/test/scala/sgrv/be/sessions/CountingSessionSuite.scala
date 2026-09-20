@@ -1,6 +1,6 @@
 package sgrv.be.sessions
 
-import sgrv.api.{AcquirerPresence, CountingSession, RepProgress, SignalTrace}
+import sgrv.api.{AcquirerPresence, CountingSession, RepProgress, SignalTrace, WorkoutControl}
 import sgrv.be.auth.SessionUser
 import sgrv.be.core.{CapabilityRegistry, CurrentUserContributors, PluginStatus, RequestContext, RouteDiscovery}
 import zio.*
@@ -97,13 +97,22 @@ class CountingSessionSuite extends munit.FunSuite:
     assertEquals(skipped, Some(Set("firestore", "session-store")))
 
   test("the account's session is both asked about and taken on the same path"):
-    // Taking the role is what opens the account's session. When nothing did, every later request that needed one
-    // found none, which reached the frontend as an unauthorised report and signed people out about ten seconds after
-    // they had signed in.
+    // Taking the role and opening a workout are separate operations: arriving as the counter says who may later use
+    // the explicit Start control, but does not create history merely because the screen was opened.
     val patterns = AcquirerPresenceRoute.routes.routes.map(_.routePattern)
 
     assert(patterns.exists(_.matches(Method.GET, Path(AcquirerPresence.Path))), "asked about")
     assert(patterns.exists(_.matches(Method.POST, Path(AcquirerPresence.Path))), "taken")
+
+  test("the explicit workout control route is discovered and accepts only POST"):
+    val statuses = run(RouteDiscovery.discover(CapabilityRegistry.empty))
+    val skipped = statuses.collectFirst:
+      case PluginStatus.Skipped(WorkoutControlRoute.id, _, missing) => missing.map(_.id).toSet
+    val patterns = WorkoutControlRoute.routes.routes.map(_.routePattern)
+
+    assertEquals(skipped, Some(Set("firestore", "session-store")))
+    assert(patterns.exists(_.matches(Method.POST, Path(WorkoutControl.Path))))
+    assert(!patterns.exists(_.matches(Method.GET, Path(WorkoutControl.Path))))
 
   test("the trace route is discovered on the classpath too"):
     // Same reason: a plugin can compile perfectly and still never be reached by the scan.

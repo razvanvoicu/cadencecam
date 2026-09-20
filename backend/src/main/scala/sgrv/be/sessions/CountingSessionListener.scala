@@ -11,11 +11,8 @@ import zio.http.Request
 import zio.ZIO
 import zio.json.ast.Json
 
-/** What signing in and signing out mean to the account's counting session.
-  *
-  * The host raises both events itself -- a login inside the OAuth callback, a logout inside the logout route -- so the
-  * frontend never has to ask for either. The session itself lives in [[AccountSessions]]; this is only what the two
-  * events do to it.
+/** Authentication events deliberately do not own the workout lifecycle. Start and Stop do; signing in and out only
+  * changes whether this browser may issue those commands.
   */
 object CountingSessionListener extends SessionListener:
   type Requires = Firestore
@@ -31,26 +28,11 @@ object CountingSessionListener extends SessionListener:
   override def onLogin(event: LoginEvent): ZIO[Requires, Throwable, Unit] =
     ZIO.logInfo(s"Signed in: ${event.user.email}")
 
-  /** Logging out anywhere ends the account's counting session.
-    *
-    * From any device, deliberately: the session belongs to the account rather than to the browser that opened it, so
-    * signing out is a statement that the account has finished, wherever it is made.
+  /** Logout is not Stop. An active workout remains available for its counter to finish (or for the idle timeout to
+    * close if that counter has gone away).
     */
   override def onLogout(event: LogoutEvent): ZIO[Requires, Throwable, Unit] =
-    for
-      firestore <- ZIO.service[Firestore]
-      named <- AccountKey.of(event.user.email)
-      _ <- named match
-        case None          => ZIO.logInfo(s"Signed out with nothing counting: ${event.user.email}")
-        case Some(account) =>
-          for
-            keeper <- AccountSessions.store(firestore)
-            closed <- keeper.close(account, SessionEnd.LoggedOut, event.at)
-            _ <- closed match
-              case Some(_) => ZIO.logInfo(s"Signed out; closed the counting session for ${event.user.email}")
-              case None    => ZIO.logInfo(s"Signed out with nothing counting: ${event.user.email}")
-          yield ()
-    yield ()
+    ZIO.logInfo(s"Signed out without changing workout state: ${event.user.email}")
 
   /** The identity the backend knows a browser by, or `None` when the request carries no session cookie.
     *

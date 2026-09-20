@@ -6,7 +6,7 @@ import com.google.cloud.firestore.{DocumentReference, DocumentSnapshot, Firestor
 import com.google.common.util.concurrent.MoreExecutors
 import java.time.{Duration, Instant}
 import scala.jdk.CollectionConverters.*
-import sgrv.api.{AccountSettings, Workout}
+import sgrv.api.{AccountSettings, RepProgress, Workout}
 import sgrv.be.store.GoogleFuture
 import zio.{Clock, Task, ZIO}
 import zio.json.*
@@ -20,20 +20,22 @@ import zio.json.*
   *
   * {{{
   *   CountingSessions/{keyed digest of the email}           activeSession, counter, lastRepAt, settings
+  *     peerSignals/{auto id}                                one step of a peer exchange
   *     sessions/{session id}                                startedAt, completedAt, endedBy, counter,
   *                                                          reps, repsAt, cadenceSum, elapsedSeconds
   *       traces/{trace id}                                  one captured recording (see TraceSchema)
-  *       signals/{auto id}                                  one step of a peer exchange
   * }}}
   */
 private[sessions] object AccountSchema:
   val collection = "CountingSessions"
   val sessions = "sessions"
 
-  /** What is filed under one workout: the signal recordings captured during it, and the messages its two devices
-    * exchanged to pair. Both belong to that workout alone and go with it when it is deleted.
+  /** Recordings belong to the workout that produced them. Peer messages live at account level because the dashboard
+    * must reach the counter before Start has created a workout.
     */
   val traces = "traces"
+  val peerSignals = "peerSignals"
+  /** The old per-workout mailbox, retained only so deleting an older workout removes everything beneath it. */
   val signals = "signals"
 
   /** The session in progress, absent when the account has none. One field, so "one active session per account" is a
@@ -51,7 +53,7 @@ private[sessions] object AccountSchema:
   val startedAt = "startedAt"
   val completedAt = "completedAt"
 
-  /** Why a session ended: the operator logged out, it went quiet, or another device took the role. */
+  /** Why a session ended: the operator stopped it, it went quiet, or another device took the role. */
   val endedBy = "endedBy"
 
   /** Which browser session is counting, so a takeover is a change of hand rather than a new session. */
@@ -74,7 +76,7 @@ private[sessions] object AccountSchema:
   val settings = "settings"
 
 private[sessions] enum SessionEnd:
-  case LoggedOut, Idle, TakenOver
+  case Stopped, Idle, TakenOver
 
 private[sessions] object AccountSessions:
   val idleVariable = "COUNTING_IDLE_MINUTES"
@@ -100,6 +102,10 @@ private[sessions] object AccountSessions:
     * session belongs to the account, and the account is whoever is signed in.
     */
   def active(firestore: Firestore, email: String): ZIO[Any, Throwable, Option[(String, String)]] =
+    accountState(firestore, email).map(_.flatMap((name, state) => state.active.map(name -> _)))
+
+  /** The account record after applying the idle timeout, paired with its opaque document name. */
+  def accountState(firestore: Firestore, email: String): ZIO[Any, Throwable, Option[(String, AccountState)]] =
     AccountKey
       .of(email)
       .flatMap:
@@ -109,7 +115,7 @@ private[sessions] object AccountSessions:
             keeper <- store(firestore)
             now <- Clock.instant
             state <- keeper.state(name, now)
-          yield state.active.map(name -> _)
+          yield Some(name -> state)
 
   /** The configured timeout, or the default when it is unset or unreadable. */
   def idleAfter: ZIO[Any, Nothing, Duration] =
@@ -186,7 +192,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       session: String,
       why: SessionEnd,
       now: Instant,
-      clearAccount: Boolean
+      clearCounter: Boolean
   ): Unit =
     val ended = Map[String, AnyRef](
       AccountSchema.completedAt -> stamp(now),
@@ -197,14 +203,11 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       ended.asJava,
       com.google.cloud.firestore.SetOptions.merge()
     )
-    if clearAccount then
-      val _ = transaction.update(
-        reference,
-        Map[String, AnyRef](
-          AccountSchema.activeSession -> com.google.cloud.firestore.FieldValue.delete(),
-          AccountSchema.counter -> com.google.cloud.firestore.FieldValue.delete()
-        ).asJava
-      )
+    val cleared = Map.newBuilder[String, AnyRef]
+    cleared += (AccountSchema.activeSession -> com.google.cloud.firestore.FieldValue.delete())
+    cleared += (AccountSchema.lastRepAt -> com.google.cloud.firestore.FieldValue.delete())
+    if clearCounter then cleared += (AccountSchema.counter -> com.google.cloud.firestore.FieldValue.delete())
+    val _ = transaction.update(reference, cleared.result().asJava)
 
   /** What is counting for this account, closing a session first if it has gone quiet for longer than the timeout.
     *
@@ -216,49 +219,91 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       val current = stateOf(snapshot)
       current.active match
         case Some(session) if AccountSessions.goneQuiet(quietSince(snapshot), now, idleAfter) =>
-          end(transaction, reference, session, SessionEnd.Idle, now, clearAccount = true)
+          end(transaction, reference, session, SessionEnd.Idle, now, clearCounter = true)
           AccountState(None, None)
         case _ => current
 
-  /** Takes the counter's role: joins the session in progress, or opens one when there is none. */
-  def takeCounting(name: String, browserSession: String, now: Instant): Task[String] =
+  /** Takes the counter's role without starting a workout. If a workout is already active this is a takeover within it,
+    * preserving the run while ensuring that only the new browser may report or stop it.
+    */
+  def takeCounter(name: String, browserSession: String, now: Instant): Task[AccountState] =
+    transact(name): (transaction, reference, snapshot) =>
+      val before = stateOf(snapshot)
+      val active = before.active.filterNot(_ => AccountSessions.goneQuiet(quietSince(snapshot), now, idleAfter))
+      before.active.filterNot(active.contains).foreach(session =>
+        end(transaction, reference, session, SessionEnd.Idle, now, clearCounter = false)
+      )
+      val moved = Map[String, AnyRef](AccountSchema.counter -> browserSession)
+      val _ = transaction.set(reference, moved.asJava, com.google.cloud.firestore.SetOptions.merge())
+      active.foreach: session =>
+        val _ = transaction.set(
+          reference.collection(AccountSchema.sessions).document(session),
+          moved.asJava,
+          com.google.cloud.firestore.SetOptions.merge()
+        )
+      AccountState(active, Some(browserSession))
+
+  /** Opens a workout for the browser currently holding the counter role. Repeated Start requests are idempotent. */
+  def startWorkout(name: String, browserSession: String, now: Instant): Task[Option[String]] =
     // Chosen outside the callback because Firestore may retry a transaction. Every attempt must create the same
     // session rather than leaving the caller with whichever random id the final attempt happened to choose.
     val newSession = f"${now.toEpochMilli}%d-${scala.util.Random.nextInt(0x1000)}%03x"
     transact(name): (transaction, reference, snapshot) =>
       val current = stateOf(snapshot)
-      current.active.filterNot(_ => AccountSessions.goneQuiet(quietSince(snapshot), now, idleAfter)) match
-        case Some(session) =>
-          val moved = Map[String, AnyRef](AccountSchema.counter -> browserSession)
+      Option.when(current.counter.contains(browserSession)):
+        current.active.filterNot(_ => AccountSessions.goneQuiet(quietSince(snapshot), now, idleAfter)) match
+          case Some(session) => session
+          case None          =>
+            current.active.foreach(session =>
+              end(transaction, reference, session, SessionEnd.Idle, now, clearCounter = false)
+            )
+            val opened = Map[String, AnyRef](
+              AccountSchema.startedAt -> stamp(now),
+              AccountSchema.counter -> browserSession
+            )
+            val _ = transaction.create(
+              reference.collection(AccountSchema.sessions).document(newSession),
+              opened.asJava
+            )
+            val _ = transaction.set(
+              reference,
+              Map[String, AnyRef](
+                AccountSchema.activeSession -> newSession,
+                AccountSchema.lastRepAt -> stamp(now)
+              ).asJava,
+              com.google.cloud.firestore.SetOptions.merge()
+            )
+            newSession
+
+  private def progressFields(progress: RepProgress, now: Instant): Map[String, AnyRef] =
+    Map[String, AnyRef](
+      AccountSchema.reps -> java.lang.Long.valueOf(progress.reps.toLong),
+      AccountSchema.repsAt -> stamp(now),
+      AccountSchema.cadenceSum -> java.lang.Double.valueOf(progress.cadenceSum),
+      AccountSchema.elapsedSeconds -> java.lang.Double.valueOf(progress.elapsedSeconds)
+    )
+
+  /** Writes the final measurement and closes the active workout in the same transaction. The counter role remains so
+    * either screen can start the next workout without re-entering or re-pairing.
+    */
+  def stopWorkout(
+      name: String,
+      browserSession: String,
+      progress: RepProgress,
+      now: Instant
+  ): Task[Option[String]] =
+    transact(name): (transaction, reference, snapshot) =>
+      val current = stateOf(snapshot)
+      current.active
+        .filter(_ => current.counter.contains(browserSession))
+        .map: session =>
           val _ = transaction.set(
             reference.collection(AccountSchema.sessions).document(session),
-            moved.asJava,
+            progressFields(progress, now).asJava,
             com.google.cloud.firestore.SetOptions.merge()
           )
-          val _ = transaction.set(reference, moved.asJava, com.google.cloud.firestore.SetOptions.merge())
+          end(transaction, reference, session, SessionEnd.Stopped, now, clearCounter = false)
           session
-        case None =>
-          current.active.foreach(session =>
-            end(transaction, reference, session, SessionEnd.Idle, now, clearAccount = false)
-          )
-          val opened = Map[String, AnyRef](
-            AccountSchema.startedAt -> stamp(now),
-            AccountSchema.counter -> browserSession
-          )
-          val _ = transaction.create(
-            reference.collection(AccountSchema.sessions).document(newSession),
-            opened.asJava
-          )
-          val _ = transaction.set(
-            reference,
-            Map[String, AnyRef](
-              AccountSchema.activeSession -> newSession,
-              AccountSchema.counter -> browserSession,
-              AccountSchema.lastRepAt -> stamp(now)
-            ).asJava,
-            com.google.cloud.firestore.SetOptions.merge()
-          )
-          newSession
 
   /** Records what a workout has measured so far. Also moves the account's idle mark, whatever the count: see
     * [[AccountSchema.lastRepAt]].
@@ -278,12 +323,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
         .map: session =>
           val _ = transaction.set(
             reference.collection(AccountSchema.sessions).document(session),
-            Map[String, AnyRef](
-              AccountSchema.reps -> java.lang.Long.valueOf(reps.toLong),
-              AccountSchema.repsAt -> stamp(now),
-              AccountSchema.cadenceSum -> java.lang.Double.valueOf(cadenceSum),
-              AccountSchema.elapsedSeconds -> java.lang.Double.valueOf(elapsedSeconds)
-            ).asJava,
+            progressFields(RepProgress(reps, cadenceSum, elapsedSeconds), now).asJava,
             com.google.cloud.firestore.SetOptions.merge()
           )
           val _ = transaction.set(
@@ -356,7 +396,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
             account(name).update(
               Map[String, AnyRef](
                 AccountSchema.activeSession -> com.google.cloud.firestore.FieldValue.delete(),
-                AccountSchema.counter -> com.google.cloud.firestore.FieldValue.delete()
+                AccountSchema.lastRepAt -> com.google.cloud.firestore.FieldValue.delete()
               ).asJava
             )
           )
@@ -389,6 +429,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
           else ZIO.foreachDiscard(documents)(document => forget(document.getReference)) *> nextPage
     for
       _ <- nextPage
+      _ <- deleteAll(account(name).collection(AccountSchema.peerSignals))
       _ <- GoogleFuture.fromApiFuture(account(name).delete())
       _ <- deleteAll(
         firestore
@@ -422,14 +463,11 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       )
       .unit
 
-  /** Files one step of a peer exchange under the session the two devices are pairing for.
-    *
-    * Under the session rather than the account, so an exchange cannot outlive what it was pairing for: when the session
-    * closes, the offers and candidates that belonged to it go with it.
+  /** Files one step of a peer exchange under the account. Pairing has to precede Start so a dashboard can ask the
+    * counter to create the workout; the two-minute read window keeps abandoned exchanges from being reused.
     */
   def postSignal(
       name: String,
-      session: String,
       from: String,
       kind: String,
       body: String,
@@ -448,9 +486,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
     GoogleFuture
       .fromApiFuture(
         account(name)
-          .collection(AccountSchema.sessions)
-          .document(session)
-          .collection(AccountSchema.signals)
+          .collection(AccountSchema.peerSignals)
           .document()
           .create(fields.asJava)
       )
@@ -463,16 +499,13 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
     */
   def signalsFor(
       name: String,
-      session: String,
       mine: String,
       since: Option[Instant],
       now: Instant
   ): Task[(Seq[(String, String, String)], String)] =
     val floor = since.getOrElse(now.minusSeconds(120))
     val query = account(name)
-      .collection(AccountSchema.sessions)
-      .document(session)
-      .collection(AccountSchema.signals)
+      .collection(AccountSchema.peerSignals)
       .whereGreaterThan("postedAt", stamp(floor))
       .orderBy("postedAt", com.google.cloud.firestore.Query.Direction.ASCENDING)
       .limit(64)
@@ -505,5 +538,5 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       stateOf(snapshot).active.map: session =>
         val actual =
           if AccountSessions.goneQuiet(quietSince(snapshot), now, idleAfter) then SessionEnd.Idle else why
-        end(transaction, reference, session, actual, now, clearAccount = true)
+        end(transaction, reference, session, actual, now, clearCounter = true)
         session

@@ -28,4 +28,4 @@ class AccountSessionsSuite extends munit.FunSuite:
     assert(!AccountSessions.goneQuiet(None, now, tenMinutes))
 
   test("a session is kept as a record, and says why it ended"):
-    assertEquals(SessionEnd.values.map(_.toString).toSet, Set("LoggedOut", "Idle", "TakenOver"))
+    assertEquals(SessionEnd.values.map(_.toString).toSet, Set("Stopped", "Idle", "TakenOver"))

@@ -40,8 +40,17 @@ private[fe] final class ApiClient(private[fe] val http: HttpService):
   def acquirerPresence(): ApiCall[AcquirerPresence] =
     getJson[AcquirerPresence](AcquirerPresence.Path, "read counter presence", "counter presence")
 
-  def takeCounterRole(): ApiCall[Unit] =
-    sendEmpty(AcquirerPresence.Path, dom.HttpMethod.POST, "take the counting role")
+  def takeCounterRole(): ApiCall[WorkoutState] =
+    sendEmptyJson[WorkoutState](AcquirerPresence.Path, dom.HttpMethod.POST, "take the counting role", "workout state")
+
+  def controlWorkout(action: WorkoutAction, progress: Option[RepProgress] = None): ApiCall[WorkoutState] =
+    sendJsonFor[WorkoutState](
+      WorkoutControl.Path,
+      dom.HttpMethod.POST,
+      WorkoutControl(action, progress).toJson,
+      s"${action.toString.toLowerCase} the workout",
+      "workout state"
+    )
 
   def workoutHistory(): ApiCall[WorkoutHistory] =
     getJson[WorkoutHistory](WorkoutHistory.Path, "read workout history", "workout history")
@@ -77,6 +86,29 @@ private[fe] final class ApiClient(private[fe] val http: HttpService):
       headers = js.Dictionary("Content-Type" -> "application/json")
       body = requestBody
     request(() => http.send(path, init), action, RetryPolicy.Never)(_ => Right(()))
+
+  private def sendJsonFor[A: JsonDecoder](
+      path: String,
+      requestMethod: dom.HttpMethod,
+      requestBody: String,
+      action: String,
+      description: String
+  ): ApiCall[A] =
+    val init = new dom.RequestInit:
+      method = requestMethod
+      headers = js.Dictionary("Content-Type" -> "application/json")
+      body = requestBody
+    request(() => http.send(path, init), action, RetryPolicy.Never)(decodeJson[A](_, description))
+
+  private def sendEmptyJson[A: JsonDecoder](
+      path: String,
+      requestMethod: dom.HttpMethod,
+      action: String,
+      description: String
+  ): ApiCall[A] =
+    val init = new dom.RequestInit:
+      method = requestMethod
+    request(() => http.send(path, init), action, RetryPolicy.Never)(decodeJson[A](_, description))
 
   private def sendEmpty(path: String, requestMethod: dom.HttpMethod, action: String): ApiCall[Unit] =
     val init = new dom.RequestInit:

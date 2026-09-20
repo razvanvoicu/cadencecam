@@ -15,6 +15,7 @@ private[fe] final class DashboardController(http: HttpService):
   val reading: Signal[Option[LiveReading]] = live.signal.map(_.flatMap(_.reading))
   val reps: Signal[Int] = reading.map(_.fold(0)(_.reps))
   val elapsedSeconds: Signal[Double] = reading.map(_.fold(0.0)(_.elapsedSeconds))
+  val workoutActive: Signal[Boolean] = reading.map(_.exists(_.active))
 
   /** The last few reps, as they were when each was counted. Kept here rather than sent, because a pace is a property of
     * the reps a watcher has seen and the counter has no reason to hold a second window of its own.

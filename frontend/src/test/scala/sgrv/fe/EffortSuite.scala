@@ -176,6 +176,7 @@ class EffortSuite extends FunSuite:
     assertEquals(parsed.map(_.reps), Right(57))
     assertEquals(parsed.map(_.cadenceSum), Right(29.4))
     assertEquals(parsed.map(_.lastRepSeconds), Right(0.0))
+    assertEquals(parsed.map(_.active), Right(false))
 
   test("the window takes a reading only when it carries reps it has not seen"):
     // Readings arrive about once a second whether or not anything was counted. Recording each would make this a

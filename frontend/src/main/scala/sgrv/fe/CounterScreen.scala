@@ -2,7 +2,7 @@ package sgrv.fe
 
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
-import sgrv.api.{LiveCommand, LiveReading, LiveState, PeerRole}
+import sgrv.api.{LiveCommand, LiveReading, LiveState, PeerRole, WorkoutAction}
 import sgrv.fe.acquire.{
   Adjustable,
   Camera,
@@ -102,6 +102,9 @@ private[fe] object CounterScreen:
     val adjustables = Var(Seq.empty[Adjustable])
     val adjustOpen = Var(false)
     val roleRequests = RequestScope()
+    val workoutRequests = RequestScope()
+    val workoutActive = Var(false)
+    val workoutBusy = Var(false)
 
     val video = videoTag(cls := "camera-video")
     // The overlay's lines sit at 50% of this box, so the box must be exactly the frame: its aspect ratio is set from the
@@ -133,6 +136,7 @@ private[fe] object CounterScreen:
           latestStatus,
           Device.describe(),
           counting = lock.now().isInstanceOf[LockState.Locked],
+          active = workoutActive.now(),
           // Both carry whatever a previous page load left behind, for the same reason the count does: a watching device
           // must not see a set restart because the phone showing it reloaded.
           // Whole seconds. The clock runs on while a set rests, so an unrounded figure would differ on every one of the
@@ -148,9 +152,7 @@ private[fe] object CounterScreen:
         // the ordinary case, and there is no server left to tell.
         if peer.send(LiveState(acquiring = true, reading = Some(reading)).toJson) then lastPublished = Some(reading)
 
-    def onSample(sample: Sample): Unit =
-      signals.record(sample)
-      totalSamples += 1
+    def countSample(sample: Sample): Unit =
       // The detector's own window, not the whole buffer. The buffer is now six minutes so a trace can carry a whole
       // session, and re-filtering all of it on every sample would be five times the work at ten hertz.
       val window = signals.window(QuadrantSignals.DetectionWindow)
@@ -174,6 +176,13 @@ private[fe] object CounterScreen:
       lock.set(reading.lock)
       signalMargin.set(reading.margin)
       publish()
+
+    def onSample(sample: Sample): Unit =
+      signals.record(sample)
+      totalSamples += 1
+      // The camera and traces remain live while stopped, but the detector is frozen. Otherwise movement between
+      // workouts would silently become the opening reps of the next one before Start had been pressed.
+      if workoutActive.now() && !workoutBusy.now() then countSample(sample)
       tick.update(_ + 1)
 
     /** Starts counting over from nothing: the tally, the detector, and the signal behind them. Reached from this
@@ -205,6 +214,47 @@ private[fe] object CounterScreen:
       lastPublished = None
       publish()
 
+    def reportWhileActive(): Unit =
+      reporter.start(() => baseline.plus(counter.reading).progress)
+
+    def startWorkout(): Unit =
+      if !workoutActive.now() && !workoutBusy.now() then
+        workoutBusy.set(true)
+        workoutRequests.run(api.controlWorkout(WorkoutAction.Start)):
+          case Right(state) if state.active =>
+            resetCount()
+            workoutActive.set(true)
+            workoutBusy.set(false)
+            reportWhileActive()
+            lastPublished = None
+            publish()
+          case Right(_) =>
+            workoutBusy.set(false)
+            dom.console.warn("The server did not start the workout")
+          case Left(error) =>
+            workoutBusy.set(false)
+            dom.console.warn(error.message)
+
+    def stopWorkout(): Unit =
+      if workoutActive.now() && !workoutBusy.now() then
+        workoutBusy.set(true)
+        reporter.stop()
+        val finalProgress = baseline.plus(counter.reading).progress
+        workoutRequests.run(api.controlWorkout(WorkoutAction.Stop, Some(finalProgress))):
+          case Right(state) if !state.active =>
+            workoutActive.set(false)
+            workoutBusy.set(false)
+            lastPublished = None
+            publish()
+          case Right(_) =>
+            workoutBusy.set(false)
+            reportWhileActive()
+            dom.console.warn("The server did not stop the workout")
+          case Left(error) =>
+            workoutBusy.set(false)
+            reportWhileActive()
+            dom.console.warn(error.message)
+
     def captureTrace(note: Option[String] = None): Unit =
       if TraceCapture.worthSending(signals) then
         TraceCapture.send(
@@ -232,6 +282,8 @@ private[fe] object CounterScreen:
     def obey(text: String): Unit =
       text.fromJson[LiveCommand] match
         case Right(LiveCommand.Reset)              => resetCount()
+        case Right(LiveCommand.Start)              => startWorkout()
+        case Right(LiveCommand.Stop)               => stopWorkout()
         case Right(LiveCommand.CaptureTrace(note)) => captureTrace(note)
         case Left(details)                         => dom.console.warn(s"Ignoring an unreadable command: $details")
 
@@ -393,18 +445,20 @@ private[fe] object CounterScreen:
         // there is no session to carry it into.
         roleRequests.run(api.takeCounterRole()):
           case Left(error) => dom.console.warn(error.message)
-          case Right(_)    => ()
+          case Right(state) =>
+            workoutActive.set(state.active)
+            if state.active then reportWhileActive() else resetCount()
+            lastPublished = None
+            publish()
         startCamera()
         // Leaving this screen is what releases the camera; staying would leave a phone counting into a room it no
         // longer owns, with its own tally still climbing on screen.
         reporter.onDisplaced = () => show(Screen.Selection)
-        // Reads the workout rather than being pushed it, so a tick reports whatever is current at the moment it fires
-        // and no report can be left describing a count that has since moved on.
-        reporter.start(() => baseline.plus(counter.reading).progress)
       },
       onUnmountCallback { _ =>
         live = false
         roleRequests.invalidate()
+        workoutRequests.invalidate()
         peer.close()
         reporter.stop()
         release()
@@ -439,7 +493,14 @@ private[fe] object CounterScreen:
               )
         ),
         Readouts.reading(repCount.signal.map(_.toString), "reps"),
-        Readouts.controls(statusText, () => resetCount(), signalMargin.signal),
+        Readouts.controls(
+          statusText,
+          workoutActive.signal,
+          workoutBusy.signal,
+          () => startWorkout(),
+          () => stopWorkout(),
+          signalMargin.signal
+        ),
         Menu.sheet(
           menuOpen,
           // Shown only when there is somewhere to switch to.

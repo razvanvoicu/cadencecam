@@ -1,7 +1,7 @@
 package sgrv.be.sessions
 
 import com.google.cloud.firestore.Firestore
-import sgrv.api.AcquirerPresence
+import sgrv.api.{AcquirerPresence, WorkoutState}
 import sgrv.be.BackendCapabilities
 import sgrv.be.auth.SessionStore
 import sgrv.be.core.{AccessPolicy, BackendPlugin, CapabilitySet, RequestContext}
@@ -16,8 +16,7 @@ import zio.json.*
   * counting device's requests happen to reach.
   *
   * Taking the role lives here too, on the same path, because the two are one question asked twice — who is counting,
-  * and let it be this device. It is also what opens the account's session when it has none: every later request that
-  * writes to a session -- a progress report, a recording, a pairing message -- needs one to have been opened here.
+  * and let it be this device. It does not open a workout; Start and Stop alone own that lifecycle.
   */
 object AcquirerPresenceRoute extends BackendPlugin:
   type Requires = Firestore & SessionStore
@@ -36,22 +35,14 @@ object AcquirerPresenceRoute extends BackendPlugin:
     ZIO.serviceWithZIO[RequestContext]:
       case RequestContext.Authenticated(_, user) =>
         ZIO
-          .serviceWithZIO[Firestore](firestore => AccountSessions.active(firestore, user.email))
+          .serviceWithZIO[Firestore](firestore => AccountSessions.accountState(firestore, user.email))
+          .map(state => noStore(Response.json(AcquirerPresence(state.exists(_._2.counter.isDefined)).toJson)))
           .catchAll: error =>
-            ZIO.logWarningCause(
-              "Could not read the account's session; reporting nothing counting",
-              Cause.fail(error)
-            ) *>
-              ZIO.none
-          .map(active => noStore(Response.json(AcquirerPresence(active.isDefined).toJson)))
+            ZIO.logWarningCause("Could not read the account's counter presence", Cause.fail(error)) *>
+              ZIO.succeed(noStore(Response.json(AcquirerPresence(false).toJson)))
       case _ => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
 
-  /** Takes the counter's role for the browser session asking, opening the account's session if it has none.
-    *
-    * Idempotent, and a takeover rather than a new session: a second device arriving moves the role within the session
-    * the account already has, so a set in progress is not split in two. The device it displaces learns of it from its
-    * next progress report being refused.
-    */
+  /** Takes the counter's role for the browser session asking. Idempotent, and a takeover rather than a new workout. */
   private def take(request: Request): ZIO[Requires & RequestContext, Nothing, Response] =
     ZIO.serviceWithZIO[RequestContext]:
       case RequestContext.Authenticated(_, user) =>
@@ -78,9 +69,9 @@ object AcquirerPresenceRoute extends BackendPlugin:
             for
               keeper <- AccountSessions.store(firestore)
               now <- Clock.instant
-              session <- keeper.takeCounting(named, browserSession, now)
-              _ <- ZIO.logInfo(s"Counting for $email in session $session")
-            yield noStore(Response.status(Status.NoContent))
+              state <- keeper.takeCounter(named, browserSession, now)
+              _ <- ZIO.logInfo(s"Counter role taken for $email")
+            yield noStore(Response.json(WorkoutState(state.active.isDefined).toJson))
       yield response
     taken.catchAll: error =>
       ZIO.logWarningCause("Could not take the counting role", Cause.fail(error)) *>
