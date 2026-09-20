@@ -28,8 +28,14 @@ private[fe] object Menu:
       typ := "button",
       aria.label := "Menu",
       aria.expanded <-- open.signal,
-      // U+2630, the trigram for heaven: three bars, in the system fonts of every platform this runs on.
-      "☰",
+      // An SVG rather than U+2630: the three strokes are symmetric around the viewBox centre, independent of the
+      // uneven baseline whitespace different system fonts give the Unicode glyph.
+      svg.svg(
+        svg.cls := "menu-icon",
+        svg.viewBox := "0 0 24 24",
+        aria.hidden := true,
+        svg.path(svg.d := "M3 6H21 M3 12H21 M3 18H21")
+      ),
       onClick --> (_ => open.update(shown => !shown))
     )
 

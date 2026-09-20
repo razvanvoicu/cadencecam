@@ -643,6 +643,7 @@ button,
 }
 
 .dashboard .menu-button {
+  --hamburger-width: 7vw;
   display: grid;
   place-items: center;
   width: 12vw;
@@ -650,50 +651,49 @@ button,
   min-width: 12vw;
   min-height: 12vw;
   border-radius: 2vw;
-  font-size: 7vw;
 }
 
 @media (min-width: 48rem) {
   .dashboard .menu-button {
+    --hamburger-width: 3.5vw;
     width: 6vw;
     height: 6vw;
     min-width: 6vw;
     min-height: 6vw;
     border-radius: 1vw;
-    font-size: 3.5vw;
   }
 }
 
 @media (min-width: 80rem) {
   .dashboard .menu-button {
+    --hamburger-width: 2.8vw;
     width: 4.8vw;
     height: 4.8vw;
     min-width: 4.8vw;
     min-height: 4.8vw;
     border-radius: 0.8vw;
-    font-size: 2.8vw;
   }
 }
 
 @media (min-width: 100rem) {
   .dashboard .menu-button {
+    --hamburger-width: 2vw;
     width: 3.5vw;
     height: 3.5vw;
     min-width: 3.5vw;
     min-height: 3.5vw;
     border-radius: 0.6vw;
-    font-size: 2vw;
   }
 }
 
 @media (min-width: 160rem) {
   .dashboard .menu-button {
+    --hamburger-width: 1.3vw;
     width: 2.2vw;
     height: 2.2vw;
     min-width: 2.2vw;
     min-height: 2.2vw;
     border-radius: 0.4vw;
-    font-size: 1.3vw;
   }
 }
 
@@ -994,9 +994,9 @@ button,
 }
 
 .menu-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  --hamburger-width: 1.2rem;
+  display: grid;
+  place-items: center;
   min-width: 2.75rem;
   min-height: 2.75rem;
   padding: 0;
@@ -1007,6 +1007,19 @@ button,
   font-size: 1.2rem;
   line-height: 1;
   cursor: pointer;
+}
+
+/* The SVG's square viewBox and equally spaced strokes centre the visible drawing itself, independent of platform font
+   metrics. `display: block` also removes the baseline gap that an inline SVG would otherwise reserve underneath. */
+.menu-icon {
+  display: block;
+  width: var(--hamburger-width);
+  height: var(--hamburger-width);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  pointer-events: none;
 }
 
 /* Catches a tap anywhere outside the menu. Behind the menu, in front of everything else. */
