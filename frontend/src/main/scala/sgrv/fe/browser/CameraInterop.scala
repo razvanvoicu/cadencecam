@@ -7,8 +7,8 @@ import scala.scalajs.js
 
 /** The browser shapes that scalajs-dom either does not describe, or describes as `js.Any`.
   *
-  * Camera capabilities are deliberately open dictionaries: vendors add controls before the browser typings know
-  * about them. The rest of the frontend should not have to become dynamic as a result, so all inspection and request
+  * Camera capabilities are deliberately open dictionaries: vendors add controls before the browser typings know about
+  * them. The rest of the frontend should not have to become dynamic as a result, so all inspection and request
   * construction lives here and is exposed as the small typed vocabulary below.
   */
 private[fe] object CameraInterop:
@@ -38,7 +38,8 @@ private[fe] object CameraInterop:
   final case class NumericRange(min: Option[Double], max: Option[Double], step: Option[Double])
 
   final class Properties private (private[CameraInterop] val raw: js.Dictionary[js.Any]):
-    private def value(name: String): Option[js.Any] = raw.get(name).filter(value => value != null && !js.isUndefined(value))
+    private def value(name: String): Option[js.Any] =
+      raw.get(name).filter(value => value != null && !js.isUndefined(value))
 
     def number(name: String): Option[Double] =
       value(name)
@@ -54,7 +55,9 @@ private[fe] object CameraInterop:
     def modes(name: String): Seq[String] =
       value(name)
         .filter(value => js.Array.isArray(value))
-        .map(_.asInstanceOf[js.Array[js.Any]].toSeq.collect { case value if js.typeOf(value) == "string" => value.toString })
+        .map(_.asInstanceOf[js.Array[js.Any]].toSeq.collect {
+          case value if js.typeOf(value) == "string" => value.toString
+        })
         .getOrElse(Seq.empty)
 
     def range(name: String): Option[NumericRange] =
@@ -83,10 +86,10 @@ private[fe] object CameraInterop:
       val raw = js.Dictionary.empty[js.Any]
       entries.foreach: (name, property) =>
         raw(name) = property match
-          case Property.Number(value)           => value
-          case Property.Text(value)             => value
-          case Property.Modes(values)           => js.Array(values*)
-          case Property.Range(min, max, step)    =>
+          case Property.Number(value)         => value
+          case Property.Text(value)           => value
+          case Property.Modes(values)         => js.Array(values*)
+          case Property.Range(min, max, step) =>
             val range = js.Dictionary[js.Any]("min" -> min, "max" -> max)
             step.foreach(value => range("step") = value)
             range
@@ -140,13 +143,19 @@ private[fe] object CameraInterop:
       case None     => js.Dynamic.literal(facingMode = "environment")
     video.updateDynamic("width")(js.Dynamic.literal(ideal = fullFieldProbe))
     video.updateDynamic("height")(js.Dynamic.literal(ideal = fullFieldProbe))
+    // `none` restricts selection to a mode the camera, driver or operating system actually offers. Without it the
+    // browser is explicitly allowed to manufacture the requested shape by cropping a larger frame, which defeats a
+    // request whose purpose is to retain the field of view. An unknown constraint is ignored by older browsers; a
+    // browser that implements resizeMode must offer `none`.
+    video.updateDynamic("resizeMode")(js.Dynamic.literal(exact = "none"))
     js.Dynamic.literal(audio = false, video = video).asInstanceOf[dom.MediaStreamConstraints]
 
   def widestConstraints(fullFieldProbe: Int): dom.MediaTrackConstraints =
     js.Dynamic
       .literal(
         width = js.Dynamic.literal(ideal = fullFieldProbe),
-        height = js.Dynamic.literal(ideal = fullFieldProbe)
+        height = js.Dynamic.literal(ideal = fullFieldProbe),
+        resizeMode = js.Dynamic.literal(exact = "none")
       )
       .asInstanceOf[dom.MediaTrackConstraints]
 
@@ -155,7 +164,8 @@ private[fe] object CameraInterop:
       .literal(
         width = js.Dynamic.literal(ideal = width),
         height = js.Dynamic.literal(ideal = height),
-        aspectRatio = js.Dynamic.literal(ideal = width.toDouble / height)
+        aspectRatio = js.Dynamic.literal(ideal = width.toDouble / height),
+        resizeMode = js.Dynamic.literal(exact = "none")
       )
       .asInstanceOf[dom.MediaTrackConstraints]
 

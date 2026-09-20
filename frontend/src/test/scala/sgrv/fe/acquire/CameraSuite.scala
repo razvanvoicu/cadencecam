@@ -15,42 +15,32 @@ class CameraSuite extends FunSuite:
     // A 4:3 phone sensor must not be squeezed into 16:9; that crop is what loses the view. Turning it on end is not
     // a crop, so the shape is compared the long way round.
     Seq((4032, 3024), (3264, 2448), (1920, 1080), (2448, 3264)).foreach: (nativeWidth, nativeHeight) =>
-      for portrait <- Seq(true, false) do
-        val (width, height) = Camera.wantedSize(nativeWidth, nativeHeight, portrait, Camera.MinimumPixels)
-        val longWays = aspect(math.max(width, height), math.min(width, height))
-        val nativeLongWays = aspect(math.max(nativeWidth, nativeHeight), math.min(nativeWidth, nativeHeight))
+      val (width, height) = Camera.wantedSize(nativeWidth, nativeHeight, Camera.MinimumPixels)
+      val longWays = aspect(math.max(width, height), math.min(width, height))
+      val nativeLongWays = aspect(math.max(nativeWidth, nativeHeight), math.min(nativeWidth, nativeHeight))
 
-        assertEqualsDouble(
-          longWays,
-          nativeLongWays,
-          0.02,
-          s"${nativeWidth}x$nativeHeight became ${width}x$height, changing its shape"
-        )
+      assertEqualsDouble(
+        longWays,
+        nativeLongWays,
+        0.02,
+        s"${nativeWidth}x$nativeHeight became ${width}x$height, changing its shape"
+      )
 
-  test("a phone held upright is asked for an upright frame"):
-    // The point of the whole exercise. A sensor's long axis lies along the phone's, so the whole of what it sees
-    // while the phone stands up is a tall picture; a wide one in that position is the middle band of it, with the
-    // rest dropped -- and the rest is where the exercise is.
-    val (width, height) = Camera.wantedSize(4032, 3024, portrait = true, Camera.MinimumPixels)
+  test("camera constraints stay in primary landscape orientation"):
+    // Media capture constraints are interpreted in primary orientation even while the delivered frame is portrait.
+    // Passing 3024x4032 back as constraints would ask for a portrait source which the browser may then rotate into a
+    // landscape delivery. Both reported orientations must therefore produce the same landscape constraint.
+    val landscape = Camera.wantedSize(4032, 3024, Camera.MinimumPixels)
+    val portrait = Camera.wantedSize(3024, 4032, Camera.MinimumPixels)
 
-    assert(height > width, s"a phone standing upright was asked for ${width}x$height")
-    assertEqualsDouble(aspect(width, height), 3.0 / 4, 0.02)
-
-  test("a device lying down is asked for a frame lying down"):
-    val (width, height) = Camera.wantedSize(4032, 3024, portrait = false, Camera.MinimumPixels)
-
-    assert(width > height, s"a screen lying down was asked for ${width}x$height")
-    assertEqualsDouble(aspect(width, height), 4.0 / 3, 0.02)
-
-  test("the orientation comes from the screen's own shape"):
-    assert(Camera.wantsPortrait(390, 780), "a phone held upright")
-    assert(!Camera.wantsPortrait(780, 390), "the same phone on its side")
-    assert(Camera.wantsPortrait(800, 800), "a square screen is no worse served upright")
+    assertEquals(landscape, portrait)
+    assert(landscape._1 > landscape._2, s"camera constraints were not in primary orientation: $landscape")
+    assertEqualsDouble(aspect(landscape._1, landscape._2), 4.0 / 3, 0.02)
 
   test("the frame carries at least the minimum, and not a great deal more"):
     // A floor rather than a budget: pixels past it buy nothing a sample can use, and cost throughput on a phone.
     Seq((4032, 3024), (3264, 2448), (1920, 1080), (8000, 6000)).foreach: (nativeWidth, nativeHeight) =>
-      val (width, height) = Camera.wantedSize(nativeWidth, nativeHeight, portrait = true, Camera.MinimumPixels)
+      val (width, height) = Camera.wantedSize(nativeWidth, nativeHeight, Camera.MinimumPixels)
 
       assert(
         width * height >= Camera.MinimumPixels,
@@ -63,26 +53,36 @@ class CameraSuite extends FunSuite:
 
   test("a camera that cannot reach the floor is asked for everything it has, not more"):
     // Asking a 640x480 webcam for a megapixel invites it to answer with some other mode entirely.
-    val (width, height) = Camera.wantedSize(640, 480, portrait = false, Camera.MinimumPixels)
+    val (width, height) = Camera.wantedSize(640, 480, Camera.MinimumPixels)
 
     assertEquals((width, height), (640, 480))
 
   test("dimensions stay even, so the quadrant split is exact"):
     Seq((4032, 3024), (1999, 1001), (641, 481), (3024, 4032)).foreach: (nativeWidth, nativeHeight) =>
-      val (width, height) = Camera.wantedSize(nativeWidth, nativeHeight, portrait = true, Camera.MinimumPixels)
+      val (width, height) = Camera.wantedSize(nativeWidth, nativeHeight, Camera.MinimumPixels)
 
       assertEquals(width % 2, 0, s"$width is odd")
       assertEquals(height % 2, 0, s"$height is odd")
 
   test("a 4:3 sensor yields more field of view than the 16:9 request it replaces"):
     // The concrete gain: the frame is no longer cut down to a widescreen strip.
-    val (width, height) = Camera.wantedSize(4032, 3024, portrait = false, Camera.MinimumPixels)
+    val (width, height) = Camera.wantedSize(4032, 3024, Camera.MinimumPixels)
 
     assert(aspect(width, height) < 1.4, f"expected a 4:3 frame, got ${aspect(width, height)}%.2f")
     assert(width * height > 1280 * 720, s"${width}x$height should carry more than the old fixed 1280x720")
 
   test("refuses a camera reporting no size at all"):
-    intercept[IllegalArgumentException](Camera.wantedSize(0, 480, portrait = true, Camera.MinimumPixels))
+    intercept[IllegalArgumentException](Camera.wantedSize(0, 480, Camera.MinimumPixels))
+
+  test("camera requests prohibit browser cropping and scaling"):
+    val opening = Camera.openingConstraints(None).asInstanceOf[js.Dynamic]
+    val video = opening.video.asInstanceOf[js.Dynamic]
+    val widest = sgrv.fe.browser.CameraInterop.widestConstraints(Camera.FullFieldProbe).asInstanceOf[js.Dynamic]
+    val reduced = sgrv.fe.browser.CameraInterop.sizeConstraints(1156, 866).asInstanceOf[js.Dynamic]
+
+    assertEquals(video.resizeMode.exact.asInstanceOf[String], "none")
+    assertEquals(widest.resizeMode.exact.asInstanceOf[String], "none")
+    assertEquals(reduced.resizeMode.exact.asInstanceOf[String], "none")
 
   test("a camera on the same side as the screen is mirrored, one facing away is not"):
     assert(Camera.mirrors(Some("user")), "a front camera shows the viewer to themselves")
@@ -147,6 +147,42 @@ class CameraSuite extends FunSuite:
     )
 
     assertEquals(Camera.manualCapable(odd).map(_.mode), Seq("focusMode"))
+
+  test("single-shot is preferred to manual because it stops metering without a dark intermediate state"):
+    val control = ManualControl("exposureMode", Seq("exposureTime", "iso"))
+    val capabilities = Properties(
+      "exposureMode" -> Property.Modes(Seq("continuous", "single-shot", "manual")),
+      "exposureTime" -> Property.Range(0.25, 1000),
+      "iso" -> Property.Range(50, 3200)
+    )
+    // Deliberately no readings. Single-shot leaves the final automatic calculation inside the camera and therefore
+    // does not depend on the browser reporting values which can be copied back accurately.
+    val hold = Camera.holdFor(control, Properties.empty, capabilities).get
+
+    assertEquals(hold.mode, "single-shot")
+    assertEquals(hold.values, None)
+    assert(!hold.manual)
+
+  test("manual remains the fallback when single-shot is unavailable and every governed value can be copied"):
+    val control = ManualControl("exposureMode", Seq("exposureTime", "iso"))
+    val capabilities = Properties(
+      "exposureMode" -> Property.Modes(Seq("continuous", "manual")),
+      "exposureTime" -> Property.Range(0.25, 1000),
+      "iso" -> Property.Range(50, 3200)
+    )
+    val settings = numbers("exposureTime" -> 83.3, "iso" -> 100)
+    val hold = Camera.holdFor(control, settings, capabilities).get
+
+    assertEquals(hold.mode, "manual")
+    assertEquals(hold.values.flatMap(_.number("exposureTime")), Some(83.3))
+    assertEquals(hold.values.flatMap(_.number("iso")), Some(100.0))
+    assert(hold.manual)
+
+  test("manual is not entered when the values needed to leave it usable are unavailable"):
+    val control = ManualControl("exposureMode", Seq("exposureTime", "iso"))
+    val capabilities = Properties("exposureMode" -> Property.Modes(Seq("continuous", "manual")))
+
+    assertEquals(Camera.holdFor(control, numbers("exposureTime" -> 83.3), capabilities), None)
 
   test("the controls held still are the ones that re-meter on the movement being counted"):
     assertEquals(Camera.manualControls.map(_.mode), Seq("exposureMode", "whiteBalanceMode", "focusMode"))

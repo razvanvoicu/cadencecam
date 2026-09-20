@@ -2,7 +2,16 @@ package sgrv.fe
 
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
-import sgrv.api.{AccountSettings, LiveCommand, LiveReading, LiveState, PeerRole, RepProgress, WorkoutAction, WorkoutSnapshot}
+import sgrv.api.{
+  AccountSettings,
+  LiveCommand,
+  LiveReading,
+  LiveState,
+  PeerRole,
+  RepProgress,
+  WorkoutAction,
+  WorkoutSnapshot
+}
 import sgrv.fe.acquire.{
   Adjustable,
   Camera,
@@ -65,6 +74,10 @@ private[fe] object CounterScreen:
     val menuOpen = Var(false)
     val workoutActive = Var(false)
     val workoutBusy = Var(false)
+    // Automatic-to-fixed camera changes are not signal. The sampler keeps running so the new picture can be checked,
+    // but these frames are excluded from the detector and the last good preview is held over the live video.
+    val controlsTransitioning = Var(false)
+    val freezeVisible = Var(false)
     // Where each channel's peak falls within a rep, once the buffer has shown the hand at rest. Kept per quadrant and
     // retained: the opening stillness scrolls out of the minute, but what it established stays true, and a leader
     // switch should show that leader's own offset rather than the previous one's.
@@ -85,10 +98,10 @@ private[fe] object CounterScreen:
     val shownStatus = statusText
       .combineWith(workoutActive.signal, workoutBusy.signal)
       .map:
-        case (_, true, true)           => "Stopping…"
-        case (_, false, true)          => "Starting…"
-        case (_, false, false)         => "Ready"
-        case (detector, true, false)   => detector
+        case (_, true, true)         => "Stopping…"
+        case (_, false, true)        => "Starting…"
+        case (_, false, false)       => "Ready"
+        case (detector, true, false) => detector
     var latestStatus = StatusLine.of(LockState.Acquiring(0, 0))
     val counter = RepCounter()
     val reporter = RepProgressReporter(api.http)
@@ -116,12 +129,18 @@ private[fe] object CounterScreen:
     var workoutSettings: AccountSettings = settingsPanel.settings.now()
 
     val video = videoTag(cls := "camera-video")
+    val frozen = canvasTag(
+      cls := "camera-freeze",
+      cls("visible") <-- freezeVisible.signal,
+      aria.hidden := true
+    )
     // The overlay's lines sit at 50% of this box, so the box must be exactly the frame: its aspect ratio is set from the
     // stream once known, keeping the drawn quadrants aligned with the sampled ones.
     val frame = div(
       cls := "camera-frame",
       cls("mirrored") <-- mirrored.signal,
       video,
+      frozen,
       div(cls := "quadrant-lines")
     )
 
@@ -191,8 +210,56 @@ private[fe] object CounterScreen:
       totalSamples += 1
       // The camera and traces remain live while stopped, but the detector is frozen. Otherwise movement between
       // workouts would silently become the opening reps of the next one before Start had been pressed.
-      if workoutActive.now() && !workoutBusy.now() then countSample(sample)
+      // A control transition is also frozen: its global brightness step is caused by the camera rather than exercise,
+      // and letting it into the detector would manufacture the same common signal the fixed controls are preventing.
+      if workoutActive.now() && !workoutBusy.now() && !controlsTransitioning.now() then countSample(sample)
       tick.update(_ + 1)
+
+    /** Covers a camera-control transition with the last good frame and starts the detector on clean samples after it.
+      *
+      * The live samples continue underneath because Camera uses them to verify the manual fallback's brightness. They
+      * are discarded before detection resumes, so neither a dark fallback frame nor a one-shot metering adjustment can
+      * become a repetition. Any count already earned is first absorbed into the baseline, just as it is for a camera
+      * switch, so fixing the camera mid-set cannot take reps away.
+      */
+    def controlTransition(active: Boolean): Unit =
+      if live && active then
+        controlsTransitioning.set(true)
+        val source = video.ref
+        val canvas = frozen.ref
+        val box = frame.ref.getBoundingClientRect()
+        val ratio = dom.window.devicePixelRatio
+        val width = math.max(1, (box.width * ratio).round.toInt)
+        val height = math.max(1, (box.height * ratio).round.toInt)
+        val captured =
+          if source.readyState.asInstanceOf[Int] >= 2 && source.videoWidth > 0 && source.videoHeight > 0
+          then
+            try
+              canvas.width = width
+              canvas.height = height
+              val context = canvas.getContext("2d").asInstanceOf[dom.CanvasRenderingContext2D]
+              context.drawImage(source, 0, 0, width, height)
+              true
+            catch case _: Throwable => false
+          else false
+        freezeVisible.set(captured)
+        baseline = baseline.plus(counter.reading)
+        counter.reset()
+        repCount.set(baseline.count)
+        signals.clear()
+        totalSamples = 0
+        restOffsets.set(Map.empty)
+        lock.set(LockState.Acquiring(0, 0))
+        signalMargin.set(None)
+      else if live && !active then
+        // Throw away the transition frames which deliberately stayed available to the brightness validator.
+        signals.clear()
+        totalSamples = 0
+        restOffsets.set(Map.empty)
+        lock.set(LockState.Acquiring(0, 0))
+        signalMargin.set(None)
+        freezeVisible.set(false)
+        controlsTransitioning.set(false)
 
     /** Starts counting over from nothing: the tally, the detector, and the signal behind them. Reached from this
       * device's own control and from a watching one, which must mean the same thing on both.
@@ -326,6 +393,8 @@ private[fe] object CounterScreen:
       stream.foreach(Camera.stop)
       stream = None
       adjustables.set(Seq.empty)
+      freezeVisible.set(false)
+      controlsTransitioning.set(false)
       // Stopping the tracks is not enough on its own: while the video element still holds the stream, the browser can
       // keep the camera powered and its indicator lit after the view has gone. Letting go of it here is what actually
       // turns the camera off.
@@ -358,6 +427,8 @@ private[fe] object CounterScreen:
             brightness = () =>
               val recent = signals.window(Camera.BrightnessWindow).values.flatten
               Option.when(recent.nonEmpty)(recent.sum / recent.size)
+            ,
+            onTransition = controlTransition
           )
           .onComplete:
             case Success(opened) if !live =>
@@ -466,7 +537,7 @@ private[fe] object CounterScreen:
         // Before anything is reported: a report carries a count into the account's session, and until the role is taken
         // there is no session to carry it into.
         roleRequests.run(api.takeCounterRole()):
-          case Left(error) => dom.console.warn(error.message)
+          case Left(error)  => dom.console.warn(error.message)
           case Right(state) =>
             workoutActive.set(state.active)
             if state.active then reportWhileActive() else resetCount()

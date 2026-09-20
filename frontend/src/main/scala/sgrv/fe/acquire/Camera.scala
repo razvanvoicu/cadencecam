@@ -26,6 +26,15 @@ private[fe] enum CameraState:
 private[acquire] final case class ManualControl(mode: String, settings: Seq[String]):
   def name: String = mode
 
+/** How one automatic camera control will be stopped.
+  *
+  * Single-shot is preferable: the camera performs one last metering pass and then stops, without first entering the
+  * undefined manual state that makes some Android cameras go dark. Manual remains the fallback where it is the only
+  * non-continuous mode the browser exposes, and carries every numeric value that mode governs.
+  */
+private[acquire] final case class ControlHold(control: ManualControl, mode: String, values: Option[Constraint]):
+  def manual: Boolean = mode == "manual"
+
 /** What became of the attempt to hold a camera's controls still, and why. */
 private[fe] final case class ControlOutcome(
     reason: String,
@@ -84,21 +93,16 @@ private[fe] object Camera:
   private def widestRequest: dom.MediaTrackConstraints =
     CameraInterop.widestConstraints(FullFieldProbe)
 
-  /** Whether the frame should stand up or lie down: the way the screen does.
+  /** The frame to ask for: the camera's own proportions in primary orientation, carrying at least the minimum.
     *
-    * A phone held upright has its sensor's long axis vertical, so the whole of what that camera can see is a tall
-    * picture. A camera handing back a wide one in that position has not turned the picture round -- it has kept the
-    * middle band and dropped the rest, which is precisely the field of view the exercise happens in.
-    */
-  private[acquire] def wantsPortrait(viewportWidth: Double, viewportHeight: Double): Boolean =
-    viewportHeight >= viewportWidth
-
-  /** The frame to ask for: the camera's own proportions, stood the way the screen is, carrying at least the minimum.
+    * Width, height and aspect-ratio constraints are interpreted in the user agent's primary orientation, regardless of
+    * how the phone is held. User agents are encouraged to make that orientation landscape; the delivered settings and
+    * video element are what rotate to portrait. Sending portrait constraints therefore asks for a portrait-shaped
+    * source and can arrive rotated into the landscape picture this was meant to avoid. Normalising to long side first
+    * keeps the constraint in primary orientation and lets the browser rotate the complete delivered frame.
     *
-    * The shape is taken from the widest mode the camera offers and only ever turned, never altered, so nothing is
-    * cropped: a 4032x3024 sensor asked for portrait is asked for 3024x4032, which is the same picture rotated. Size is
-    * then the smallest that meets the floor, because pixels past the floor buy nothing the detector can use and cost
-    * throughput on a phone -- and it is capped at what the camera actually has, since asking for more than a sensor can
+    * Size is the smallest that meets the floor, because pixels past it buy nothing the detector can use and cost
+    * throughput on a phone. It is capped at what the camera actually delivered, since asking for more than a camera can
     * produce invites it to answer with some other mode entirely.
     *
     * Dimensions are rounded up to even, so the quadrant split is exact and the floor is met rather than just missed.
@@ -106,7 +110,6 @@ private[fe] object Camera:
   private[acquire] def wantedSize(
       nativeWidth: Int,
       nativeHeight: Int,
-      portrait: Boolean,
       minimumPixels: Int
   ): (Int, Int) =
     require(nativeWidth > 0 && nativeHeight > 0, "a camera must report a positive size")
@@ -118,7 +121,7 @@ private[fe] object Camera:
     def even(value: Double): Int = math.max(2, (math.ceil(value / 2) * 2).toInt)
     val across = even(shortSide)
     val along = even(shortSide * aspect)
-    if portrait then (across, along) else (along, across)
+    (along, across)
 
   /** False on an insecure origin, where the browser does not expose `mediaDevices` at all. */
   private[acquire] def supported: Boolean =
@@ -132,7 +135,10 @@ private[fe] object Camera:
       onControls: ControlOutcome => Unit = _ => (),
       // How bright the picture is right now, as the frames being sampled say. Used to check that holding the controls
       // left the picture as it was; without it the hold is trusted on the camera's own word.
-      brightness: () => Option[Double] = () => None
+      brightness: () => Option[Double] = () => None,
+      // True immediately before metering is stopped, false only once the new frames have had time to reach the video.
+      // The counter uses this to freeze the last good preview and keep transition frames out of the detector.
+      onTransition: Boolean => Unit = _ => ()
   ): Future[dom.MediaStream] =
     if !supported then Future.failed(CameraUnsupported())
     else
@@ -142,7 +148,7 @@ private[fe] object Camera:
         .flatMap: stream =>
           fitToDevice(stream).map: _ =>
             // Deliberately not awaited: the preview should appear at once, and the controls settle behind it.
-            holdControlsStill(stream, brightness).foreach(onControls)
+            holdControlsStill(stream, brightness, onTransition).foreach(onControls)
             stream
 
   /** The camera controls that must not move while a session runs.
@@ -261,10 +267,12 @@ private[fe] object Camera:
     * watch, and six attempts to filter it out failed because a component with no fixed frequency relation to the signal
     * cannot be notched away.
     *
-    * The fault: it was tried before and the picture came out at the darkest the sensor would go. The mode and the value
-    * it was to be held at were sent in one request, and a camera still in automatic discards the value -- so it went
-    * manual and stayed wherever the driver left it. They are now two requests, the mode first. What the camera reports
-    * once they are applied is recorded on the trace, so "held" and "held at something usable" can be told apart without
+    * The fault: it was tried before and the picture came out at the darkest the sensor would go. Manual mode is an
+    * awkward hand-off in a browser: the automatic value is read through one API, then the camera has to pass through a
+    * value-less manual state before another request can put that reading back. Cameras advertising single-shot can do
+    * the same job themselves -- meter once, then stop -- with no undefined state in between, so that is preferred.
+    * Manual remains a two-request fallback for cameras that expose no single-shot mode. What the camera reports once
+    * either is applied is recorded on the trace, so "held" and "held at something usable" can be told apart without
     * anyone having to look at a phone.
     */
   private[acquire] val holdControls = true
@@ -277,6 +285,23 @@ private[fe] object Camera:
     */
   private[acquire] def manualCapable(capabilities: Properties): Seq[ManualControl] =
     manualControls.filter(control => capabilities.modes(control.mode).contains("manual"))
+
+  /** The least disruptive way this camera offers to stop one control moving.
+    *
+    * Single-shot leaves the last automatic calculation in the camera, where it already is. That avoids the brief
+    * value-less manual state which some Android drivers render as a dark frame. If it is absent, manual is still useful
+    * when every value governed by the mode can be read and supplied back; otherwise this control stays automatic.
+    */
+  private[acquire] def holdFor(
+      control: ManualControl,
+      settings: Properties,
+      capabilities: Properties
+  ): Option[ControlHold] =
+    val modes = capabilities.modes(control.mode)
+    if modes.contains("single-shot") then Some(ControlHold(control, "single-shot", None))
+    else if modes.contains("manual") then
+      pinning(control, settings, capabilities).map(values => ControlHold(control, "manual", Some(values)))
+    else None
 
   /** What to send to hold one control where it currently sits, or nothing when it cannot be held there.
     *
@@ -346,7 +371,11 @@ private[fe] object Camera:
     * Best effort throughout, and one control at a time: a camera willing to hold exposure but not focus should still
     * hold exposure, and a browser supporting none of this keeps working exactly as it did.
     */
-  private def holdControlsStill(stream: dom.MediaStream, brightness: () => Option[Double]): Future[ControlOutcome] =
+  private def holdControlsStill(
+      stream: dom.MediaStream,
+      brightness: () => Option[Double],
+      onTransition: Boolean => Unit
+  ): Future[ControlOutcome] =
     stream.getVideoTracks().headOption match
       case None               => Future.successful(ControlOutcome("no video track"))
       case _ if !holdControls => Future.successful(ControlOutcome("switched off"))
@@ -358,55 +387,81 @@ private[fe] object Camera:
           Future.successful(ControlOutcome("this browser does not report camera settings"))
         else
           whenSteady(cameraTrack).flatMap: settled =>
-            // Read once metering has stopped moving, not on a timer: what gets pinned is what automatic arrived at.
+            // Read once metering has stopped moving, not on a timer: if manual is needed, what gets pinned is what
+            // automatic arrived at. Single-shot keeps that final calculation inside the camera instead.
             val capabilities = cameraTrack.capabilities.getOrElse(Properties.empty)
-            val capable = manualCapable(capabilities)
-            val skipped =
-              capable.filter(control => pinning(control, settled, capabilities).isEmpty).map(_.mode)
+            val stoppable = manualControls.filter: control =>
+              val modes = capabilities.modes(control.mode)
+              modes.contains("single-shot") || modes.contains("manual")
+            val plans = stoppable.flatMap(control => holdFor(control, settled, capabilities))
+            val skipped = stoppable.filterNot(control => plans.exists(_.control == control)).map(_.mode)
             if skipped.nonEmpty then
               dom.console.info(s"Left automatic, having no value to hold them at: ${skipped.mkString(", ")}")
             def request(wanted: Constraint): Future[Unit] = cameraTrack.apply(wanted)
             // The picture as automatic left it, taken before anything is touched: what a correct hold must reproduce.
             val before = brightness()
-            capable
-              .flatMap(control => pinning(control, settled, capabilities).map(control -> _))
-              .foldLeft(Future.successful(Seq.empty[String])): (earlier, pinned) =>
-                val (control, value) = pinned
+            if plans.nonEmpty then safelyNotify(onTransition, active = true)
+            val completed = plans
+              .foldLeft(Future.successful(Seq.empty[ControlHold])): (earlier, plan) =>
                 earlier.flatMap: locked =>
-                  // Mode first and on its own; only then the value it is to be held at.
-                  request(switching(control))
-                    .flatMap: _ =>
-                      // If the mode took and the value did not, the camera is out of automatic with nothing to hold:
-                      // it sits wherever the driver leaves it, which is dark. Hand the control back before giving up
-                      // on it, so a hold that fails can only ever leave the camera where it started.
-                      request(value).recoverWith:
-                        case refusal => request(releasing(control)).transform(_ => scala.util.Failure(refusal))
-                    .map(_ => locked :+ control.mode)
+                  def manual(values: Constraint): Future[ControlHold] =
+                    // Manual fallback: mode first and on its own; only then the value it is to be held at.
+                    request(switching(plan.control))
+                      .flatMap: _ =>
+                        // If the mode took and the value did not, the camera is out of automatic with nothing to
+                        // hold. Hand it back before giving up so a failed hold leaves the camera where it started.
+                        request(values).recoverWith:
+                          case refusal =>
+                            request(releasing(plan.control)).transform(_ => scala.util.Failure(refusal))
+                      .map(_ => ControlHold(plan.control, "manual", Some(values)))
+                  val applied: Future[ControlHold] = plan.values match
+                    case None =>
+                      // The camera performs the last automatic calculation and stops in one operation. There is no
+                      // value-less interval and therefore no dark manual frame to expose or repair. A driver can
+                      // advertise a mode and still refuse it, so retain the proven manual route as a real fallback.
+                      request(Constraint.text(plan.control.mode, plan.mode))
+                        .map(_ => plan)
+                        .recoverWith:
+                          case _ =>
+                            pinning(plan.control, settled, capabilities) match
+                              case Some(values) => manual(values)
+                              case None         => Future.failed(new IllegalStateException("no manual camera values"))
+                    case Some(values) => manual(values)
+                  applied
+                    .map(appliedPlan => locked :+ appliedPlan)
                     .recover { case _ => locked }
               .flatMap: locked =>
+                val lockedModes = locked.map(_.control.mode)
                 if locked.isEmpty then dom.console.info("The camera holds none of its controls still")
-                else dom.console.info(s"Camera controls held still: ${locked.mkString(", ")}")
+                else dom.console.info(s"Camera controls held still: ${lockedModes.mkString(", ")}")
                 // What the camera actually settled on, read back rather than assumed. Held at the darkest end of the
                 // range is indistinguishable from held correctly unless the value itself is recorded.
                 val reported = cameraTrack.settings.getOrElse(Properties.empty)
                 // Asked for, and actually got. A camera that accepts a request and then sits somewhere else has not
                 // held anything; keeping such a lock is worse than leaving it automatic, because it is both wrong and
                 // frozen. Those modes go back to continuous.
-                val asked = Constraint(
-                  capable.flatMap(control => pinning(control, settled, capabilities).toSeq.flatMap(_.values.toSeq))*
-                )
+                val asked = Constraint(locked.flatMap(_.values.toSeq.flatMap(_.values.toSeq))*)
                 val missed = refused(asked, reported)
-                val abandoned = capable.filter(control => control.settings.exists(missed.contains)).map(_.mode)
+                val abandoned = locked
+                  .filter(_.manual)
+                  .filter(plan => plan.control.settings.exists(missed.contains))
+                  .map(_.control.mode)
                 abandoned.foreach: mode =>
                   val _ = request(Constraint.text(mode, "continuous"))
                 if abandoned.nonEmpty then
                   dom.console.info(s"Given back to the camera, which would not hold them: ${abandoned.mkString(", ")}")
                 val snapshot = cameraTrack.settings.fold("{}")(_.json)
-                val held = locked.filterNot(abandoned.contains)
-                val attempted = ControlOutcome("attempted", held, skipped ++ abandoned, Some(snapshot))
-                (before, held.nonEmpty) match
-                  case (Some(baseline), true) => verified(attempted, baseline, held, request, cameraTrack, brightness)
-                  case _                      => Future.successful(attempted)
+                val held = lockedModes.filterNot(abandoned.contains)
+                val failed = plans.map(_.control.mode).filterNot(lockedModes.contains)
+                val attempted = ControlOutcome("attempted", held, skipped ++ failed ++ abandoned, Some(snapshot))
+                val manualHeld = locked.filter(_.manual).map(_.control.mode).filterNot(abandoned.contains)
+                if held.nonEmpty then verified(attempted, before, manualHeld, request, cameraTrack, brightness)
+                else Future.successful(attempted)
+            if plans.nonEmpty then
+              completed.transform: result =>
+                safelyNotify(onTransition, active = false)
+                result
+            else completed
 
   /** Checks a hold against the picture, and gives it back to automatic if holding changed what the camera sees.
     *
@@ -417,28 +472,33 @@ private[fe] object Camera:
     */
   private def verified(
       attempted: ControlOutcome,
-      baseline: Double,
-      held: Seq[String],
+      baseline: Option[Double],
+      manualHeld: Seq[String],
       request: Constraint => Future[Unit],
       track: CameraInterop.Track,
       brightness: () => Option[Double]
   ): Future[ControlOutcome] =
     after(verifyAfterMillis).flatMap: _ =>
-      brightness() match
-        case Some(now) if changedBy(baseline, now) =>
-          dom.console.info(f"Holding moved the picture from $baseline%.0f to $now%.0f; giving the camera back its own")
-          val releases = held.map: mode =>
+      (baseline, brightness()) match
+        case (Some(before), Some(now)) if manualHeld.nonEmpty && changedBy(before, now) =>
+          dom.console.info(f"Holding moved the picture from $before%.0f to $now%.0f; giving the camera back its own")
+          val releases = manualHeld.map: mode =>
             request(Constraint.text(mode, "continuous")).recover { case _ => () }
           Future
             .sequence(releases)
             .map: _ =>
               attempted.copy(
-                reason = f"released: holding moved the picture from $baseline%.0f to $now%.0f",
-                held = Seq.empty,
-                skipped = attempted.skipped ++ held,
+                reason = f"released: holding moved the picture from $before%.0f to $now%.0f",
+                held = attempted.held.filterNot(manualHeld.contains),
+                skipped = attempted.skipped ++ manualHeld,
                 settled = track.settings.map(_.json)
               )
         case _ => Future.successful(attempted)
+
+  /** A view callback is useful but must never be able to break camera acquisition. */
+  private def safelyNotify(onTransition: Boolean => Unit, active: Boolean): Unit =
+    try onTransition(active)
+    catch case error: Throwable => dom.console.warn(s"Could not update the camera transition view: ${error.getMessage}")
 
   /** Waits until two consecutive readings of the camera's settings agree, and never less than the settling floor, or
     * until the wait is given up on.
@@ -465,9 +525,9 @@ private[fe] object Camera:
     * The camera opened on its widest mode, which is more pixels than the detector can use and more than a phone can
     * decode all session without heating; but reducing the size means asking again, and asking again lets the browser
     * pick a different mode -- which is how field of view gets lost without anything appearing to go wrong. Two guards
-    * against that. The request carries an aspect ratio alongside the dimensions, so a widescreen candidate is penalised
-    * rather than merely not preferred. And the result is read back: if what came back is not the widest mode's own
-    * shape, one way up or the other, the request is withdrawn and the wide mode restored.
+    * against that. The request is restricted to native modes and carries an aspect ratio alongside dimensions expressed
+    * in the camera API's primary orientation. And the result is read back: if what came back is not the widest mode's
+    * own shape, one way up or the other, the request is withdrawn and the wide mode restored.
     *
     * Field of view wins over pixel count whenever the two conflict. That is the whole point of the exercise: a detector
     * cannot count what the camera was not pointed at, and a sharper picture of half the movement is worth less than a
@@ -482,8 +542,7 @@ private[fe] object Camera:
         deliveredSize(track) match
           case None         => Future.successful(())
           case Some(widest) =>
-            val portrait = wantsPortrait(dom.window.innerWidth.toDouble, dom.window.innerHeight.toDouble)
-            val (width, height) = wantedSize(widest._1, widest._2, portrait, MinimumPixels)
+            val (width, height) = wantedSize(widest._1, widest._2, MinimumPixels)
             track
               .applyConstraints(sizeRequest(width, height))
               .toFuture
@@ -496,14 +555,6 @@ private[fe] object Camera:
                         "turned; going back to the widest mode"
                     )
                     track.applyConstraints(widestRequest).toFuture.map(_ => ())
-                  case Some(now) if portrait != (now._2 > now._1) =>
-                    // Nothing lost, so this stands: the whole picture is there, lying the wrong way. Worth saying,
-                    // because a preview that does not match the screen's shape looks like a fault and is not one.
-                    dom.console.warn(
-                      s"This camera will not turn its frame: asked for ${width}x$height, given ${now._1}x${now._2}. " +
-                        "The whole field of view is there, in the other orientation."
-                    )
-                    Future.successful(())
                   case _ => Future.successful(())
               .recover { case _ => () }
 
@@ -518,8 +569,9 @@ private[fe] object Camera:
 
   /** Whether two frames show the same picture at different sizes, rather than different pictures.
     *
-    * Proportions are the only evidence available: a camera does not report what it cropped, so a mode that comes back a
-    * different shape from the one asked for has thrown something away, and a mode of the same shape has not.
+    * Proportions are the only evidence available: a camera does not report its field of view, so a differently shaped
+    * result definitely cannot be the same complete picture. The native-only request prevents the browser itself from
+    * creating a same-shaped crop; the driver may still expose a native mode that uses only part of the physical sensor.
     */
   private[acquire] def sameShape(before: (Int, Int), after: (Int, Int)): Boolean =
     val first = before._1.toDouble / before._2
@@ -533,20 +585,18 @@ private[fe] object Camera:
 
   /** Whether a frame still shows everything the widest mode showed -- the same picture, resized, turned, or both.
     *
-    * Turning is not losing. A sensor whose widest mode is 4032x3024 shows exactly as much at 3024x4032; the picture has
-    * been stood on end, not trimmed. Any other shape has been trimmed, whatever its pixel count, and that is the only
-    * thing this has to catch.
+    * Turning is not losing. Settings are reported in the delivered orientation, so a portrait phone may turn 4032x3024
+    * into 3024x4032 while a constraint is being applied. Any other shape cannot represent the same complete native
+    * mode, whatever its pixel count, and that is the change this catches.
     */
   private[acquire] def keptFieldOfView(widest: (Int, Int), now: (Int, Int)): Boolean =
     sameShape(widest, now) || sameShape((widest._2, widest._1), now)
 
   /** The shape the camera is actually delivering, which is the one to keep.
     *
-    * Taken from the track's own settings rather than from its capabilities. A capability reports the largest width and
-    * the largest height the camera can manage, and those are two separate numbers: on a phone they describe the sensor
-    * laid out landscape, and they need not even belong to the same supported mode. Building a request out of them asked
-    * a portrait camera for a landscape frame, which it can only satisfy by throwing away field of view. What it is
-    * already sending has the proportions the device actually wants.
+    * Taken from the track's own settings rather than from its capabilities. A capability reports independent ranges, so
+    * its largest width and height need not belong to the same supported mode. Settings describe the real mode, in
+    * whichever orientation is currently delivered; [[wantedSize]] normalises it before constructing constraints.
     */
   private def deliveredSize(track: dom.MediaStreamTrack): Option[(Int, Int)] =
     CameraInterop
