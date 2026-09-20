@@ -14,7 +14,7 @@ private[fe] object DashboardTypography:
   private val MeasuringSizeVw = 1.0
   private val BreathingRoom = 0.94
   private val DetailRatio = 0.6
-  private val LabelCardHeightRatio = 0.10
+  private val LabelCardHeightRatio = 0.12
   private val SecondaryValueCardHeightRatio = 0.14
 
   def fit(root: dom.html.Element): Unit =
