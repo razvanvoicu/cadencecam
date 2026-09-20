@@ -42,6 +42,16 @@
   }
 }
 
+@media (min-width: 100rem) {
+  :root {
+    --control-size: 3vw;
+    --menu-icon-size: 2vw;
+    --menu-border-width: 0.05vw;
+    --menu-corner-radius: 0.5vw;
+    --menu-item-font-size: 1vw;
+  }
+}
+
 html {
   /* Keep text at the author's size when a phone is rotated to landscape. */
   -webkit-text-size-adjust: 100%;
