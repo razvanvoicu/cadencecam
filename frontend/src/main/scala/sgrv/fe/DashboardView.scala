@@ -52,18 +52,18 @@ private[fe] object DashboardView:
     ): Signal[String] =
       figures.map(values => of(values).fold(Effort.Absent)(showValue))
 
-    val repsPerMinute = figure((_, _, _, pace, _) => pace, Effort.rate)
+    val repsPerMinute = figure((_, _, _, pace, _) => pace, Effort.decimal)
     val repsAtBoundary =
       figure(
         (reps, minutes, _, pace, _) => pace.flatMap(Effort.atBoundary(reps.toDouble, _, minutes)),
-        Effort.grouped
+        Effort.decimal
       )
-    val calories = figures.map((_, _, value, _, _) => Effort.grouped(value))
-    val caloriesPerMinute = figure((_, _, _, _, burn) => burn, Effort.rate)
+    val calories = figures.map((_, _, value, _, _) => Effort.decimal(value))
+    val caloriesPerMinute = figure((_, _, _, _, burn) => burn, Effort.decimal)
     val caloriesAtBoundary =
       figure(
         (_, minutes, value, _, burn) => burn.flatMap(Effort.atBoundary(value, _, minutes)),
-        Effort.grouped
+        Effort.decimal
       )
 
     def menuItem(label: String, act: () => Unit): Element = Menu.item(menuOpen, label, act)
@@ -166,7 +166,7 @@ private[fe] object DashboardView:
         Menu.backdrop(menuOpen),
         div(
           cls := "figure-cards",
-          card("reps-card", "Reps", controller.reps.map(_.toString), repsPerMinute, repsAtBoundary),
+          card("reps-card", "Reps", controller.reps.map(reps => Effort.decimal(reps.toDouble)), repsPerMinute, repsAtBoundary),
           card("calories-card", "Calories", calories, caloriesPerMinute, caloriesAtBoundary)
         ),
         div(

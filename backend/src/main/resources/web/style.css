@@ -527,7 +527,8 @@ button,
   font-size: clamp(4rem, 17vmin, 13rem);
   /* Second, so a browser that does not know container units keeps the line above. */
   font-size: min(clamp(4rem, 18vmin, 13rem), 20cqi);
-  font-weight: 300;
+  /* Halfway between the ordinary 400 and bold 700 weights: visibly firmer without becoming a bold display face. */
+  font-weight: 550;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.03em;
   line-height: 1.02;

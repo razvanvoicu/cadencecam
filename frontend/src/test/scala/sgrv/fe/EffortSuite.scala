@@ -209,6 +209,14 @@ class EffortSuite extends FunSuite:
     assertEquals(Effort.grouped(0.0), "0")
     assertEquals(Effort.grouped(1_234_567.0), "1,234,567")
 
+  test("dashboard figures are grouped and always carry one decimal place"):
+    assertEquals(Effort.decimal(0.0), "0.0")
+    assertEquals(Effort.decimal(57.0), "57.0")
+    assertEquals(Effort.decimal(1236.04), "1,236.0")
+    assertEquals(Effort.decimal(1236.05), "1,236.1")
+    assertEquals(Effort.decimal(Double.NaN), "0.0")
+    assertEquals(Effort.Absent, "0.0")
+
   test("the clock reads as a clock, and grows an hours field only when there is one"):
     assertEquals(Effort.elapsedClock(0.0), "0:00")
     assertEquals(Effort.elapsedClock(761.0), "12:41")

@@ -131,6 +131,18 @@ private[fe] object Effort:
   /** A rate, to one decimal: it moves with every rep, and a second decimal would only ever be watched changing. */
   def rate(value: Double): String = f"$value%.1f"
 
+  /** A dashboard figure with grouped thousands and exactly one decimal place. */
+  def decimal(value: Double): String =
+    if !value.isFinite then "0.0"
+    else
+      val tenths = math.round(value * 10.0)
+      val absolute = math.abs(tenths)
+      val whole = absolute / 10
+      val fraction = absolute % 10
+      val groupedWhole = whole.toString.reverse.grouped(3).mkString(",").reverse
+      val sign = if tenths < 0 then "-" else ""
+      s"$sign$groupedWhole.$fraction"
+
   /** A factor, to two decimals: the scale it now lives on runs from about half to two, and a step is a twentieth. */
   def factorText(value: Double): String = f"$value%.2f"
 
@@ -152,8 +164,8 @@ private[fe] object Effort:
       val moved = if up then (hundredths / step + 1) * step else (hundredths - 1) / step * step
       math.max(step, moved) / 100.0
 
-  /** What a figure reads as before there is anything to say. An em dash rather than a zero, which would be a claim. */
-  val Absent = "—"
+  /** What a numeric dashboard figure reads before a pace is available. */
+  val Absent = "0.0"
 
   def elapsedClock(seconds: Double): String =
     val whole = math.max(0L, math.round(seconds))
