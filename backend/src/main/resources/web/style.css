@@ -388,8 +388,8 @@ button,
    what it has to do at that distance is separate two figures at a glance. Amber is the movement and cyan the energy;
    everything else on the screen is greyscale so that neither has anything to compete with. */
 .dashboard-view {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
   /* Dynamic viewport height, so a phone's collapsing address bar does not leave the panel short. */
   height: 100dvh;
   min-height: 0;
@@ -405,32 +405,32 @@ button,
   /* Replaced at runtime with the smallest single-line fit across every member of each group. The fallback is itself
      viewport-relative so the dashboard never falls back to a device-dependent fixed text size. */
   --dashboard-label-size: 2vw;
-  --dashboard-value-size: 4vw;
+  --dashboard-secondary-value-size: 4vw;
   --dashboard-detail-size: 1.2vw;
 }
 
 .screen.dashboard {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 1.25rem;
   /* So the cards below can be told to take what is left, rather than being pushed past the bottom. */
   min-height: 0;
   background: var(--dash-bg);
   border-color: var(--dash-line);
   color: var(--dash-fg);
+  overflow: hidden;
 }
 
 .dashboard-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 32vw);
-  align-items: flex-start;
+  align-items: start;
   gap: 1rem;
 }
 
 .dashboard-title {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto auto;
   gap: 0.2rem;
   min-width: 0;
 }
@@ -478,7 +478,6 @@ button,
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
   gap: 1rem;
-  flex: 1;
   min-height: 0;
 }
 
@@ -492,8 +491,8 @@ button,
 }
 
 .figure-card {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   min-height: 0;
   /* So the figure inside can be sized against the card it has to fit in rather than against the window. A calorie
      total is routinely six characters wide -- reps times a body weight times a factor -- and a numeral sized from
@@ -503,6 +502,7 @@ button,
   background: var(--dash-panel);
   border: 1px solid var(--dash-line);
   border-radius: 18px;
+  overflow: hidden;
 }
 
 .figure-label {
@@ -520,13 +520,13 @@ button,
    Centred in whatever the label and the footnotes leave, rather than sitting under the label with the rest of the
    card empty beneath it -- which is what a card stretched to the height of a tablet does to a number of its own size. */
 .figure-value {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 1;
+  display: grid;
+  place-items: center;
   min-height: 0;
   width: 100%;
-  font-size: var(--dashboard-value-size);
+  font-size: clamp(4rem, 17vmin, 13rem);
+  /* Second, so a browser that does not know container units keeps the line above. */
+  font-size: min(clamp(4rem, 18vmin, 13rem), 20cqi);
   font-weight: 300;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.03em;
@@ -553,8 +553,8 @@ button,
 }
 
 .figure-footnote {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto auto;
   gap: 0.25rem;
   min-width: 0;
 }
@@ -583,7 +583,7 @@ button,
 .footnote-value {
   display: block;
   width: 100%;
-  font-size: var(--dashboard-value-size);
+  font-size: var(--dashboard-secondary-value-size);
   font-weight: 300;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -612,13 +612,21 @@ button,
 }
 
 .dashboard .reset-button {
+  display: grid;
+  place-items: center;
   border-color: var(--dash-line);
   color: var(--dash-fg);
   font-size: var(--dashboard-label-size);
 }
 
 .dashboard .menu-button {
+  display: grid;
+  place-items: center;
   font-size: var(--dashboard-label-size);
+}
+
+.dashboard .menu-sheet.open {
+  display: grid;
 }
 
 /* The bench is the one screen built for a desktop in landscape: the canvas is what a camera on a tripod frames, so
