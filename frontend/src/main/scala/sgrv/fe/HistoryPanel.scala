@@ -130,10 +130,8 @@ private[fe] final class HistoryPanel(api: ApiClient):
         span(
           cls := "workout-meta",
           child.text <-- updates.map: workout =>
-            val exercise = workout.snapshot.fold("Exercise unavailable")(_.exerciseType)
-            val factor =
-              workout.snapshot.fold("factor unavailable")(saved => s"factor ${Effort.factorText(saved.exerciseFactor)}")
-            s"$exercise · $factor"
+            workout.snapshot.fold("Exercise unavailable"): saved =>
+              s"${saved.exerciseType} · ${Effort.modeText(saved.countsBy)} · ${Effort.factorText(saved.exerciseFactor)}"
         ),
         // Two taps, because this is the one control on the screen that destroys something. The confirmation is the row
         // itself rather than a dialog: what is about to go is the thing being pointed at.

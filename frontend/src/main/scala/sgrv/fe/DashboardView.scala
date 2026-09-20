@@ -2,7 +2,7 @@ package sgrv.fe
 
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
-import sgrv.api.{CountsBy, LiveCommand}
+import sgrv.api.LiveCommand
 
 import scala.scalajs.js
 
@@ -151,10 +151,7 @@ private[fe] object DashboardView:
             span(
               cls := "dashboard-basis",
               child.text <-- settingsPanel.settings.signal.map: settings =>
-                val how = settings.countsBy match
-                  case CountsBy.RepCount  => "rep count"
-                  case CountsBy.Frequency => "frequency"
-                s"factor ${Effort.factorText(settings.factor)} · $how"
+                s"factor ${Effort.factorText(settings.factor)} · ${Effort.modeText(settings.countsBy)}"
             )
           ),
           div(
@@ -166,7 +163,13 @@ private[fe] object DashboardView:
         Menu.backdrop(menuOpen),
         div(
           cls := "figure-cards",
-          card("reps-card", "Reps", controller.reps.map(reps => Effort.decimal(reps.toDouble)), repsPerMinute, repsAtBoundary),
+          card(
+            "reps-card",
+            "Reps",
+            controller.reps.map(reps => Effort.grouped(reps.toDouble)),
+            repsPerMinute,
+            repsAtBoundary
+          ),
           card("calories-card", "Calories", calories, caloriesPerMinute, caloriesAtBoundary)
         ),
         div(

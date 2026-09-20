@@ -146,6 +146,11 @@ private[fe] object Effort:
   /** A factor, to two decimals: the scale it now lives on runs from about half to two, and a step is a twentieth. */
   def factorText(value: Double): String = f"$value%.2f"
 
+  /** The compact exercise mode shared by the dashboard and each saved workout description. */
+  def modeText(countsBy: CountsBy): String = countsBy match
+    case CountsBy.RepCount  => "rep count"
+    case CountsBy.Frequency => "frequency"
+
   /** A factor moved one step, kept on the step grid and never taken to zero.
     *
     * Snapped to the grid rather than added to, so a factor typed as 1.23 becomes 1.25 rather than 1.28 and a column of

@@ -137,6 +137,10 @@ class EffortSuite extends FunSuite:
     assertEquals(Effort.factorText(0.5), "0.50")
     assertEquals(Effort.factorText(2.0), "2.00")
 
+  test("exercise modes use their compact display names"):
+    assertEquals(Effort.modeText(CountsBy.RepCount), "rep count")
+    assertEquals(Effort.modeText(CountsBy.Frequency), "frequency")
+
   test("a tap moves a factor one step, and onto the step grid"):
     assertEqualsDouble(Effort.nudged(1.25, up = true), 1.30, 1e-9)
     assertEqualsDouble(Effort.nudged(1.25, up = false), 1.20, 1e-9)
