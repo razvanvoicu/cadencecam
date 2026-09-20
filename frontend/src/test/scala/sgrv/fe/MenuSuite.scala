@@ -21,3 +21,9 @@ class MenuSuite extends FunSuite:
   test("a document's path is its file, at the root"):
     assertEquals(Documents.path(Documents.Privacy), "/privacy.html")
     assertEquals(Documents.path(Documents.Terms), "/tos.html")
+
+  test("a menu is placed below and right-aligned with the button that opened it"):
+    assertEquals(Menu.anchor(buttonRightPx = 352.0, buttonBottomPx = 68.0, viewportWidthPx = 390.0), Menu.Anchor(68.0, 38.0))
+
+  test("menu coordinates never escape above or to the right of the viewport"):
+    assertEquals(Menu.anchor(buttonRightPx = 410.0, buttonBottomPx = -4.0, viewportWidthPx = 390.0), Menu.Anchor(0.0, 0.0))

@@ -1,6 +1,7 @@
 package sgrv.fe
 
 import com.raquo.laminar.api.L.*
+import org.scalajs.dom
 import sgrv.api.Documents
 
 /** The hamburger menu, built from one place because every screen carries one and they must not drift apart.
@@ -10,6 +11,12 @@ import sgrv.api.Documents
   * the person looking for it is by then already suspicious.
   */
 private[fe] object Menu:
+
+  private[fe] final case class Anchor(topPx: Double, rightPx: Double)
+
+  /** Fixed-position coordinates that put the sheet directly below, and right-aligned with, the button that opened it. */
+  private[fe] def anchor(buttonRightPx: Double, buttonBottomPx: Double, viewportWidthPx: Double): Anchor =
+    Anchor(math.max(0.0, buttonBottomPx), math.max(0.0, viewportWidthPx - buttonRightPx))
 
   /** What the documents are called on screen. The paths are shared with the backend that serves them; the wording is
     * this side's business.
@@ -36,7 +43,15 @@ private[fe] object Menu:
         aria.hidden := true,
         svg.path(svg.d := "M3 6H21 M3 12H21 M3 18H21")
       ),
-      onClick --> (_ => open.update(shown => !shown))
+      onClick --> { event =>
+        val button = event.currentTarget.asInstanceOf[dom.html.Button]
+        val bounds = button.getBoundingClientRect()
+        val at = anchor(bounds.right, bounds.bottom, dom.window.innerWidth)
+        val rootStyle = dom.document.documentElement.asInstanceOf[dom.html.Element].style
+        rootStyle.setProperty("--menu-anchor-top", s"${at.topPx}px")
+        rootStyle.setProperty("--menu-anchor-right", s"${at.rightPx}px")
+        open.update(shown => !shown)
+      }
     )
 
   /** A backdrop, so a tap anywhere else dismisses the menu -- which is what a phone expects. */

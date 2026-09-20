@@ -1120,12 +1120,12 @@ button,
 }
 
 .menu-sheet {
-  position: absolute;
+  position: fixed;
   z-index: 1000;
-  top: 3.5rem;
-  right: 1.25rem;
+  top: calc(var(--menu-anchor-top, 0px) + 0.75vw);
+  right: var(--menu-anchor-right, 0px);
   display: none;
-  flex-direction: column;
+  grid-auto-flow: row;
   align-items: stretch;
   min-width: 12rem;
   padding: 0.35rem;
@@ -1136,7 +1136,7 @@ button,
 }
 
 .menu-sheet.open {
-  display: flex;
+  display: grid;
 }
 
 .menu-item {
