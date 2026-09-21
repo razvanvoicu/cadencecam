@@ -29,7 +29,7 @@ object Logout extends BackendPlugin:
       .service[RequestContext]
       .flatMap:
         case RequestContext.Authenticated(request, user) =>
-          request.cookie(Callback.sessionCookieName).map(_.content).filter(_.nonEmpty) match
+          SessionAuth.sessionKey(request) match
             case None             => ZIO.succeed(Response.status(Status.Unauthorized))
             case Some(sessionKey) =>
               for

@@ -139,6 +139,8 @@ class LogoutSuite extends munit.FunSuite:
     new GoogleOAuth:
       override def authorizationUrl(state: String): UIO[String] = ZIO.succeed("")
       override def authenticate(code: String): Task[GoogleAuthentication] = ZIO.fail(new UnsupportedOperationException)
+      override def authenticateIdToken(idToken: String): Task[GoogleAuthentication] =
+        ZIO.fail(new UnsupportedOperationException)
       override def callbackIsSecure: UIO[Boolean] = ZIO.succeed(true)
       override def accessToken(refreshToken: String): Task[String] = ZIO.fail(new UnsupportedOperationException)
       override def revoke(refreshToken: String): Task[Unit] = revokeEffect(refreshToken)

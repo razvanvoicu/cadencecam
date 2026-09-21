@@ -27,6 +27,7 @@ final case class GoogleAuthentication(user: SessionUser)
 trait GoogleOAuth:
   def authorizationUrl(state: String): UIO[String]
   def authenticate(code: String): Task[GoogleAuthentication]
+  def authenticateIdToken(idToken: String): Task[GoogleAuthentication]
   def callbackIsSecure: UIO[Boolean]
   def accessToken(refreshToken: String): Task[String]
   def revoke(refreshToken: String): Task[Unit]
@@ -40,6 +41,9 @@ private[be] object GoogleOAuth:
 
   def authenticate(code: String): ZIO[GoogleOAuth, Throwable, GoogleAuthentication] =
     ZIO.serviceWithZIO[GoogleOAuth](_.authenticate(code))
+
+  def authenticateIdToken(idToken: String): ZIO[GoogleOAuth, Throwable, GoogleAuthentication] =
+    ZIO.serviceWithZIO[GoogleOAuth](_.authenticateIdToken(idToken))
 
   def callbackIsSecure: ZIO[GoogleOAuth, Nothing, Boolean] =
     ZIO.serviceWithZIO[GoogleOAuth](_.callbackIsSecure)
@@ -81,31 +85,36 @@ private[be] object GoogleOAuth:
           code,
           config.callbackUri
         ).execute()
-        val verifier = new GoogleIdTokenVerifier.Builder(transport, jsonFactory)
-          .setAudience(Seq(config.clientId).asJava)
-          .build()
-        val idToken = Option(verifier.verify(tokenResponse.getIdToken))
-          .getOrElse(throw new IllegalStateException("The Google ID token failed verification"))
-        val payload = idToken.getPayload
-        val email = Option(payload.getEmail)
-          .map(_.trim)
-          .filter(_.nonEmpty)
-          .getOrElse(throw new IllegalStateException("The Google ID token carries no email address"))
-        if payload.getEmailVerified != java.lang.Boolean.TRUE then
-          throw new IllegalStateException(s"Google reports $email as unverified")
+        val identity = verifiedUser(tokenResponse.getIdToken)
         val accessToken = Option(tokenResponse.getAccessToken)
           .map(_.trim)
           .filter(_.nonEmpty)
           .getOrElse(throw new IllegalStateException("Google returned no access token"))
         val refreshToken = Option(tokenResponse.getRefreshToken).map(_.trim).filter(_.nonEmpty)
         val accessTokenForRevocation = Option.when(refreshToken.isEmpty)(accessToken)
-        val user = SessionUser(
-          email,
-          displayName(Option(payload.get("name")).map(_.toString), email),
-          refreshToken,
-          accessTokenForRevocation
+        val user = identity.copy(
+          refreshToken = refreshToken,
+          accessTokenForRevocation = accessTokenForRevocation
         )
         GoogleAuthentication(user)
+
+    override def authenticateIdToken(idToken: String): Task[GoogleAuthentication] =
+      ZIO.attemptBlocking(GoogleAuthentication(verifiedUser(idToken)))
+
+    private def verifiedUser(encoded: String): SessionUser =
+      val verifier = new GoogleIdTokenVerifier.Builder(transport, jsonFactory)
+        .setAudience(Seq(config.clientId).asJava)
+        .build()
+      val idToken = Option(encoded).map(_.trim).filter(_.nonEmpty).flatMap(value => Option(verifier.verify(value)))
+        .getOrElse(throw new IllegalStateException("The Google ID token failed verification"))
+      val payload = idToken.getPayload
+      val email = Option(payload.getEmail)
+        .map(_.trim)
+        .filter(_.nonEmpty)
+        .getOrElse(throw new IllegalStateException("The Google ID token carries no email address"))
+      if payload.getEmailVerified != java.lang.Boolean.TRUE then
+        throw new IllegalStateException(s"Google reports $email as unverified")
+      SessionUser(email, displayName(Option(payload.get("name")).map(_.toString), email))
 
     override def callbackIsSecure: UIO[Boolean] = ZIO.succeed(config.callbackIsSecure)
 

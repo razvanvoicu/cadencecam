@@ -1,6 +1,6 @@
 package sgrv.be.sessions
 
-import sgrv.api.{PeerRole, PeerSignal, PeerSignals}
+import sgrv.api.{LiveCommand, PeerRole, PeerSignal, PeerSignals}
 import sgrv.be.core.{AccessPolicy, CapabilityRegistry, PluginStatus, RouteDiscovery}
 import zio.*
 import zio.json.*
@@ -38,6 +38,16 @@ class PeerSignallingSuite extends munit.FunSuite:
 
   test("an empty post box reads as empty rather than as a failure"):
     assertEquals(PeerSignals().toJson.fromJson[PeerSignals], Right(PeerSignals(Seq.empty, "")))
+
+  test("live commands use the JSON representation understood by native counters"):
+    val capture: LiveCommand = LiveCommand.CaptureTrace(Some("dashboard"))
+    assertEquals(LiveCommand.Start.toJson, """{"Start":{}}""")
+    assertEquals(LiveCommand.Stop.toJson, """{"Stop":{}}""")
+    assertEquals(LiveCommand.Reset.toJson, """{"Reset":{}}""")
+    assertEquals(
+      capture.toJson,
+      """{"CaptureTrace":{"note":"dashboard"}}"""
+    )
 
   test("the watcher offers and the counter answers"):
     assertEquals(PeerRole.values.map(_.toString).toSeq, Seq("Watcher", "Counter"))

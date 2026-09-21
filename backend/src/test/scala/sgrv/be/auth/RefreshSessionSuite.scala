@@ -117,6 +117,8 @@ class RefreshSessionSuite extends munit.FunSuite:
     new GoogleOAuth:
       override def authorizationUrl(state: String): UIO[String] = ZIO.succeed("")
       override def authenticate(code: String): Task[GoogleAuthentication] = ZIO.fail(new UnsupportedOperationException)
+      override def authenticateIdToken(idToken: String): Task[GoogleAuthentication] =
+        ZIO.fail(new UnsupportedOperationException)
       override def callbackIsSecure: UIO[Boolean] = ZIO.succeed(true)
       override def accessToken(refreshToken: String): Task[String] = accessTokenEffect(refreshToken)
       override def revoke(refreshToken: String): Task[Unit] = ZIO.unit

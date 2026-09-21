@@ -4,7 +4,7 @@ import sgrv.api.{AcquirerPresence, CountingSession, RepProgress, SignalTrace, Wo
 import sgrv.be.auth.SessionUser
 import sgrv.be.core.{CapabilityRegistry, CurrentUserContributors, PluginStatus, RequestContext, RouteDiscovery}
 import zio.*
-import zio.http.{Cookie, Method, Path, Request, URL}
+import zio.http.{Cookie, Header, Method, Path, Request, URL}
 import zio.json.*
 import zio.json.ast.Json
 
@@ -73,6 +73,16 @@ class CountingSessionSuite extends munit.FunSuite:
     assertEquals(
       CountingSessionListener.browserSession(request),
       Some(CountingSessionListener.browserSession("session-key"))
+    )
+
+  test("a native bearer session has the same stable counter identity"):
+    val request = Request
+      .get(URL.decode("/me").toOption.get)
+      .addHeader(Header.Authorization.Bearer("native-session-key"))
+
+    assertEquals(
+      CountingSessionListener.browserSession(request),
+      Some(CountingSessionListener.browserSession("native-session-key"))
     )
 
   test("the progress route is discovered on the classpath, and asks the host for Firestore"):

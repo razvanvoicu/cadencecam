@@ -3,7 +3,7 @@ package sgrv.be.auth
 import java.time.Instant
 import zio.*
 import zio.json.ast.Json
-import zio.http.{Path, Method as ZioMethod}
+import zio.http.{Header, Path, Request, URL, Method as ZioMethod}
 
 class AuthSuite extends munit.FunSuite:
 
@@ -171,7 +171,24 @@ class AuthSuite extends munit.FunSuite:
     Seq(
       Login.routes.routes.exists(_.routePattern.matches(ZioMethod.GET, Path("/auth/login"))),
       Callback.routes.routes.exists(_.routePattern.matches(ZioMethod.GET, Path("/auth/callback"))),
+      MobileLogin.routes.routes.exists(_.routePattern.matches(ZioMethod.POST, Path("/auth/mobile"))),
       Me.routes.routes.exists(_.routePattern.matches(ZioMethod.GET, Path("/me"))),
       RefreshSession.routes.routes.exists(_.routePattern.matches(ZioMethod.POST, Path("/refreshSession"))),
       Logout.routes.routes.exists(_.routePattern.matches(ZioMethod.POST, Path("/logout")))
     ).foreach(assert(_))
+
+  test("resolves native bearer sessions and leaves browser cookies compatible"):
+    val url = URL.decode("/me").toOption.get
+    val bearer = Request.get(url).addHeader(Header.Authorization.Bearer("native-key"))
+    val cookie = Request.get(url).addCookie(zio.http.Cookie.Request(Callback.sessionCookieName, "browser-key"))
+
+    assertEquals(SessionAuth.sessionKey(bearer), Some("native-key"))
+    assertEquals(SessionAuth.sessionKey(cookie), Some("browser-key"))
+
+  test("a native bearer token takes precedence over an unrelated cookie"):
+    val request = Request
+      .get(URL.decode("/me").toOption.get)
+      .addHeader(Header.Authorization.Bearer("native-key"))
+      .addCookie(zio.http.Cookie.Request(Callback.sessionCookieName, "browser-key"))
+
+    assertEquals(SessionAuth.sessionKey(request), Some("native-key"))

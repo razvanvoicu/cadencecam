@@ -6,7 +6,7 @@ import java.security.MessageDigest
 import sgrv.api.CountingSession
 import sgrv.be.BackendCapabilities
 import sgrv.be.core.{CapabilitySet, CurrentUserContributor, LoginEvent, LogoutEvent, RequestContext, SessionListener}
-import sgrv.be.auth.Callback
+import sgrv.be.auth.SessionAuth
 import zio.http.Request
 import zio.ZIO
 import zio.json.ast.Json
@@ -34,14 +34,14 @@ object CountingSessionListener extends SessionListener:
   override def onLogout(event: LogoutEvent): ZIO[Requires, Throwable, Unit] =
     ZIO.logInfo(s"Signed out without changing workout state: ${event.user.email}")
 
-  /** The identity the backend knows a browser by, or `None` when the request carries no session cookie.
+  /** The identity the backend knows a client by, or `None` when the request carries no application session.
     *
     * What the account's record names as its counter, so a second device taking the role is a change of hand, and the
     * device it displaced can be told so. A digest of the session key rather than the key itself: the key is what
-    * authenticates the browser, and it is not copied into a second collection.
+    * authenticates the client, and it is not copied into a second collection.
     */
   private[sessions] def browserSession(request: Request): Option[String] =
-    request.cookie(Callback.sessionCookieName).map(_.content).map(_.trim).filter(_.nonEmpty).map(browserSession)
+    SessionAuth.sessionKey(request).map(browserSession)
 
   private[sessions] def browserSession(sessionKey: String): String =
     MessageDigest

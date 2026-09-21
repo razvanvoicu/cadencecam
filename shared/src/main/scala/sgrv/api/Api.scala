@@ -16,6 +16,25 @@ final case class CurrentUser(email: String, name: String, extra: Option[Map[Stri
 object CurrentUser:
   given JsonCodec[CurrentUser] = DeriveJsonCodec.gen[CurrentUser]
 
+/** A Google ID token obtained by a native client and exchanged for an opaque CadenceCam session.
+  *
+  * The Google credential is used once. It is never the credential accepted by application routes; those receive the
+  * opaque token returned in [[MobileSession]], so browser and native clients share one server-side session model.
+  */
+@jsonNoExtraFields
+final case class MobileAuthentication(idToken: String)
+
+object MobileAuthentication:
+  val Path = "/auth/mobile"
+  given JsonCodec[MobileAuthentication] = DeriveJsonCodec.gen[MobileAuthentication]
+
+/** The bearer session issued to a native client after Google identity verification. */
+@jsonNoExtraFields
+final case class MobileSession(accessToken: String, expiresAtMillis: Long, user: CurrentUser)
+
+object MobileSession:
+  given JsonCodec[MobileSession] = DeriveJsonCodec.gen[MobileSession]
+
 @jsonNoExtraFields
 final case class AboutInfo(
     appVersion: String,
