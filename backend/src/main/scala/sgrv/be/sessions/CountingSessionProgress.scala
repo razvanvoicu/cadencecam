@@ -65,7 +65,7 @@ object CountingSessionProgress extends BackendPlugin:
       keeper <- AccountSessions.store(firestore)
       now <- Clock.instant
       recorded <- keeper
-        .counted(account, mine, progress.reps, progress.cadenceSum, progress.elapsedSeconds, now)
+        .counted(account, mine, progress, now)
         .mapError(WriteFailed.apply)
       // The ownership check and progress write happen in the same transaction. Another device taking over between a
       // read and this write therefore cannot let a displaced counter file one last report.
@@ -88,6 +88,8 @@ object CountingSessionProgress extends BackendPlugin:
       Left(s"Cadence sum ${progress.cadenceSum} is not a number at or above zero")
     else if !progress.elapsedSeconds.isFinite || progress.elapsedSeconds < 0 then
       Left(s"Elapsed ${progress.elapsedSeconds} is not a duration")
+    else if progress.calories.exists(value => !value.isFinite || value < 0) then
+      Left(s"Calories ${progress.calories.get} is not a number at or above zero")
     else Right(progress)
 
   /** The count alone, which is all most readers want of a report. */

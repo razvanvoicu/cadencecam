@@ -299,7 +299,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       AccountSchema.repsAt -> stamp(now),
       AccountSchema.cadenceSum -> java.lang.Double.valueOf(progress.cadenceSum),
       AccountSchema.elapsedSeconds -> java.lang.Double.valueOf(progress.elapsedSeconds)
-    )
+    ) ++ progress.calories.map(value => AccountSchema.calories -> java.lang.Double.valueOf(value))
 
   private def snapshotFields(snapshot: WorkoutSnapshot): Map[String, AnyRef] =
     Map[String, AnyRef](
@@ -339,9 +339,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
   def counted(
       name: String,
       browserSession: String,
-      reps: Int,
-      cadenceSum: Double,
-      elapsedSeconds: Double,
+      progress: RepProgress,
       now: Instant
   ): Task[Option[String]] =
     transact(name): (transaction, reference, snapshot) =>
@@ -351,7 +349,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
         .map: session =>
           val _ = transaction.set(
             reference.collection(AccountSchema.sessions).document(session),
-            progressFields(RepProgress(reps, cadenceSum, elapsedSeconds), now).asJava,
+            progressFields(progress, now).asJava,
             com.google.cloud.firestore.SetOptions.merge()
           )
           val _ = transaction.set(

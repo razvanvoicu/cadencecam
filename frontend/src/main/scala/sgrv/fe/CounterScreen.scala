@@ -290,8 +290,12 @@ private[fe] object CounterScreen:
       lastPublished = None
       publish()
 
+    def measuredProgress(): RepProgress =
+      val progress = baseline.plus(counter.reading).progress
+      progress.copy(calories = Some(Effort.calories(progress.reps, progress.cadenceSum, workoutSettings)))
+
     def reportWhileActive(): Unit =
-      reporter.start(() => baseline.plus(counter.reading).progress)
+      reporter.start(() => measuredProgress())
 
     def workoutSnapshot(progress: RepProgress): WorkoutSnapshot =
       WorkoutSnapshot(
@@ -326,7 +330,7 @@ private[fe] object CounterScreen:
       if workoutActive.now() && !workoutBusy.now() then
         workoutBusy.set(true)
         reporter.stop()
-        val finalProgress = baseline.plus(counter.reading).progress
+        val finalProgress = measuredProgress()
         workoutRequests.run(
           api.controlWorkout(WorkoutAction.Stop, Some(finalProgress), Some(workoutSnapshot(finalProgress)))
         ):

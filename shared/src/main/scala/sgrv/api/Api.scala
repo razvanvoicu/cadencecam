@@ -70,12 +70,18 @@ final case class RepProgress(
     reps: Int,
     /** The frequency accumulator behind the calorie figure, and the clock it was measured over.
       *
-      * Reported so the history has something to work a calorie figure out from afterwards. Not the figure itself: that
-      * depends on a weight and a factor the account can change, and one computed under an old factor and kept would be
-      * a number nothing else on the screen agreed with.
+      * Kept beside the conclusion so history remains auditable and older Counter builds that do not report calories
+      * still preserve every raw measurement.
       */
     cadenceSum: Double = 0.0,
-    elapsedSeconds: Double = 0.0
+    elapsedSeconds: Double = 0.0,
+    /** The calorie total computed from this progress and the settings frozen when the workout started.
+      *
+      * Periodic reports carry the same conclusion used by the live workout, so an in-progress workout and one closed
+      * by a path other than Stop cannot leave history with the zero-calorie snapshot written at Start. Optionality
+      * keeps reports from older Counter builds readable during an upgrade.
+      */
+    calories: Option[Double] = None
 )
 
 object RepProgress:

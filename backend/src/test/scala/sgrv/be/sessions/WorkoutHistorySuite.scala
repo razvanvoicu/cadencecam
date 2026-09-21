@@ -43,9 +43,9 @@ class WorkoutHistorySuite extends munit.FunSuite:
     assertEquals(history.toJson.fromJson[WorkoutHistory], Right(history))
 
   test("a report carries the accumulator the history needs, and old reports still parse"):
-    val full = """{"reps":247,"cadenceSum":130.5,"elapsedSeconds":900.0}"""
+    val full = """{"reps":247,"cadenceSum":130.5,"elapsedSeconds":900.0,"calories":647.5}"""
 
-    assertEquals(CountingSessionProgress.reported(full), Right(RepProgress(247, 130.5, 900.0)))
+    assertEquals(CountingSessionProgress.reported(full), Right(RepProgress(247, 130.5, 900.0, Some(647.5))))
     // A counter that predates the fields reports neither, and still counts.
     assertEquals(CountingSessionProgress.reported("""{"reps":57}"""), Right(RepProgress(57)))
     assertEquals(CountingSessionProgress.reps(full), Right(247))
@@ -75,8 +75,7 @@ class WorkoutHistorySuite extends munit.FunSuite:
     assert(CountingSessionProgress.reported("""{"reps":-1}""").isLeft)
     assert(CountingSessionProgress.reported("""{"reps":10,"cadenceSum":-3.0}""").isLeft)
     assert(CountingSessionProgress.reported("""{"reps":10,"elapsedSeconds":-1.0}""").isLeft)
-    // The shared type forbids extra fields, so the two ends cannot silently disagree about the shape.
-    assert(CountingSessionProgress.reported("""{"reps":10,"calories":400}""").isLeft)
+    assert(CountingSessionProgress.reported("""{"reps":10,"calories":-1}""").isLeft)
 
   test("the history is read and one workout discarded on the paths both ends name"):
     val patterns = WorkoutHistoryRoute.routes.routes.map(_.routePattern)
