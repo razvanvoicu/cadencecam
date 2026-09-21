@@ -12,7 +12,8 @@ import scala.util.Success
 private[fe] final class SessionRefreshWorker(
     http: HttpService,
     refreshLeadTimeMillis: Int = SessionRefreshWorker.DefaultRefreshLeadTimeMillis,
-    retryDelayMillis: Int = SessionRefreshWorker.DefaultRetryDelayMillis
+    retryDelayMillis: Int = SessionRefreshWorker.DefaultRetryDelayMillis,
+    presenceIntervalMillis: Int = SessionRefreshWorker.DefaultPresenceIntervalMillis
 )(using stateStore: RefreshStateStore):
   def isEnabled: Boolean = readState.active
 
@@ -22,6 +23,7 @@ private[fe] final class SessionRefreshWorker(
       val generation = current.generation + 1
       writeState(current.copy(active = true, generation = generation, nextAttemptAtMillis = None))
       renew(generation)
+      schedulePresenceCheck(generation)
 
   def disable(): Unit =
     val current = readState
@@ -54,6 +56,18 @@ private[fe] final class SessionRefreshWorker(
       writeState(readState.copy(nextAttemptAtMillis = Some(js.Date.now() + delayMillis)))
       val _ = dom.window.setTimeout(() => renew(generation), delayMillis)
 
+  /** Checks only whether the application session still exists. Renewal remains on its long expiry-based schedule; this
+    * lightweight read is what lets an otherwise idle role-picker learn promptly that another device logged out.
+    */
+  private def checkPresence(generation: Int): Unit =
+    if isCurrent(generation) then
+      http.get("/me").onComplete(_ => schedulePresenceCheck(generation))
+
+  private def schedulePresenceCheck(generation: Int): Unit =
+    if isCurrent(generation) then
+      val delay = math.max(SessionRefreshWorker.MinimumDelayMillis, presenceIntervalMillis)
+      val _ = dom.window.setTimeout(() => checkPresence(generation), delay)
+
   private def isCurrent(generation: Int): Boolean =
     val current = readState
     current.active && current.generation == generation
@@ -67,7 +81,8 @@ private[fe] object SessionRefreshWorker:
   val ExpiresAtHeader = "X-Session-Expires-At"
   val DefaultRefreshLeadTimeMillis: Int = 5 * 60 * 1000
   val DefaultRetryDelayMillis: Int = 60 * 1000
-  private val MinimumDelayMillis = 1000
+  val DefaultPresenceIntervalMillis: Int = 10 * 1000
+  private[refreshstate] val MinimumDelayMillis = 1000
 
   private[fe] def nextDelayMillis(nowMillis: Double, expiresAtMillis: Double, leadTimeMillis: Int): Int =
     val requested = expiresAtMillis - nowMillis - leadTimeMillis

@@ -11,8 +11,8 @@ import zio.http.Request
 import zio.ZIO
 import zio.json.ast.Json
 
-/** Authentication events deliberately do not own the workout lifecycle. Start and Stop do; signing in and out only
-  * changes whether this browser may issue those commands.
+/** Records authentication events without turning them into workouts. Start and Stop own the ordinary workout
+  * lifecycle; the logout route separately closes an open workout before it invalidates the account's credentials.
   */
 object CountingSessionListener extends SessionListener:
   type Requires = Firestore
@@ -20,19 +20,30 @@ object CountingSessionListener extends SessionListener:
   override val id = "counting-session"
   override val requirements: CapabilitySet[Requires] = CapabilitySet.one(BackendCapabilities.firestore)
 
-  /** Nothing is opened at login.
-    *
-    * A login is not a set. Every device that signs in reaches the same screens, and only one of them counts; the
-    * session is opened when a device takes the counter's role, which is the moment there is something to record.
+  /** A login is an event, not a set. Every device that signs in reaches the same screens, and only Start creates a
+    * workout history row.
     */
   override def onLogin(event: LoginEvent): ZIO[Requires, Throwable, Unit] =
-    ZIO.logInfo(s"Signed in: ${event.user.email}")
+    record(AuthenticationEventType.Login, event.sessionKey, event.user.email, event.at)
 
-  /** Logout is not Stop. An active workout remains available for its counter to finish (or for the idle timeout to
-    * close if that counter has gone away).
-    */
+  /** The route has already closed any active workout and invalidated every device before this event is raised. */
   override def onLogout(event: LogoutEvent): ZIO[Requires, Throwable, Unit] =
-    ZIO.logInfo(s"Signed out without changing workout state: ${event.user.email}")
+    record(AuthenticationEventType.Logout, event.sessionKey, event.user.email, event.at)
+
+  private def record(
+      eventType: AuthenticationEventType,
+      sessionKey: String,
+      email: String,
+      at: java.time.Instant
+  ): ZIO[Requires, Throwable, Unit] =
+    for
+      firestore <- ZIO.service[Firestore]
+      account <- AccountKey.of(email)
+      _ <- ZIO.foreachDiscard(account): name =>
+        AccountSessions
+          .store(firestore)
+          .flatMap(_.recordAuthenticationEvent(name, eventType, browserSession(sessionKey), at))
+    yield ()
 
   /** The identity the backend knows a client by, or `None` when the request carries no application session.
     *

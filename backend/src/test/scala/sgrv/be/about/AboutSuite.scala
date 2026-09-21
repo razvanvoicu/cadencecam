@@ -43,7 +43,7 @@ class AboutSuite extends munit.FunSuite:
 
       override def findForRefresh(sessionKey: String): Task[Option[SessionUser]] = ZIO.none
       override def renew(sessionKey: String, expiresAt: Instant): Task[Unit] = ZIO.unit
-      override def invalidate(sessionKey: String): Task[Unit] = ZIO.unit
+      override def invalidateAll(email: String): Task[Unit] = ZIO.unit
 
     val registry = CapabilityRegistry.fromEnvironment(ZEnvironment(store))
     val routes = RouteDiscovery.activate(About, About.getClass.getName, registry) match

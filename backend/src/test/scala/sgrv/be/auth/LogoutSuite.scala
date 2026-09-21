@@ -4,6 +4,7 @@ import com.google.api.client.http.{HttpHeaders, HttpResponseException}
 import java.time.Instant
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 import sgrv.be.core.{CapabilityRegistry, LoginEvent, LogoutEvent, PluginStatus, RouteDiscovery, SessionNotifier}
+import sgrv.be.sessions.WorkoutSessions
 import zio.{Duration, Runtime, Task, UIO, Unsafe, ZEnvironment, ZIO}
 import zio.http.{Cookie, Header, Request, Status, URL}
 
@@ -23,9 +24,10 @@ class LogoutSuite extends munit.FunSuite:
   private def routes(
       sessionStore: SessionStore,
       googleOAuth: GoogleOAuth,
-      notifier: SessionNotifier = SessionNotifier.none
+      notifier: SessionNotifier = SessionNotifier.none,
+      workouts: WorkoutSessions = workoutSessions(_ => ZIO.unit)
   ) =
-    val registry = CapabilityRegistry.fromEnvironment(ZEnvironment(sessionStore, googleOAuth, notifier))
+    val registry = CapabilityRegistry.fromEnvironment(ZEnvironment(sessionStore, googleOAuth, notifier, workouts))
     RouteDiscovery.activate(Logout, Logout.getClass.getName, registry) match
       case PluginStatus.Active(_, _, activeRoutes) => activeRoutes
       case other                                   => fail(s"Expected Logout to activate, got $other")
@@ -34,19 +36,25 @@ class LogoutSuite extends munit.FunSuite:
     .post(URL.decode("/logout").toOption.get, zio.http.Body.empty)
     .addCookie(Cookie.Request(Callback.sessionCookieName, "session-key"))
 
-  test("revokes Google authorization, deletes the session, and expires authentication cookies"):
+  test("closes the workout, revokes Google, invalidates every device, and expires authentication cookies"):
     val revokedToken = new AtomicReference(Option.empty[String])
-    val invalidatedSession = new AtomicReference(Option.empty[String])
+    val invalidatedAccount = new AtomicReference(Option.empty[String])
+    val closedAccount = new AtomicReference(Option.empty[String])
+    val operations = new AtomicReference(List.empty[String])
+    def mark(name: String): Unit = { val _ = operations.updateAndGet(name :: _); () }
     val user = SessionUser("jane@example.com", "Jane", Some("refresh-token"))
-    val store = sessionStore(user, sessionKey => ZIO.succeed(invalidatedSession.set(Some(sessionKey))))
-    val oauth = googleOAuth(token => ZIO.succeed(revokedToken.set(Some(token))))
+    val store = sessionStore(user, email => ZIO.succeed { invalidatedAccount.set(Some(email)); mark("invalidate") })
+    val oauth = googleOAuth(token => ZIO.succeed { revokedToken.set(Some(token)); mark("revoke") })
+    val workouts = workoutSessions(email => ZIO.succeed { closedAccount.set(Some(email)); mark("close") })
 
-    val response = run(ZIO.scoped(routes(store, oauth).runZIO(request)))
+    val response = run(ZIO.scoped(routes(store, oauth, workouts = workouts).runZIO(request)))
     val cookies = response.headers.getAll(Header.SetCookie).map(_.value)
 
     assertEquals(response.status, Status.NoContent)
+    assertEquals(closedAccount.get(), Some("jane@example.com"))
     assertEquals(revokedToken.get(), Some("refresh-token"))
-    assertEquals(invalidatedSession.get(), Some("session-key"))
+    assertEquals(invalidatedAccount.get(), Some("jane@example.com"))
+    assertEquals(operations.get().reverse, List("close", "revoke", "invalidate"))
     assertEquals(cookies.map(_.name).toSet, Set(Callback.sessionCookieName, Login.stateCookieName))
     cookies.foreach: cookie =>
       assertEquals(cookie.content, "")
@@ -54,20 +62,24 @@ class LogoutSuite extends munit.FunSuite:
       assert(cookie.isHttpOnly)
     assertEquals(response.headers.get(Header.CacheControl), Some(Header.CacheControl.NoStore))
 
-  test("does not delete the retryable session when Google revocation fails"):
+  test("closes the workout but keeps credentials retryable when Google revocation fails"):
     val invalidations = new AtomicInteger(0)
+    val closures = new AtomicInteger(0)
     val user = SessionUser("jane@example.com", "Jane", Some("refresh-token"))
     val store = sessionStore(user, _ => ZIO.succeed(invalidations.incrementAndGet()).unit)
     val oauth = googleOAuth(_ => ZIO.fail(new RuntimeException("private upstream detail")))
 
-    val response = run(ZIO.scoped(routes(store, oauth).runZIO(request)))
+    val response = run(ZIO.scoped(
+      routes(store, oauth, workouts = workoutSessions(_ => ZIO.succeed(closures.incrementAndGet()).unit)).runZIO(request)
+    ))
 
     assertEquals(response.status, Status.BadGateway)
     assertEquals(run(response.body.asString), "Could not revoke Google authorization. Try again.")
+    assertEquals(closures.get(), 1)
     assertEquals(invalidations.get(), 0)
     assertEquals(response.headers.getAll(Header.SetCookie).size, 0)
 
-  test("invalidates a session without calling Google when no refresh token was stored"):
+  test("invalidates every device without calling Google when no revocation token was stored"):
     val revocations = new AtomicInteger(0)
     val invalidations = new AtomicInteger(0)
     val store = sessionStore(
@@ -95,7 +107,7 @@ class LogoutSuite extends munit.FunSuite:
     assertEquals(response.status, Status.NoContent)
     assertEquals(revokedToken.get(), Some("access-token"))
 
-  test("keeps the browser cookie retryable when Firestore invalidation fails"):
+  test("keeps the browser cookie retryable when account-wide invalidation fails"):
     val revocations = new AtomicInteger(0)
     val user = SessionUser("jane@example.com", "Jane", Some("refresh-token"))
     val store = sessionStore(user, _ => ZIO.fail(new RuntimeException("private Firestore detail")))
@@ -104,8 +116,24 @@ class LogoutSuite extends munit.FunSuite:
     val response = run(ZIO.scoped(routes(store, oauth).runZIO(request)))
 
     assertEquals(response.status, Status.ServiceUnavailable)
-    assertEquals(run(response.body.asString), "Could not invalidate the browser session. Try again.")
+    assertEquals(run(response.body.asString), "Could not invalidate every signed-in device. Try again.")
     assertEquals(revocations.get(), 1)
+    assertEquals(response.headers.getAll(Header.SetCookie).size, 0)
+
+  test("does not revoke or invalidate credentials when the active workout cannot close"):
+    val revocations = new AtomicInteger(0)
+    val invalidations = new AtomicInteger(0)
+    val user = SessionUser("jane@example.com", "Jane", Some("refresh-token"))
+    val store = sessionStore(user, _ => ZIO.succeed(invalidations.incrementAndGet()).unit)
+    val oauth = googleOAuth(_ => ZIO.succeed(revocations.incrementAndGet()).unit)
+    val workouts = workoutSessions(_ => ZIO.fail(new RuntimeException("private workout detail")))
+
+    val response = run(ZIO.scoped(routes(store, oauth, workouts = workouts).runZIO(request)))
+
+    assertEquals(response.status, Status.ServiceUnavailable)
+    assertEquals(run(response.body.asString), "Could not close the active workout. Try again.")
+    assertEquals(revocations.get(), 0)
+    assertEquals(invalidations.get(), 0)
     assertEquals(response.headers.getAll(Header.SetCookie).size, 0)
 
   test("treats an already expired or revoked Google token as an idempotent success"):
@@ -133,7 +161,11 @@ class LogoutSuite extends munit.FunSuite:
 
       override def findForRefresh(sessionKey: String): Task[Option[SessionUser]] = ZIO.none
       override def renew(sessionKey: String, expiresAt: Instant): Task[Unit] = ZIO.unit
-      override def invalidate(sessionKey: String): Task[Unit] = invalidateEffect(sessionKey)
+      override def invalidateAll(email: String): Task[Unit] = invalidateEffect(email)
+
+  private def workoutSessions(closeEffect: String => Task[Unit]): WorkoutSessions =
+    new WorkoutSessions:
+      override def closeOnLogout(email: String, at: Instant): Task[Unit] = closeEffect(email)
 
   private def googleOAuth(revokeEffect: String => Task[Unit]): GoogleOAuth =
     new GoogleOAuth:

@@ -27,7 +27,11 @@ trait SessionStore:
 
   /** Extends the active-session expiry only after Google has accepted the stored refresh token. */
   def renew(sessionKey: String, expiresAt: Instant): Task[Unit]
-  def invalidate(sessionKey: String): Task[Unit]
+
+  /** Invalidates every application credential currently belonging to the account. Logout is account-wide: a phone,
+    * tablet, and browser signed into the same email must not retain contradictory authentication states.
+    */
+  def invalidateAll(email: String): Task[Unit]
 
 private[be] object SessionStore:
   def create(
@@ -47,8 +51,8 @@ private[be] object SessionStore:
   def renew(sessionKey: String, expiresAt: Instant): ZIO[SessionStore, Throwable, Unit] =
     ZIO.serviceWithZIO[SessionStore](_.renew(sessionKey, expiresAt))
 
-  def invalidate(sessionKey: String): ZIO[SessionStore, Throwable, Unit] =
-    ZIO.serviceWithZIO[SessionStore](_.invalidate(sessionKey))
+  def invalidateAll(email: String): ZIO[SessionStore, Throwable, Unit] =
+    ZIO.serviceWithZIO[SessionStore](_.invalidateAll(email))
 
   val live: ZLayer[Firestore, Nothing, SessionStore] = ZLayer.fromFunction(Live(_))
 
@@ -113,11 +117,19 @@ private[be] object SessionStore:
                     ) -> expiry
                   else None
 
-    override def invalidate(sessionKey: String): Task[Unit] =
-      normalized(sessionKey) match
-        case None      => ZIO.fail(new IllegalArgumentException("The session key is empty"))
-        case Some(key) =>
-          GoogleFuture.fromApiFuture(firestore.collection(SessionSchema.collection).document(key).delete()).unit
+    override def invalidateAll(email: String): Task[Unit] =
+      normalized(email) match
+        case None          => ZIO.fail(new IllegalArgumentException("The account email is empty"))
+        case Some(address) =>
+          GoogleFuture
+            .fromApiFuture(
+              firestore.collection(SessionSchema.collection).whereEqualTo("email", address).get()
+            )
+            .flatMap: found =>
+              ZIO.foreachDiscard(found.getDocuments.asScala.toSeq.grouped(400).toSeq): documents =>
+                val batch = firestore.batch()
+                documents.foreach(document => { val _ = batch.delete(document.getReference) })
+                GoogleFuture.fromApiFuture(batch.commit()).unit
 
   private[auth] def documentFields(
       sessionKey: String,

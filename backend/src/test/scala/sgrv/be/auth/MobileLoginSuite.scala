@@ -82,7 +82,7 @@ class MobileLoginSuite extends munit.FunSuite:
       override def find(sessionKey: String, now: Instant): Task[Option[SessionUser]] = ZIO.none
       override def findForRefresh(sessionKey: String): Task[Option[SessionUser]] = ZIO.none
       override def renew(sessionKey: String, expiresAt: Instant): Task[Unit] = ZIO.unit
-      override def invalidate(sessionKey: String): Task[Unit] = ZIO.unit
+      override def invalidateAll(email: String): Task[Unit] = ZIO.unit
 
     val tokens = new TokenGenerator:
       override def generate(bytes: Int): UIO[String] =

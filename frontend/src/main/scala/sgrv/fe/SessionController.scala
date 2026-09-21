@@ -57,12 +57,12 @@ private[fe] final class SessionController(
         case Left(error)                 => updateUser(AuthenticationFailed(error.message))
 
   def handleUnauthorized(): Unit =
-    // The initial `/me` is allowed to answer 401 without putting an expiry dialog over the ordinary login screen.
-    if worker.isEnabled then
-      aboutRequests.invalidate()
-      worker.disable()
-      stateStore.update(SessionController.signedOut(Unauthenticated))
-      refreshStateStore.update(_.copy(expired = true))
+    // A session revoked by Logout is indistinguishable from one that expired, and should not be: both mean this device
+    // is signed out. Move straight to the Google login view instead of leaving an expiry dialog over an old screen.
+    aboutRequests.invalidate()
+    worker.disable()
+    stateStore.update(SessionController.signedOut(Unauthenticated))
+    refreshStateStore.update(_.copy(expired = false))
 
   def openAbout(): Unit =
     val signedIn = stateStore.current.user match
@@ -93,8 +93,11 @@ private[fe] final class SessionController(
         .foreach:
           case Right(_) =>
             stateStore.update(SessionController.signedOut(Unauthenticated))
-            dom.window.location.assign("/")
+          // The HTTP boundary has already moved a remotely revoked device to Login. Reporting that same 401 as a
+          // failed logout would put contradictory wording on the login screen.
+          case Left(ApiError.Http(_, 401, _)) if stateStore.current.user == Unauthenticated => ()
           case Left(error) =>
+            worker.enable()
             stateStore.update(_.copy(logoutState = LogoutState.Failed(error.message)))
 
   /** Removes everything the account holds, then signs out.

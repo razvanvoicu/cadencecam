@@ -23,3 +23,7 @@ class SessionRefreshWorkerSuite extends FunSuite:
       SessionRefreshWorker.nextDelayMillis(0d, Int.MaxValue.toDouble * 2, 0),
       Int.MaxValue
     )
+
+  test("checks account-wide logout promptly without creating a tight loop"):
+    assertEquals(SessionRefreshWorker.DefaultPresenceIntervalMillis, 10_000)
+    assert(SessionRefreshWorker.DefaultPresenceIntervalMillis >= SessionRefreshWorker.MinimumDelayMillis)

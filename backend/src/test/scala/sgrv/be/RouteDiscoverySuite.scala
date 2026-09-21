@@ -71,7 +71,7 @@ class RouteDiscoverySuite extends munit.FunSuite:
 
     override def findForRefresh(sessionKey: String): Task[Option[SessionUser]] = ZIO.none
     override def renew(sessionKey: String, expiresAt: Instant): Task[Unit] = ZIO.unit
-    override def invalidate(sessionKey: String): Task[Unit] = ZIO.unit
+    override def invalidateAll(email: String): Task[Unit] = ZIO.unit
 
   private val sessionRegistry = CapabilityRegistry.fromEnvironment(ZEnvironment(sessionStore))
 
@@ -130,7 +130,7 @@ class RouteDiscoverySuite extends munit.FunSuite:
 
       override def findForRefresh(sessionKey: String): Task[Option[SessionUser]] = ZIO.none
       override def renew(sessionKey: String, expiresAt: Instant): Task[Unit] = ZIO.unit
-      override def invalidate(sessionKey: String): Task[Unit] = ZIO.unit
+      override def invalidateAll(email: String): Task[Unit] = ZIO.unit
 
     val registry = CapabilityRegistry.fromEnvironment(ZEnvironment(countingStore))
     val status = RouteDiscovery.activate(ProtectedEchoPlugin, ProtectedEchoPlugin.getClass.getName, registry)

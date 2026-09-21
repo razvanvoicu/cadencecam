@@ -111,7 +111,7 @@ class RefreshSessionSuite extends munit.FunSuite:
         if sessionKey == "session-key" then findEffect else ZIO.none
 
       override def renew(sessionKey: String, expiresAt: Instant): Task[Unit] = renewEffect(sessionKey, expiresAt)
-      override def invalidate(sessionKey: String): Task[Unit] = ZIO.unit
+      override def invalidateAll(email: String): Task[Unit] = ZIO.unit
 
   private def googleOAuth(accessTokenEffect: String => Task[String]): GoogleOAuth =
     new GoogleOAuth:

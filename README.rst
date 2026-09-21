@@ -9,7 +9,7 @@ The picture never leaves the phone. The browser reads only how bright each quart
 second, and counts the movement from that; no photo or video is recorded or uploaded.
 
 It is a Scala 3 web application: a Scala.js frontend served by a ZIO HTTP backend from one deployment artifact, with
-Firestore for storage. The backend's infrastructure — Google login, browser sessions, discovered and
+Firestore for storage. The backend's infrastructure — Google login, application sessions, discovered and
 capability-checked plugins — began as a reusable web-application template, and the later sections of this document
 describe it in those terms.
 
@@ -90,8 +90,9 @@ Every shape the two ends exchange is defined once, in the ``shared`` project (``
 it travels on where it has one, so the frontend and the backend cannot drift apart. The ☰ menu on every screen carries
 **About**, the two documents and — once signed in — **Logout**. About shows the signed-in account, the build
 information from the authenticated ``GET /about`` route, and the frontend build the browser is actually running;
-before sign-in it shows only the last. Logout invokes ``POST /logout`` and returns the browser to the signed-out home
-page only after the server has revoked the Google grant and removed the browser session. The login screen explains
+before sign-in it shows only the last. Logout invokes ``POST /logout`` and returns every active client to the signed-out
+home page only after the server has closed an open workout, revoked the Google grant, and removed all of the account's
+application sessions. The login screen explains
 what the app does before asking anyone to sign in.
 
 The backend owns the static-file routes, but application API routes are not
@@ -122,7 +123,7 @@ Technology
 * WebRTC data channels between a counting device and the devices watching it
 * ZIO HTTP for the backend server, and ZIO Logging for console logging
 * Google OAuth 2.0 (google-api-client) for "Login with Google", requesting only ``openid email profile``
-* Google Cloud Firestore for browser sessions, the accounts' workouts and settings, and pairing messages
+* Google Cloud Firestore for application sessions, the accounts' workouts and settings, and pairing messages
 * ClassGraph for discovering independently loadable, capability-checked backend plugins
 * MUnit for frontend and backend tests, and sbt-scoverage for backend coverage
 * Selenium (in a separate ``e2etest`` project) for end-to-end browser tests against the real, running app
@@ -230,8 +231,8 @@ redirects.
      - Validates the stored Google refresh token; renews Firestore/cookie expiry and reports it in a header
    * - ``POST /logout``
      - Signed in
-     - Revokes Google authorization, deletes the browser session, closes the account's counting session, and expires
-       the authentication cookies
+     - Closes an open workout, revokes Google authorization, deletes every application session for the account, and
+       expires the calling browser's authentication cookies
    * - ``GET /about``
      - Signed in
      - Build metadata as JSON
@@ -342,7 +343,7 @@ Data model
 Everything the backend keeps is in the project's ``(default)`` Firestore database, in three collections.
 
 ``Access``
-   One document per browser session, expired by a TTL policy; see `Login with Google`_.
+   One document per browser or native application session, expired by a TTL policy; see `Login with Google`_.
 
 ``CountingSessions``
    One document per account, named by a keyed digest of the account's email — HMAC-SHA256 under ``ACCOUNT_KEY`` —
@@ -458,16 +459,15 @@ JavaScript. The HttpOnly attribute also prevents JavaScript from reading the
 session key, although same-origin JavaScript can still issue requests carrying
 the cookie.
 
-After sign-in, the frontend's Logout control sends an authenticated ``POST /logout``. The backend first posts the
-stored refresh token to Google's OAuth revocation endpoint; if Google issued no refresh token at login, the access
-token retained solely for this fallback is revoked instead. An already expired or revoked token is treated as an
-idempotent success. It then deletes the current ``Access`` document and returns ``204 No Content`` with expired
-``session`` and ``auth_state`` cookies. The frontend reloads ``/``, where ``GET /me`` produces ``401`` and the login
-link is shown again. Google revocation is intentionally performed before Firestore deletion: if Google or Firestore
-is temporarily unavailable, the server returns a stable error, leaves the cookie/session available, and lets the
-user retry instead of losing the only stored revocation credential before it can be revoked. Successful revocation removes
-the OAuth scopes granted to this project and invalidates its issued access and refresh tokens; it does not sign the
-user out of their Google account itself.
+After sign-in, the frontend's Logout control sends an authenticated ``POST /logout``. The backend first closes any
+open workout as ``LoggedOut``. It then posts the stored refresh token to Google's OAuth revocation endpoint; if Google
+issued no refresh token at login, the access token retained solely for this fallback is revoked instead. An already
+expired or revoked token is treated as an idempotent success. It finally deletes every ``Access`` document carrying
+the account's email and returns ``204 No Content`` with expired ``session`` and ``auth_state`` cookies. The calling
+client moves directly to Login; other browser and native clients discover the revoked application session on their
+ten-second check and do the same. The ordered failure behavior keeps credentials available for retry when revocation
+or Firestore is temporarily unavailable. Successful revocation removes the OAuth scopes granted to this project and
+invalidates its issued access and refresh tokens; it does not sign the user out of their Google account itself.
 
 The Google and Firestore SDKs are isolated behind ZIO service interfaces.
 ``AppConfig`` loads and validates deployment settings as an effect;
@@ -523,15 +523,15 @@ One-time setup:
    injects the OAuth values into the local process or deployment without modifying tracked files.
 3. Add one ``APPCONFIGPATH`` locator under ``.local/`` on each development machine.
 
-Each document in the ``Access`` collection represents one browser session. Its
+Each document in the ``Access`` collection represents one browser or native application session. Its
 document ID is a random 256-bit URL-safe session key, which is also stored in
 the ``sessionKey`` field. The other fields are ``email``, ``name``,
 ``createdAt``, and ``expiresAt``. If Google returns an OAuth refresh token, it
 is stored as ``refreshToken``. Otherwise the short-lived access token is stored as ``accessTokenForRevocation``
 solely so Logout can revoke the grant; the two fields are never populated together. A protected
-request is authenticated by looking up the cookie's session key and rejecting
-missing or expired records. A successful logout deletes the current document, revoking only that browser session,
-after revoking the associated Google grant. There is no process-global encryption key and backend restarts do not
+request is authenticated by looking up the cookie or bearer token's session key and rejecting
+missing or expired records. A successful logout deletes every document for the account after closing its active
+workout and revoking the associated Google grant. There is no process-global encryption key and backend restarts do not
 invalidate sessions; Firestore is the durable session store. Treat document
 IDs, ``sessionKey``, and ``refreshToken`` values as secrets.
 
@@ -760,14 +760,13 @@ Four properties are deliberate:
   time the browser loads the home page. A slow listener therefore delays the response.
 * **They run once per session change**, not per page load, because the events are raised in ``/auth/callback``
   and ``POST /logout``.
-* **The logout event is raised only after the logout really happened** — after Google revocation and after the
-  browser session is deleted — so a listener never records an ending that did not occur.
+* **The logout event is raised only after the logout really happened** — after the workout is closed, Google is
+  revoked, and every application session is deleted — so a listener never records an ending that did not occur.
 
-``sgrv.be.sessions.CountingSessionListener`` is the worked example. A login opens nothing: every device that
-signs in reaches the same screens and only one of them counts, so a counting session is opened when a device takes
-the counter's role instead. A logout, from any device, closes the account's session in progress and records why
-(``endedBy``), leaving it in place as a workout in the history. The same object derives a browser's identity from
-its session key by hashing, as recommended above, and ``CountingSessionContributor`` reports that identity on
+``sgrv.be.sessions.CountingSessionListener`` is the worked example. It records Login and Logout as authentication
+events under the account, never as workouts. Every device that signs in reaches the same screens and only Start opens
+a workout; Logout closes an open workout in the route before raising the event. The listener derives a client's
+identity from its application session key by hashing, as recommended above, and ``CountingSessionContributor`` reports that identity on
 ``/me``.
 
 Adding to the /me response
@@ -1120,7 +1119,7 @@ Repository layout
    backend/src/main/scala/sgrv/be/
      Main.scala                                  static routes, discovery, and the server
      BackendEnvironment.scala                    the host's capabilities
-     auth/                                       Google login, browser sessions, /me, logout, renewal
+     auth/                                       Google login, application sessions, /me, logout, renewal
      core/                                       plugin, listener and contributor discovery; access policies
      store/                                      the Firestore client
      about/                                      GET /about

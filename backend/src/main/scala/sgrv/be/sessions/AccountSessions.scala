@@ -20,6 +20,7 @@ import zio.json.*
   *
   * {{{
   *   CountingSessions/{keyed digest of the email}           activeSession, counter, lastRepAt, settings
+  *     events/{auto id}                                     Login or Logout, authentication session, timestamp
   *     peerSignals/{auto id}                                one step of a peer exchange
   *     sessions/{session id}                                startedAt, completedAt, endedBy, counter,
   *                                                          reps, repsAt, cadenceSum, elapsedSeconds
@@ -29,6 +30,7 @@ import zio.json.*
 private[sessions] object AccountSchema:
   val collection = "CountingSessions"
   val sessions = "sessions"
+  val events = "events"
 
   /** Recordings belong to the workout that produced them. Peer messages live at account level because the dashboard
     * must reach the counter before Start has created a workout.
@@ -70,6 +72,13 @@ private[sessions] object AccountSchema:
   val weightKilograms = "weightKilograms"
   val countsBy = "countsBy"
 
+  /** Authentication activity is an event stream, not a workout. The session value is a one-way digest of the
+    * application credential, useful for telling devices apart without copying the credential into another collection.
+    */
+  val eventType = "type"
+  val eventAt = "at"
+  val authenticationSession = "authenticationSession"
+
   /** What the account has set, as the JSON the two ends already agree on.
     *
     * One string rather than a nest of fields, for the reason the traces are: nothing is ever queried by a weight or a
@@ -79,7 +88,10 @@ private[sessions] object AccountSchema:
   val settings = "settings"
 
 private[sessions] enum SessionEnd:
-  case Stopped, Idle, TakenOver
+  case Stopped, Idle, TakenOver, LoggedOut
+
+private[sessions] enum AuthenticationEventType:
+  case Login, Logout
 
 private[sessions] object AccountSessions:
   val idleVariable = "COUNTING_IDLE_MINUTES"
@@ -456,6 +468,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
     for
       _ <- nextPage
       _ <- deleteAll(account(name).collection(AccountSchema.peerSignals))
+      _ <- deleteAll(account(name).collection(AccountSchema.events))
       _ <- GoogleFuture.fromApiFuture(account(name).delete())
       _ <- deleteAll(
         firestore
@@ -463,6 +476,24 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
           .whereEqualTo(TestEventSchema.userEmail, email)
       )
     yield ()
+
+  /** Records authentication activity beside the account, but outside its workout collection. A login can therefore
+    * never appear in history or make the account look as though a workout is running.
+    */
+  def recordAuthenticationEvent(
+      name: String,
+      eventType: AuthenticationEventType,
+      authenticationSession: String,
+      at: Instant
+  ): Task[Unit] =
+    val fields = Map[String, AnyRef](
+      AccountSchema.eventType -> eventType.toString,
+      AccountSchema.eventAt -> stamp(at),
+      AccountSchema.authenticationSession -> authenticationSession
+    )
+    GoogleFuture
+      .fromApiFuture(account(name).collection(AccountSchema.events).document().create(fields.asJava))
+      .unit
 
   /** Empties a query's results, in batches, because Firestore has no recursive delete from a client library. */
   private def deleteAll(collection: com.google.cloud.firestore.Query): Task[Unit] =
