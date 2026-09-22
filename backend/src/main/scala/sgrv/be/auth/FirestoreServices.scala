@@ -28,6 +28,12 @@ trait SessionStore:
   /** Extends the active-session expiry only after Google has accepted the stored refresh token. */
   def renew(sessionKey: String, expiresAt: Instant): Task[Unit]
 
+  /** Invalidates only the application credential presented by one device. This is deliberately separate from the
+    * account-wide logout below: a device which declines the Counter role must be able to leave without interrupting the
+    * Counter or dashboards already using the account.
+    */
+  def invalidate(sessionKey: String): Task[Unit]
+
   /** Invalidates every application credential currently belonging to the account. Logout is account-wide: a phone,
     * tablet, and browser signed into the same email must not retain contradictory authentication states.
     */
@@ -50,6 +56,9 @@ private[be] object SessionStore:
 
   def renew(sessionKey: String, expiresAt: Instant): ZIO[SessionStore, Throwable, Unit] =
     ZIO.serviceWithZIO[SessionStore](_.renew(sessionKey, expiresAt))
+
+  def invalidate(sessionKey: String): ZIO[SessionStore, Throwable, Unit] =
+    ZIO.serviceWithZIO[SessionStore](_.invalidate(sessionKey))
 
   def invalidateAll(email: String): ZIO[SessionStore, Throwable, Unit] =
     ZIO.serviceWithZIO[SessionStore](_.invalidateAll(email))
@@ -87,6 +96,14 @@ private[be] object SessionStore:
                 .document(key)
                 .update(SessionSchema.expiresAt, timestamp(expiresAt))
             )
+            .unit
+
+    override def invalidate(sessionKey: String): Task[Unit] =
+      normalized(sessionKey) match
+        case None      => ZIO.fail(new IllegalArgumentException("The session key is empty"))
+        case Some(key) =>
+          GoogleFuture
+            .fromApiFuture(firestore.collection(SessionSchema.collection).document(key).delete())
             .unit
 
     private def read(sessionKey: String): Task[Option[(SessionUser, Instant)]] =

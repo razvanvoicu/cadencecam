@@ -36,6 +36,10 @@ class LogoutSuite extends munit.FunSuite:
     .post(URL.decode("/logout").toOption.get, zio.http.Body.empty)
     .addCookie(Cookie.Request(Callback.sessionCookieName, "session-key"))
 
+  private def deviceRequest = Request
+    .post(URL.decode("/logout/device").toOption.get, zio.http.Body.empty)
+    .addCookie(Cookie.Request(Callback.sessionCookieName, "session-key"))
+
   test("closes the workout, revokes Google, invalidates every device, and expires authentication cookies"):
     val revokedToken = new AtomicReference(Option.empty[String])
     val invalidatedAccount = new AtomicReference(Option.empty[String])
@@ -69,9 +73,12 @@ class LogoutSuite extends munit.FunSuite:
     val store = sessionStore(user, _ => ZIO.succeed(invalidations.incrementAndGet()).unit)
     val oauth = googleOAuth(_ => ZIO.fail(new RuntimeException("private upstream detail")))
 
-    val response = run(ZIO.scoped(
-      routes(store, oauth, workouts = workoutSessions(_ => ZIO.succeed(closures.incrementAndGet()).unit)).runZIO(request)
-    ))
+    val response = run(
+      ZIO.scoped(
+        routes(store, oauth, workouts = workoutSessions(_ => ZIO.succeed(closures.incrementAndGet()).unit))
+          .runZIO(request)
+      )
+    )
 
     assertEquals(response.status, Status.BadGateway)
     assertEquals(run(response.body.asString), "Could not revoke Google authorization. Try again.")
@@ -147,7 +154,11 @@ class LogoutSuite extends munit.FunSuite:
     assert(GoogleOAuth.isAlreadyRevoked(alreadyRevoked))
     assert(!GoogleOAuth.isAlreadyRevoked(malformed))
 
-  private def sessionStore(user: SessionUser, invalidateEffect: String => Task[Unit]): SessionStore =
+  private def sessionStore(
+      user: SessionUser,
+      invalidateEffect: String => Task[Unit],
+      invalidateDeviceEffect: String => Task[Unit] = _ => ZIO.unit
+  ): SessionStore =
     new SessionStore:
       override def create(
           sessionKey: String,
@@ -161,6 +172,7 @@ class LogoutSuite extends munit.FunSuite:
 
       override def findForRefresh(sessionKey: String): Task[Option[SessionUser]] = ZIO.none
       override def renew(sessionKey: String, expiresAt: Instant): Task[Unit] = ZIO.unit
+      override def invalidate(sessionKey: String): Task[Unit] = invalidateDeviceEffect(sessionKey)
       override def invalidateAll(email: String): Task[Unit] = invalidateEffect(email)
 
   private def workoutSessions(closeEffect: String => Task[Unit]): WorkoutSessions =
@@ -199,4 +211,52 @@ class LogoutSuite extends munit.FunSuite:
 
     // A listener must never record an ending that did not actually happen.
     assertEquals(response.status, Status.ServiceUnavailable)
+    assertEquals(events.get(), List.empty[LogoutEvent])
+
+  test("device logout invalidates only the requesting session and records its logout"):
+    val deviceInvalidated = new AtomicReference(Option.empty[String])
+    val accountInvalidations = new AtomicInteger(0)
+    val revocations = new AtomicInteger(0)
+    val closures = new AtomicInteger(0)
+    val events = new AtomicReference(List.empty[LogoutEvent])
+    val user = SessionUser("jane@example.com", "Jane", Some("refresh-token"))
+    val store = sessionStore(
+      user,
+      _ => ZIO.succeed(accountInvalidations.incrementAndGet()).unit,
+      key => ZIO.succeed(deviceInvalidated.set(Some(key)))
+    )
+    val activeRoutes = routes(
+      store,
+      googleOAuth(_ => ZIO.succeed(revocations.incrementAndGet()).unit),
+      recordingNotifier(events),
+      workoutSessions(_ => ZIO.succeed(closures.incrementAndGet()).unit)
+    )
+
+    val response = run(ZIO.scoped(activeRoutes.runZIO(deviceRequest)))
+    val cookies = response.headers.getAll(Header.SetCookie).map(_.value)
+
+    assertEquals(response.status, Status.NoContent)
+    assertEquals(deviceInvalidated.get(), Some("session-key"))
+    assertEquals(accountInvalidations.get(), 0)
+    assertEquals(revocations.get(), 0)
+    assertEquals(closures.get(), 0)
+    assertEquals(events.get().map(_.sessionKey), List("session-key"))
+    assertEquals(cookies.map(_.name).toSet, Set(Callback.sessionCookieName, Login.stateCookieName))
+    assertEquals(response.headers.get(Header.CacheControl), Some(Header.CacheControl.NoStore))
+
+  test("device logout stays retryable and records no event when its session cannot be invalidated"):
+    val events = new AtomicReference(List.empty[LogoutEvent])
+    val user = SessionUser("jane@example.com", "Jane")
+    val store = sessionStore(
+      user,
+      _ => ZIO.unit,
+      _ => ZIO.fail(new RuntimeException("private Firestore detail"))
+    )
+    val activeRoutes = routes(store, googleOAuth(_ => ZIO.unit), recordingNotifier(events))
+
+    val response = run(ZIO.scoped(activeRoutes.runZIO(deviceRequest)))
+
+    assertEquals(response.status, Status.ServiceUnavailable)
+    assertEquals(run(response.body.asString), "Could not log out this device. Try again.")
+    assertEquals(response.headers.getAll(Header.SetCookie).size, 0)
     assertEquals(events.get(), List.empty[LogoutEvent])

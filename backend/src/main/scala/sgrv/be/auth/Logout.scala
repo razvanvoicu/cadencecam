@@ -6,19 +6,28 @@ import sgrv.be.sessions.WorkoutSessions
 import zio.{Cause, Clock, ZIO}
 import zio.http.{Header, Method, Response, Routes, Status, handler}
 
-/** Closes the account's open workout, revokes its Google grant, and invalidates every signed-in device. */
+/** Logs out either the whole account or only the device making the request.
+  *
+  * `/logout` preserves the deliberately strong account-wide behavior: it closes an open workout, revokes the Google
+  * grant, and invalidates every signed-in device. `/logout/device` is for a device which declines a role while another
+  * device continues: it invalidates only the credential in that request and leaves the workout, Google grant, and all
+  * other credentials alone.
+  */
 object Logout extends BackendPlugin:
   type Requires = GoogleOAuth & SessionStore & SessionNotifier & WorkoutSessions
 
   override val id = "auth-logout"
   override val requirements: CapabilitySet[Requires] =
-      CapabilitySet.one(BackendCapabilities.googleOAuth) ++
+    CapabilitySet.one(BackendCapabilities.googleOAuth) ++
       CapabilitySet.one(BackendCapabilities.sessionStore) ++
       CapabilitySet.one(BackendCapabilities.sessionNotifier) ++
       CapabilitySet.one(BackendCapabilities.workoutSessions)
   override val accessPolicy: AccessPolicy[Requires] = AccessPolicy.Authenticated
   override val routes: Routes[Requires & RequestContext, Nothing] =
-    Routes(Method.POST / "logout" -> handler(apply))
+    Routes(
+      Method.POST / "logout" -> handler(logoutAccount),
+      Method.POST / "logout" / "device" -> handler(logoutDevice)
+    )
 
   private sealed trait LogoutFailure:
     def cause: Throwable
@@ -27,7 +36,7 @@ object Logout extends BackendPlugin:
   private final case class WorkoutClosureFailed(cause: Throwable) extends LogoutFailure
   private final case class SessionInvalidationFailed(cause: Throwable) extends LogoutFailure
 
-  private def apply: ZIO[Requires & RequestContext, Nothing, Response] =
+  private def logoutAccount: ZIO[Requires & RequestContext, Nothing, Response] =
     ZIO
       .service[RequestContext]
       .flatMap:
@@ -44,13 +53,46 @@ object Logout extends BackendPlugin:
                     // Raised only once the workout is closed and every application session is really gone, so a
                     // listener never records an ending that did not happen. Listener failures are isolated inside the
                     // notifier.
-                    for
-                      _ <- SessionNotifier.loggedOut(LogoutEvent(sessionKey, user, now))
+                    for _ <- SessionNotifier.loggedOut(LogoutEvent(sessionKey, user, now))
                     yield Response
                       .status(Status.NoContent)
                       .addCookie(Callback.clearedSessionCookie(secure))
                       .addCookie(Callback.clearedStateCookie(secure))
                 )
+              yield noStore(response)
+        case RequestContext.Public(_) => ZIO.succeed(noStore(Response.status(Status.InternalServerError)))
+
+  private def logoutDevice: ZIO[Requires & RequestContext, Nothing, Response] =
+    ZIO
+      .service[RequestContext]
+      .flatMap:
+        case RequestContext.Authenticated(request, user) =>
+          SessionAuth.sessionKey(request) match
+            case None             => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
+            case Some(sessionKey) =>
+              for
+                secure <- GoogleOAuth.callbackIsSecure
+                now <- Clock.instant
+                response <- SessionStore
+                  .invalidate(sessionKey)
+                  .foldZIO(
+                    error =>
+                      ZIO.logErrorCause("Could not invalidate the current device session", Cause.fail(error)) *>
+                        ZIO.succeed(
+                          Response
+                            .text("Could not log out this device. Try again.")
+                            .status(Status.ServiceUnavailable)
+                        ),
+                    _ =>
+                      SessionNotifier
+                        .loggedOut(LogoutEvent(sessionKey, user, now))
+                        .as(
+                          Response
+                            .status(Status.NoContent)
+                            .addCookie(Callback.clearedSessionCookie(secure))
+                            .addCookie(Callback.clearedStateCookie(secure))
+                        )
+                  )
               yield noStore(response)
         case RequestContext.Public(_) => ZIO.succeed(noStore(Response.status(Status.InternalServerError)))
 

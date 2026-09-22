@@ -8,7 +8,9 @@ import zio.{Task, UIO, ZEnvironment, ZIO}
 /** A login that has just completed: the browser session exists in the store and its cookie is about to be issued. */
 final case class LoginEvent(sessionKey: String, user: SessionUser, at: Instant)
 
-/** A logout that has just completed: the Google grant is revoked and the browser session is already invalidated. */
+/** A logout that has just completed: the named application session is already invalidated. An account-wide logout may
+  * also have revoked the Google grant and invalidated the account's other application sessions.
+  */
 final case class LogoutEvent(sessionKey: String, user: SessionUser, at: Instant)
 
 /** Nominal contract for code that reacts to the start and end of a browser session, discovered exactly like

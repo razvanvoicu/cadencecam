@@ -11,8 +11,8 @@ import zio.http.Request
 import zio.ZIO
 import zio.json.ast.Json
 
-/** Records authentication events without turning them into workouts. Start and Stop own the ordinary workout
-  * lifecycle; the logout route separately closes an open workout before it invalidates the account's credentials.
+/** Records authentication events without turning them into workouts. Start and Stop own the ordinary workout lifecycle;
+  * an account-wide logout separately closes an open workout, while a device logout leaves it alone.
   */
 object CountingSessionListener extends SessionListener:
   type Requires = Firestore
@@ -26,7 +26,7 @@ object CountingSessionListener extends SessionListener:
   override def onLogin(event: LoginEvent): ZIO[Requires, Throwable, Unit] =
     record(AuthenticationEventType.Login, event.sessionKey, event.user.email, event.at)
 
-  /** The route has already closed any active workout and invalidated every device before this event is raised. */
+  /** The application session named by the event has already been invalidated before this is raised. */
   override def onLogout(event: LogoutEvent): ZIO[Requires, Throwable, Unit] =
     record(AuthenticationEventType.Logout, event.sessionKey, event.user.email, event.at)
 
