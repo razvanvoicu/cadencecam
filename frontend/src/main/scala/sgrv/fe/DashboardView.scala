@@ -20,7 +20,8 @@ private[fe] object DashboardView:
       storage: dom.Storage,
       show: Screen => Unit,
       openAbout: () => Unit,
-      logout: () => Unit,
+      logoutThisDevice: () => Unit,
+      logoutAllDevices: () => Unit,
       confirmForget: () => Unit
   ): Element =
     val controller = DashboardController(api.http)
@@ -204,7 +205,8 @@ private[fe] object DashboardView:
           menuItem("About", openAbout),
           Menu.documentItems(menuOpen),
           menuItem("Back", () => show(Screen.Selection)),
-          menuItem("Logout", logout)
+          menuItem("Log out this device only", logoutThisDevice),
+          menuItem("Log out all devices", logoutAllDevices)
         )
       )
     )
