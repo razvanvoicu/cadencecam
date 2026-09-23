@@ -31,6 +31,15 @@ private[fe] final class ApiClient(private[fe] val http: HttpService, private[fe]
         case Left(ApiError.Http(_, 401, _)) => Right(MeResult(UserState.Unauthenticated, None))
         case Left(error)                    => Left(error)
 
+  def invitationLogin(username: String, accessCode: String): ApiCall[MobileSession] =
+    sendJsonFor[MobileSession](
+      InvitationAuthentication.Path,
+      dom.HttpMethod.POST,
+      InvitationAuthentication(username, accessCode).toJson,
+      "sign in with the invitation",
+      "invitation session"
+    )
+
   def accountSettings(): ApiCall[AccountSettings] =
     getJson[AccountSettings](AccountSettings.Path, "read account settings", "account settings")
 

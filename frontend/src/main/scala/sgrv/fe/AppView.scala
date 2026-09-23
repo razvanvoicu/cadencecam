@@ -85,6 +85,47 @@ private[fe] object AppView:
         case Screen.Bench => BenchView(api.http, () => show(Screen.Selection))
 
     def login: Element =
+      val invitationOpen = Var(false)
+      val invitationUsername = Var("")
+      val invitationCode = Var("")
+
+      def invitationForm: Element =
+        form(
+          cls := "invitation-login",
+          label(
+            cls := "invitation-field",
+            span("Invitation username"),
+            input(
+              typ := "text",
+              autoComplete := "username",
+              maxLength := 48,
+              value <-- invitationUsername.signal,
+              onInput.mapToValue --> invitationUsername
+            )
+          ),
+          label(
+            cls := "invitation-field",
+            span("Access code"),
+            input(
+              typ := "password",
+              autoComplete := "current-password",
+              maxLength := 200,
+              value <-- invitationCode.signal,
+              onInput.mapToValue --> invitationCode
+            )
+          ),
+          child <-- session.invitationError.signal.map(_.fold(emptyNode)(message => p(cls := "error", message))),
+          button(
+            cls := "login-button invitation-submit",
+            typ := "submit",
+            disabled <-- session.invitationBusy.signal,
+            child.text <-- session.invitationBusy.signal.map(if _ then "Signing in…" else "Sign in"),
+            onClick.preventDefault --> (_ =>
+              session.loginWithInvitation(invitationUsername.now(), invitationCode.now())
+            )
+          )
+        )
+
       // Before authentication has been attempted, offer the only thing an anonymous visitor can do.
       div(
         cls := "home",
@@ -107,7 +148,20 @@ private[fe] object AppView:
               "quarter of the frame is, and counts the movement from that. No photo or video is recorded."
           )
         ),
-        a(cls := "login-button", href := "/auth/login", "Login with Google")
+        div(
+          cls := "login-choices",
+          a(cls := "login-button", href := "/auth/login", "Sign in with Google"),
+          button(
+            cls := "login-button",
+            typ := "button",
+            "Sign in with an invitation",
+            onClick --> (_ => {
+              invitationOpen.update(!_)
+              session.invitationError.set(None)
+            })
+          ),
+          child <-- invitationOpen.signal.map(if _ then invitationForm else emptyNode)
+        )
       )
 
     def aboutPanel(state: AboutState, user: UserState): Element =

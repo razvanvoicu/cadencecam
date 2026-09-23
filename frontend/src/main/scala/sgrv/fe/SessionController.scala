@@ -27,6 +27,8 @@ private[fe] final class SessionController(
     * cannot be undone from inside the app, so it is asked for twice and said plainly the second time.
     */
   val forgetPending: Var[Boolean] = Var(false)
+  val invitationBusy: Var[Boolean] = Var(false)
+  val invitationError: Var[Option[String]] = Var(None)
   private val aboutRequests = RequestScope()
 
   def start(): Unit =
@@ -63,6 +65,20 @@ private[fe] final class SessionController(
     worker.disable()
     stateStore.update(SessionController.signedOut(Unauthenticated))
     refreshStateStore.update(_.copy(expired = false))
+
+  def loginWithInvitation(username: String, accessCode: String): Unit =
+    if !invitationBusy.now() then
+      invitationBusy.set(true)
+      invitationError.set(None)
+      api
+        .invitationLogin(username, accessCode)
+        .foreach:
+          case Right(_) =>
+            invitationBusy.set(false)
+            start()
+          case Left(error) =>
+            invitationBusy.set(false)
+            invitationError.set(Some(error.message))
 
   def openAbout(): Unit =
     val signedIn = stateStore.current.user match

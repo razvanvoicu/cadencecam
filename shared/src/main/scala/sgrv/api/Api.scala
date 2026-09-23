@@ -28,6 +28,44 @@ object MobileAuthentication:
   val Path = "/auth/mobile"
   given JsonCodec[MobileAuthentication] = DeriveJsonCodec.gen[MobileAuthentication]
 
+/** A reusable invitation identity. The access code is exchanged once per login for an ordinary opaque CadenceCam
+  * session; it is never accepted by workout or dashboard routes.
+  */
+@jsonNoExtraFields
+final case class InvitationAuthentication(username: String, accessCode: String)
+
+object InvitationAuthentication:
+  val Path = "/auth/invitation"
+  given JsonCodec[InvitationAuthentication] = DeriveJsonCodec.gen[InvitationAuthentication]
+
+/** One invitation returned to the owner at creation time. The plaintext code is not stored and cannot be retrieved
+  * later, so this response is the moment to copy it into the invitation or app-review notes.
+  */
+@jsonNoExtraFields
+final case class InvitationCredential(username: String, accessCode: String)
+
+object InvitationCredential:
+  given JsonCodec[InvitationCredential] = DeriveJsonCodec.gen[InvitationCredential]
+
+@jsonNoExtraFields
+final case class InvitationBatch(prefix: String, count: Int)
+
+object InvitationBatch:
+  val Path = "/admin/invitations"
+  given JsonCodec[InvitationBatch] = DeriveJsonCodec.gen[InvitationBatch]
+
+@jsonNoExtraFields
+final case class InvitationCredentials(invitations: Seq[InvitationCredential])
+
+object InvitationCredentials:
+  given JsonCodec[InvitationCredentials] = DeriveJsonCodec.gen[InvitationCredentials]
+
+@jsonNoExtraFields
+final case class InvitationRevocation(username: String)
+
+object InvitationRevocation:
+  given JsonCodec[InvitationRevocation] = DeriveJsonCodec.gen[InvitationRevocation]
+
 /** The bearer session issued to a native client after Google identity verification. */
 @jsonNoExtraFields
 final case class MobileSession(accessToken: String, expiresAtMillis: Long, user: CurrentUser)

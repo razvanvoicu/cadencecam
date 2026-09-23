@@ -1,7 +1,7 @@
 package sgrv.be
 
 import sgrv.api.Documents
-import sgrv.be.auth.{AppConfig, GoogleOAuth, SessionStore, TokenGenerator}
+import sgrv.be.auth.{AppConfig, GoogleOAuth, InvitationAccounts, SessionStore, TokenGenerator}
 import sgrv.be.core.{CurrentUserDetails, SessionNotifier}
 import sgrv.be.core.{CapabilityRegistry, CurrentUserContributors, RouteDiscovery, SessionListeners}
 import sgrv.be.sessions.WorkoutSessions
@@ -145,6 +145,7 @@ object Main extends ZIOAppDefault:
       AppConfig.live,
       FirestoreClient.live,
       GoogleOAuth.live,
+      InvitationAccounts.live,
       SessionStore.live,
       WorkoutSessions.live,
       TokenGenerator.live,

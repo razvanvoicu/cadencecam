@@ -5,10 +5,14 @@ import java.security.MessageDigest
 import zio.{Cause, System, ZIO}
 import zio.http.{Request, Response, Status}
 
-/** Verifies the `?pwd=` query parameter against the `ADMIN_PASSWORD` environment variable for plugins using
-  * [[sgrv.be.core.AccessPolicy.AdminPassword]] or [[sgrv.be.core.AccessPolicy.AuthenticatedAndAdminPassword]].
+/** Verifies the admin credential against `ADMIN_PASSWORD` for protected plugins.
+  *
+  * The header is the normal interface: unlike a query parameter it is not copied into Cloud Run's request URL logs or
+  * browser history. `?pwd=` remains accepted for the existing local debug pages which are opened by hand.
   */
 private[be] object AdminAuth:
+  val HeaderName = "X-CadenceCam-Admin-Password"
+
   def reject(request: Request): ZIO[Any, Nothing, Option[Response]] =
     System
       .env("ADMIN_PASSWORD")
@@ -22,7 +26,7 @@ private[be] object AdminAuth:
               ZIO.logWarning("ADMIN_PASSWORD is not configured; admin-password-protected plugins are unavailable") *>
                 ZIO.succeed(Some(Response.status(Status.ServiceUnavailable)))
             case Some(password) =>
-              val provided = request.queryParam("pwd").getOrElse("")
+              val provided = request.headers.get(HeaderName).orElse(request.queryParam("pwd")).getOrElse("")
               val granted =
                 provided.nonEmpty && MessageDigest.isEqual(provided.getBytes(UTF_8), password.getBytes(UTF_8))
               ZIO.succeed(Option.unless(granted)(Response.status(Status.Unauthorized)))

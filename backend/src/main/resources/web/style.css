@@ -115,6 +115,52 @@ button,
   text-decoration: none;
 }
 
+.login-choices {
+  display: flex;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 22rem;
+  margin: 0 auto;
+}
+
+.invitation-login {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin-top: 0.5rem;
+  padding: 1rem;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  text-align: left;
+}
+
+.invitation-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.invitation-field input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.6rem 0.75rem;
+  background: #111114;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--fg);
+  font: inherit;
+}
+
+.invitation-submit {
+  width: 100%;
+  cursor: pointer;
+}
+
 .user-actions {
   display: flex;
   flex: none;

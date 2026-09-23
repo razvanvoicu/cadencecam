@@ -128,6 +128,18 @@ class AuthSuite extends munit.FunSuite:
   test("serialises the signed-in user as escaped JSON"):
     assertEquals(Me.json(SessionUser("a@b.c", "Jane \"JJ\" Doe")), """{"email":"a@b.c","name":"Jane \"JJ\" Doe"}""")
 
+  test("uses an explicit provider-neutral account id without moving existing Google accounts"):
+    assertEquals(SessionUser("jane@example.com", "Jane").account, "jane@example.com")
+    assertEquals(
+      SessionUser(
+        "review-one",
+        "Reviewer",
+        identityProvider = IdentityProvider.Invitation,
+        accountId = Some("invitation:opaque-account")
+      ).account,
+      "invitation:opaque-account"
+    )
+
   test("carries contributions namespaced beside the user, and omits the field when there are none"):
     val contributed = Me.json(
       SessionUser("a@b.c", "Jane"),
@@ -172,6 +184,7 @@ class AuthSuite extends munit.FunSuite:
       Login.routes.routes.exists(_.routePattern.matches(ZioMethod.GET, Path("/auth/login"))),
       Callback.routes.routes.exists(_.routePattern.matches(ZioMethod.GET, Path("/auth/callback"))),
       MobileLogin.routes.routes.exists(_.routePattern.matches(ZioMethod.POST, Path("/auth/mobile"))),
+      InvitationLogin.routes.routes.exists(_.routePattern.matches(ZioMethod.POST, Path("/auth/invitation"))),
       Me.routes.routes.exists(_.routePattern.matches(ZioMethod.GET, Path("/me"))),
       RefreshSession.routes.routes.exists(_.routePattern.matches(ZioMethod.POST, Path("/refreshSession"))),
       Logout.routes.routes.exists(_.routePattern.matches(ZioMethod.POST, Path("/logout")))
