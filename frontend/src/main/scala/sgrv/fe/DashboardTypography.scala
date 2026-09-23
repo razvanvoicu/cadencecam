@@ -25,10 +25,17 @@ private[fe] object DashboardTypography:
   private val CompactFootnoteLabelRatio = 1.0
   private val CompactSecondaryValueRatio = CompactFigureRatio / 2.0
   private val CompactFigureCardHeightRatio = 0.44
+  private val FigureMeasuringPixels = 100.0
 
   def fit(root: dom.html.Element): Unit =
+    resetFigures(root)
     if dom.window.innerWidth <= CompactBreakpoint then fitCompact(root)
     else fitWide(root)
+
+  private def resetFigures(root: dom.html.Element): Unit =
+    val elements = root.querySelectorAll(".figure-value")
+    (0 until elements.length).foreach: index =>
+      elements.item(index).asInstanceOf[dom.html.Element].style.removeProperty("font-size")
 
   /** The wide layout already has the space to fit each role independently. Keeping that behaviour separate means the
     * narrow fix cannot disturb the tablet and desktop layout which is already proportioned correctly.
@@ -52,6 +59,7 @@ private[fe] object DashboardTypography:
     root.style.setProperty("--dashboard-label-size", cssVw(label))
     root.style.setProperty("--dashboard-secondary-value-size", cssVw(secondaryValue))
     root.style.setProperty("--dashboard-detail-size", cssVw(label * DetailRatio))
+    fitFigures(root)
 
   /** Below 768px every type role is a fixed multiple of one fitted size.
     *
@@ -70,6 +78,7 @@ private[fe] object DashboardTypography:
       CompactFigureCardHeightRatio / CompactFigureRatio
     )
     setCompactSizes(root, heightFit.fold(widthFit)(widthFit.min))
+    fitFigures(root)
 
   private def setCompactSizes(root: dom.html.Element, baseVw: Double): Unit =
     root.style.setProperty("--dashboard-label-size", cssVw(baseVw))
@@ -101,6 +110,31 @@ private[fe] object DashboardTypography:
       .minOption
       .getOrElse(0.0)
 
+  /** Fits each headline to the grid row it actually received, in both dimensions.
+    *
+    * Width-only viewport and container units cannot protect the footnote row on a short, wide tablet: the headline can
+    * fit horizontally while its line box is taller than the middle grid row. Measuring the rendered glyphs at a known
+    * size and scaling by the smaller of the width and height ratios keeps every value inside its own row.
+    */
+  private def fitFigures(root: dom.html.Element): Unit =
+    val elements = root.querySelectorAll(".figure-value")
+    (0 until elements.length).foreach: index =>
+      val element = elements.item(index).asInstanceOf[dom.html.Element]
+      element.style.setProperty("font-size", s"${FigureMeasuringPixels}px")
+      val available = element.getBoundingClientRect()
+      val range = dom.document.createRange()
+      range.selectNodeContents(element)
+      val rendered = range.getBoundingClientRect()
+      fittedPixels(
+        available.width,
+        available.height,
+        rendered.width,
+        rendered.height,
+        FigureMeasuringPixels
+      ) match
+        case Some(size) => element.style.setProperty("font-size", f"$size%.2fpx")
+        case None       => element.style.removeProperty("font-size")
+
   private[fe] def fittedVw(availablePixels: Double, renderedAtOneVwPixels: Double): Option[Double] =
     Option.when(availablePixels > 0 && renderedAtOneVwPixels > 0):
       MeasuringSizeVw * availablePixels / renderedAtOneVwPixels * BreathingRoom
@@ -108,6 +142,20 @@ private[fe] object DashboardTypography:
   private[fe] def heightLimitVw(cardHeightPixels: Double, viewportWidthPixels: Double, ratio: Double): Option[Double] =
     Option.when(cardHeightPixels > 0 && viewportWidthPixels > 0 && ratio > 0):
       cardHeightPixels * ratio / viewportWidthPixels * 100.0
+
+  private[fe] def fittedPixels(
+      availableWidth: Double,
+      availableHeight: Double,
+      renderedWidth: Double,
+      renderedHeight: Double,
+      measuringPixels: Double
+  ): Option[Double] =
+    Option.when(
+      availableWidth > 0 && availableHeight > 0 && renderedWidth > 0 && renderedHeight > 0 && measuringPixels > 0
+    ):
+      val widthScale = availableWidth / renderedWidth
+      val heightScale = availableHeight / renderedHeight
+      measuringPixels * math.min(widthScale, heightScale) * BreathingRoom
 
   private[fe] def cssVw(value: Double): String =
     f"${math.max(0.01, value)}%.4fvw"

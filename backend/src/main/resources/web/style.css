@@ -592,6 +592,7 @@ button,
   place-items: center;
   min-height: 0;
   width: 100%;
+  overflow: hidden;
   font-size: clamp(4rem, 17vmin, 13rem);
   /* Second, so a browser that does not know container units keeps the line above. */
   font-size: min(clamp(4rem, 18vmin, 13rem), 20cqi);
