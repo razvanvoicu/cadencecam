@@ -15,12 +15,36 @@ import scala.jdk.CollectionConverters.*
 import scala.util.Try
 import zio.{Task, UIO, ZIO, ZLayer}
 
+private[be] enum IdentityProvider:
+  case Google
+  case Apple
+  case Invitation
+
+private[be] object IdentityProvider:
+  def stored(provider: IdentityProvider): String = provider.toString.toLowerCase
+
+  def fromStored(value: String): Option[IdentityProvider] =
+    Option(value).map(_.trim.toLowerCase).collect:
+      case "google"     => IdentityProvider.Google
+      case "apple"      => IdentityProvider.Apple
+      case "invitation" => IdentityProvider.Invitation
+
 final case class SessionUser(
     email: String,
     name: String,
     refreshToken: Option[String] = None,
-    accessTokenForRevocation: Option[String] = None
-)
+    accessTokenForRevocation: Option[String] = None,
+    identityProvider: IdentityProvider = IdentityProvider.Google,
+    providerSubject: Option[String] = None,
+    accountId: Option[String] = None
+):
+  /** The stable identity used to file account data and invalidate all of its sessions.
+    *
+    * Existing Google records predate provider-neutral identities and are filed under the email address. Keeping that
+    * fallback means version 1.3 does not strand their history, while Apple and invitation accounts can use identifiers
+    * that do not depend on an email address at all.
+    */
+  def account: String = accountId.map(_.trim).filter(_.nonEmpty).getOrElse(email)
 final case class GoogleAuthentication(user: SessionUser)
 
 /** ZIO boundary around the Google OAuth client library. */

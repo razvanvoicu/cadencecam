@@ -35,7 +35,7 @@ object AccountSettingsRoute extends BackendPlugin:
           for
             firestore <- ZIO.service[Firestore]
             keeper <- AccountSessions.store(firestore)
-            name <- AccountKey.of(user.email)
+            name <- AccountKey.of(user.account)
             settings <- name match
               case None        => ZIO.none
               case Some(named) => keeper.settings(named)
@@ -62,7 +62,7 @@ object AccountSettingsRoute extends BackendPlugin:
               .mapError(details => IllegalArgumentException(details))
             firestore <- ZIO.service[Firestore]
             keeper <- AccountSessions.store(firestore)
-            name <- AccountKey.of(user.email)
+            name <- AccountKey.of(user.account)
             response <- name match
               // The key is what names the document. Without it there is nowhere to write that is safe to write to,
               // and answering success would lose the settings silently.

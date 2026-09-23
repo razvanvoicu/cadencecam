@@ -35,7 +35,7 @@ object WorkoutHistoryRoute extends BackendPlugin:
           for
             firestore <- ZIO.service[Firestore]
             keeper <- AccountSessions.store(firestore)
-            name <- AccountKey.of(user.email)
+            name <- AccountKey.of(user.account)
             workouts <- name match
               case None        => ZIO.succeed(Seq.empty)
               case Some(named) => keeper.history(named, WorkoutHistory.Limit)
@@ -60,7 +60,7 @@ object WorkoutHistoryRoute extends BackendPlugin:
               .filterOrFail(_.nonEmpty)(IllegalArgumentException("A workout to discard must be named"))
             firestore <- ZIO.service[Firestore]
             keeper <- AccountSessions.store(firestore)
-            name <- AccountKey.of(user.email)
+            name <- AccountKey.of(user.account)
             response <- name match
               case None        => ZIO.succeed(noStore(Response.status(Status.ServiceUnavailable)))
               case Some(named) =>

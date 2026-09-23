@@ -36,7 +36,7 @@ object AcquirerPresenceRoute extends BackendPlugin:
       case RequestContext.Authenticated(request, user) =>
         counterLease(request)
           .zipWith(ZIO.service[Firestore])((lease, firestore) => lease -> firestore)
-          .flatMap((lease, firestore) => AccountSessions.accountState(firestore, user.email, lease))
+          .flatMap((lease, firestore) => AccountSessions.accountState(firestore, user.account, lease))
           .map: state =>
             val account = state.map(_._2)
             noStore(
@@ -64,7 +64,7 @@ object AcquirerPresenceRoute extends BackendPlugin:
               .as(noStore(Response.status(Status.BadRequest)))
           case Some(browserSession) =>
             counterLease(request).flatMap(lease =>
-              open(user.email, browserSession, instanceId(request), lease.flatMap(_.expiresAt))
+              open(user.account, browserSession, instanceId(request), lease.flatMap(_.expiresAt))
             )
       case _ => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
 

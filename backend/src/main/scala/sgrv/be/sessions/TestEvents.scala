@@ -73,7 +73,7 @@ object TestEventReports extends BackendPlugin:
 
   private def apply(request: Request): ZIO[Requires & RequestContext, Nothing, Response] =
     ZIO.serviceWithZIO[RequestContext]:
-      case RequestContext.Authenticated(_, user) => record(request, user.email)
+      case RequestContext.Authenticated(_, user) => record(request, user.account)
       case _                                     => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
 
   private def record(request: Request, email: String): ZIO[Requires, Nothing, Response] =

@@ -100,7 +100,7 @@ object TestRunDiscards extends BackendPlugin:
 
   private def apply(request: Request): ZIO[Requires & RequestContext, Nothing, Response] =
     ZIO.serviceWithZIO[RequestContext]:
-      case RequestContext.Authenticated(_, user) => discard(request, user.email)
+      case RequestContext.Authenticated(_, user) => discard(request, user.account)
       case _                                     => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
 
   private def discard(request: Request, email: String): ZIO[Requires, Nothing, Response] =

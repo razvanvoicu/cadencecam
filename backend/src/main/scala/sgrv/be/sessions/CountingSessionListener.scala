@@ -24,11 +24,11 @@ object CountingSessionListener extends SessionListener:
     * workout history row.
     */
   override def onLogin(event: LoginEvent): ZIO[Requires, Throwable, Unit] =
-    record(AuthenticationEventType.Login, event.sessionKey, event.user.email, event.at)
+    record(AuthenticationEventType.Login, event.sessionKey, event.user.account, event.at)
 
   /** The application session named by the event has already been invalidated before this is raised. */
   override def onLogout(event: LogoutEvent): ZIO[Requires, Throwable, Unit] =
-    record(AuthenticationEventType.Logout, event.sessionKey, event.user.email, event.at)
+    record(AuthenticationEventType.Logout, event.sessionKey, event.user.account, event.at)
 
   private def record(
       eventType: AuthenticationEventType,

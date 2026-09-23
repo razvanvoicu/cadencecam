@@ -33,13 +33,13 @@ object AccountDataRoute extends BackendPlugin:
           for
             firestore <- ZIO.service[Firestore]
             keeper <- AccountSessions.store(firestore)
-            name <- AccountKey.of(user.email)
+            name <- AccountKey.of(user.account)
             response <- name match
               // Without the key there is no name to look under, and answering success would tell somebody their data
               // was gone when nothing had been read, let alone removed.
               case None        => ZIO.succeed(noStore(Response.status(Status.ServiceUnavailable)))
               case Some(named) =>
-                keeper.forgetEverything(named, user.email) *>
+                keeper.forgetEverything(named, user.account) *>
                   // Said out loud. Deleting everything somebody has is worth a line in the log precisely because it
                   // was asked for: it is the record that it happened, and that it happened on purpose.
                   ZIO.logWarning("Removed every record held for an account, at the account's request") *>

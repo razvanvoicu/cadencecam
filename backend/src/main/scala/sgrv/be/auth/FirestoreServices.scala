@@ -45,7 +45,7 @@ trait SessionStore:
   /** Invalidates every application credential currently belonging to the account. Logout is account-wide: a phone,
     * tablet, and browser signed into the same email must not retain contradictory authentication states.
     */
-  def invalidateAll(email: String): Task[Unit]
+  def invalidateAll(accountId: String): Task[Unit]
 
 private[be] object SessionStore:
   def create(
@@ -71,8 +71,8 @@ private[be] object SessionStore:
   def invalidate(sessionKey: String): ZIO[SessionStore, Throwable, Unit] =
     ZIO.serviceWithZIO[SessionStore](_.invalidate(sessionKey))
 
-  def invalidateAll(email: String): ZIO[SessionStore, Throwable, Unit] =
-    ZIO.serviceWithZIO[SessionStore](_.invalidateAll(email))
+  def invalidateAll(accountId: String): ZIO[SessionStore, Throwable, Unit] =
+    ZIO.serviceWithZIO[SessionStore](_.invalidateAll(accountId))
 
   val live: ZLayer[Firestore & WorkoutSessions, Nothing, SessionStore] =
     ZLayer.fromFunction(Live(_, _))
@@ -99,7 +99,7 @@ private[be] object SessionStore:
           // expired client therefore closes any workout it owned and removes its Counter lease before authentication
           // answers 401. This makes an active Counter stop and sign out together instead of leaving a ghost owner.
           workouts
-            .closeOnSessionExpiry(user.email, sessionKey, now)
+            .closeOnSessionExpiry(user.account, sessionKey, now)
             .catchAll(error =>
               ZIO.logErrorCause("Could not close the Counter owned by an expired session", Cause.fail(error))
             )
@@ -149,6 +149,11 @@ private[be] object SessionStore:
                   val name = normalized(session.getString("name"))
                   val refreshToken = normalized(session.getString("refreshToken"))
                   val accessTokenForRevocation = normalized(session.getString("accessTokenForRevocation"))
+                  val identityProvider = normalized(session.getString("identityProvider"))
+                    .flatMap(IdentityProvider.fromStored)
+                    .getOrElse(IdentityProvider.Google)
+                  val providerSubject = normalized(session.getString("providerSubject"))
+                  val accountId = normalized(session.getString("accountId"))
                   if storedKey.contains(key) then
                     for
                       address <- email
@@ -157,20 +162,27 @@ private[be] object SessionStore:
                       address,
                       name.getOrElse(address),
                       refreshToken,
-                      accessTokenForRevocation
+                      accessTokenForRevocation,
+                      identityProvider,
+                      providerSubject,
+                      accountId
                     ) -> expiry
                   else None
 
-    override def invalidateAll(email: String): Task[Unit] =
-      normalized(email) match
+    override def invalidateAll(accountId: String): Task[Unit] =
+      normalized(accountId) match
         case None          => ZIO.fail(new IllegalArgumentException("The account email is empty"))
-        case Some(address) =>
-          GoogleFuture
-            .fromApiFuture(
-              firestore.collection(SessionSchema.collection).whereEqualTo("email", address).get()
-            )
+        case Some(identity) =>
+          // The email query retains compatibility with sessions created before accountId was stored. New sessions are
+          // found by accountId even when Apple supplies a private relay address or an invitation has no email at all.
+          ZIO
+            .foreach(Seq("accountId", "email")): field =>
+              GoogleFuture.fromApiFuture(
+                firestore.collection(SessionSchema.collection).whereEqualTo(field, identity).get()
+              )
+            .map(_.flatMap(_.getDocuments.asScala).distinctBy(_.getId))
             .flatMap: found =>
-              ZIO.foreachDiscard(found.getDocuments.asScala.toSeq.grouped(400).toSeq): documents =>
+              ZIO.foreachDiscard(found.grouped(400).toSeq): documents =>
                 val batch = firestore.batch()
                 documents.foreach(document => { val _ = batch.delete(document.getReference) })
                 GoogleFuture.fromApiFuture(batch.commit()).unit
@@ -184,6 +196,8 @@ private[be] object SessionStore:
     val session = Map[String, AnyRef](
       "email" -> user.email,
       "name" -> user.name,
+      "accountId" -> user.account,
+      "identityProvider" -> IdentityProvider.stored(user.identityProvider),
       "createdAt" -> timestamp(createdAt),
       "sessionKey" -> sessionKey,
       SessionSchema.expiresAt -> timestamp(expiresAt)
@@ -191,7 +205,8 @@ private[be] object SessionStore:
     // At most one revocation credential exists; the absent one is omitted rather than stored as an empty field.
     val revocation =
       user.refreshToken.map(token => "refreshToken" -> token) ++
-        user.accessTokenForRevocation.map(token => "accessTokenForRevocation" -> token)
+        user.accessTokenForRevocation.map(token => "accessTokenForRevocation" -> token) ++
+        user.providerSubject.map(subject => "providerSubject" -> subject)
     session ++ revocation
 
   private def normalized(value: String): Option[String] =

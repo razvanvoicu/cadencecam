@@ -73,7 +73,7 @@ object Logout extends BackendPlugin:
               for
                 secure <- GoogleOAuth.callbackIsSecure
                 now <- Clock.instant
-                response <- (WorkoutSessions.closeOnDeviceLogout(user.email, sessionKey, now) *>
+                response <- (WorkoutSessions.closeOnDeviceLogout(user.account, sessionKey, now) *>
                   SessionStore.invalidate(sessionKey))
                   .foldZIO(
                     error =>
@@ -100,12 +100,12 @@ object Logout extends BackendPlugin:
         case RequestContext.Public(_) => ZIO.succeed(noStore(Response.status(Status.InternalServerError)))
 
   private def invalidate(user: SessionUser, now: java.time.Instant): ZIO[Requires, LogoutFailure, Unit] =
-    WorkoutSessions.closeOnLogout(user.email, now).mapError(WorkoutClosureFailed.apply) *>
+    WorkoutSessions.closeOnLogout(user.account, now).mapError(WorkoutClosureFailed.apply) *>
       user.refreshToken
         .orElse(user.accessTokenForRevocation)
         .fold[ZIO[GoogleOAuth, Throwable, Unit]](ZIO.unit)(GoogleOAuth.revoke)
         .mapError(GoogleRevocationFailed.apply) *>
-      SessionStore.invalidateAll(user.email).mapError(SessionInvalidationFailed.apply)
+      SessionStore.invalidateAll(user.account).mapError(SessionInvalidationFailed.apply)
 
   private def failureResponse(failure: LogoutFailure): ZIO[Any, Nothing, Response] =
     failure match

@@ -26,7 +26,7 @@ object WorkoutControlRoute extends BackendPlugin:
 
   private def apply(request: Request): ZIO[Requires & RequestContext, Nothing, Response] =
     ZIO.serviceWithZIO[RequestContext]:
-      case RequestContext.Authenticated(_, user) => control(user.email, request)
+      case RequestContext.Authenticated(_, user) => control(user.account, request)
       case _                                     => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
 
   private def control(email: String, request: Request): ZIO[Requires, Nothing, Response] =

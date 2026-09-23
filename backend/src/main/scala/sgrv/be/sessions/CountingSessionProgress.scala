@@ -53,7 +53,7 @@ object CountingSessionProgress extends BackendPlugin:
     for
       // The session belongs to the account, not to this browser: which record is written comes from who is signed in.
       email <- ZIO.serviceWithZIO[RequestContext] {
-        case RequestContext.Authenticated(_, user) => ZIO.succeed(user.email)
+        case RequestContext.Authenticated(_, user) => ZIO.succeed(user.account)
         case _                                     => ZIO.fail(Unauthenticated)
       }
       // Which browser session is reporting, so a device that has been taken over can be told.

@@ -88,7 +88,7 @@ object CountingSessionTrace extends BackendPlugin:
   private def record(request: Request): ZIO[Requires & RequestContext, TraceFailure, String] =
     for
       email <- ZIO.serviceWithZIO[RequestContext] {
-        case RequestContext.Authenticated(_, user) => ZIO.succeed(user.email)
+        case RequestContext.Authenticated(_, user) => ZIO.succeed(user.account)
         case _                                     => ZIO.fail(NoSession)
       }
       body <- request.body.asString.mapError(error => Malformed(describe(error)))

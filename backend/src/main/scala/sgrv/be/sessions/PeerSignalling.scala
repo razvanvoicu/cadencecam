@@ -37,7 +37,7 @@ object PeerSignalling extends BackendPlugin:
       act: (String, Request) => ZIO[Requires, Nothing, Response]
   ): ZIO[Requires & RequestContext, Nothing, Response] =
     ZIO.serviceWithZIO[RequestContext]:
-      case RequestContext.Authenticated(_, user) => act(user.email, request)
+      case RequestContext.Authenticated(_, user) => act(user.account, request)
       case _                                     => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
 
   private def post(request: Request): ZIO[Requires & RequestContext, Nothing, Response] = asUser(request, file)
