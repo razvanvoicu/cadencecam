@@ -16,6 +16,29 @@ import scala.concurrent.ExecutionContext.Implicits.global
   */
 private[fe] object Device:
 
+  /** A durable name for this installation of the app.
+    *
+    * Authentication sessions expire and are replaced, so they cannot answer whether the counter already recorded by the
+    * account is this installation or another device. Local storage has exactly the desired lifetime: reloads and new
+    * logins retain the name, while another browser profile or another physical device gets a different one.
+    */
+  private val InstanceKey = "cadencecam.instance.v1"
+
+  def instanceId(storage: dom.Storage): String =
+    try
+      Option(storage.getItem(InstanceKey))
+        .map(_.trim)
+        .filter(_.nonEmpty)
+        .getOrElse:
+          val created = newInstanceId()
+          storage.setItem(InstanceKey, created)
+          created
+    catch case _: Throwable => newInstanceId()
+
+  private def newInstanceId(): String =
+    def part = f"${js.Math.floor(js.Math.random() * 0x1000000).toLong}%06x"
+    s"${js.Date.now().toLong.toHexString}-${part}${part}${part}"
+
   /** What the browser will only say when asked directly, once it has answered.
     *
     * Chrome on Android no longer puts the handset's model in its user agent: every device reports the frozen

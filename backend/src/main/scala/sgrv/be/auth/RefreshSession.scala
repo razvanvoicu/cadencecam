@@ -5,7 +5,11 @@ import sgrv.be.core.{AccessPolicy, BackendPlugin, CapabilitySet, RequestContext}
 import zio.{Cause, Clock, ZIO}
 import zio.http.{Header, Method, Request, Response, Routes, Status, handler}
 
-/** Renews a recoverable browser session after validating its stored Google refresh token. */
+/** Renews a still-active browser session after validating its stored Google refresh token.
+  *
+  * An expired session is not resurrected. A browser which slept past expiry must return to Login, just like a native
+  * app, and the active lookup also performs the Counter/workout cleanup associated with that expiry.
+  */
 object RefreshSession extends BackendPlugin:
   type Requires = GoogleOAuth & SessionStore
 
@@ -32,13 +36,13 @@ object RefreshSession extends BackendPlugin:
       sessionKey <- ZIO
         .fromOption(request.cookie(Callback.sessionCookieName).map(_.content).filter(_.nonEmpty))
         .orElseFail(NotRenewable)
+      now <- Clock.instant
       user <- SessionStore
-        .findForRefresh(sessionKey)
+        .find(sessionKey, now)
         .mapError(SessionStoreFailed("reading", _))
         .someOrFail(NotRenewable)
       refreshToken <- ZIO.fromOption(user.refreshToken).orElseFail(NotRenewable)
       _ <- GoogleOAuth.accessToken(refreshToken).mapError(GoogleRefreshFailed.apply)
-      now <- Clock.instant
       expiresAt = now.plus(Callback.sessionLifetime)
       _ <- SessionStore
         .renew(sessionKey, expiresAt)

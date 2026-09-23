@@ -175,9 +175,14 @@ class LogoutSuite extends munit.FunSuite:
       override def invalidate(sessionKey: String): Task[Unit] = invalidateDeviceEffect(sessionKey)
       override def invalidateAll(email: String): Task[Unit] = invalidateEffect(email)
 
-  private def workoutSessions(closeEffect: String => Task[Unit]): WorkoutSessions =
+  private def workoutSessions(
+      closeEffect: String => Task[Unit],
+      closeDeviceEffect: (String, String) => Task[Unit] = (_, _) => ZIO.unit
+  ): WorkoutSessions =
     new WorkoutSessions:
       override def closeOnLogout(email: String, at: Instant): Task[Unit] = closeEffect(email)
+      override def closeOnDeviceLogout(email: String, sessionKey: String, at: Instant): Task[Unit] =
+        closeDeviceEffect(email, sessionKey)
 
   private def googleOAuth(revokeEffect: String => Task[Unit]): GoogleOAuth =
     new GoogleOAuth:
@@ -213,7 +218,7 @@ class LogoutSuite extends munit.FunSuite:
     assertEquals(response.status, Status.ServiceUnavailable)
     assertEquals(events.get(), List.empty[LogoutEvent])
 
-  test("device logout invalidates only the requesting session and records its logout"):
+  test("device logout releases its counter, invalidates only its session, and records its logout"):
     val deviceInvalidated = new AtomicReference(Option.empty[String])
     val accountInvalidations = new AtomicInteger(0)
     val revocations = new AtomicInteger(0)
@@ -229,7 +234,10 @@ class LogoutSuite extends munit.FunSuite:
       store,
       googleOAuth(_ => ZIO.succeed(revocations.incrementAndGet()).unit),
       recordingNotifier(events),
-      workoutSessions(_ => ZIO.succeed(closures.incrementAndGet()).unit)
+      workoutSessions(
+        _ => ZIO.unit,
+        (_, _) => ZIO.succeed(closures.incrementAndGet()).unit
+      )
     )
 
     val response = run(ZIO.scoped(activeRoutes.runZIO(deviceRequest)))
@@ -239,7 +247,7 @@ class LogoutSuite extends munit.FunSuite:
     assertEquals(deviceInvalidated.get(), Some("session-key"))
     assertEquals(accountInvalidations.get(), 0)
     assertEquals(revocations.get(), 0)
-    assertEquals(closures.get(), 0)
+    assertEquals(closures.get(), 1)
     assertEquals(events.get().map(_.sessionKey), List("session-key"))
     assertEquals(cookies.map(_.name).toSet, Set(Callback.sessionCookieName, Login.stateCookieName))
     assertEquals(response.headers.get(Header.CacheControl), Some(Header.CacheControl.NoStore))
@@ -260,3 +268,27 @@ class LogoutSuite extends munit.FunSuite:
     assertEquals(run(response.body.asString), "Could not log out this device. Try again.")
     assertEquals(response.headers.getAll(Header.SetCookie).size, 0)
     assertEquals(events.get(), List.empty[LogoutEvent])
+
+  test("device logout keeps authentication retryable when its counter cannot be closed"):
+    val invalidations = new AtomicInteger(0)
+    val events = new AtomicReference(List.empty[LogoutEvent])
+    val user = SessionUser("jane@example.com", "Jane")
+    val store = sessionStore(
+      user,
+      _ => ZIO.unit,
+      _ => ZIO.succeed(invalidations.incrementAndGet()).unit
+    )
+    val workouts = workoutSessions(
+      _ => ZIO.unit,
+      (_, _) => ZIO.fail(new RuntimeException("private workout detail"))
+    )
+
+    val response = run(
+      ZIO.scoped(routes(store, googleOAuth(_ => ZIO.unit), recordingNotifier(events), workouts).runZIO(deviceRequest))
+    )
+
+    assertEquals(response.status, Status.ServiceUnavailable)
+    assertEquals(run(response.body.asString), "Could not log out this device. Try again.")
+    assertEquals(invalidations.get(), 0)
+    assertEquals(events.get(), List.empty[LogoutEvent])
+    assertEquals(response.headers.getAll(Header.SetCookie).size, 0)

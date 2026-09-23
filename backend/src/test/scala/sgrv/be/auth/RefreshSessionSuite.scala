@@ -105,10 +105,10 @@ class RefreshSessionSuite extends munit.FunSuite:
       ): Task[Unit] = ZIO.unit
 
       override def find(sessionKey: String, now: Instant): Task[Option[SessionUser]] =
-        ZIO.fail(new AssertionError("refreshSession must use the recovery lookup"))
+        if sessionKey == "session-key" then findEffect else ZIO.none
 
       override def findForRefresh(sessionKey: String): Task[Option[SessionUser]] =
-        if sessionKey == "session-key" then findEffect else ZIO.none
+        ZIO.fail(new AssertionError("refreshSession must not resurrect an expired session"))
 
       override def renew(sessionKey: String, expiresAt: Instant): Task[Unit] = renewEffect(sessionKey, expiresAt)
       override def invalidate(sessionKey: String): Task[Unit] = ZIO.unit

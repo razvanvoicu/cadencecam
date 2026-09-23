@@ -9,9 +9,9 @@ import zio.http.{Header, Method, Response, Routes, Status, handler}
 /** Logs out either the whole account or only the device making the request.
   *
   * `/logout` preserves the deliberately strong account-wide behavior: it closes an open workout, revokes the Google
-  * grant, and invalidates every signed-in device. `/logout/device` is for a device which declines a role while another
-  * device continues: it invalidates only the credential in that request and leaves the workout, Google grant, and all
-  * other credentials alone.
+  * grant, and invalidates every signed-in device. `/logout/device` invalidates only the credential in that request and
+  * leaves the Google grant and all other credentials alone. If that credential owns the counter, its workout is closed
+  * and the role released; logging out a dashboard does not disturb the counter on another device.
   */
 object Logout extends BackendPlugin:
   type Requires = GoogleOAuth & SessionStore & SessionNotifier & WorkoutSessions
@@ -73,11 +73,14 @@ object Logout extends BackendPlugin:
               for
                 secure <- GoogleOAuth.callbackIsSecure
                 now <- Clock.instant
-                response <- SessionStore
-                  .invalidate(sessionKey)
+                response <- (WorkoutSessions.closeOnDeviceLogout(user.email, sessionKey, now) *>
+                  SessionStore.invalidate(sessionKey))
                   .foldZIO(
                     error =>
-                      ZIO.logErrorCause("Could not invalidate the current device session", Cause.fail(error)) *>
+                      ZIO.logErrorCause(
+                        "Could not close and invalidate the current device session",
+                        Cause.fail(error)
+                      ) *>
                         ZIO.succeed(
                           Response
                             .text("Could not log out this device. Try again.")

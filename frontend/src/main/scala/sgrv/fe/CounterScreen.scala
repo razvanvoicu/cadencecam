@@ -54,7 +54,8 @@ private[fe] object CounterScreen:
       settingsPanel: SettingsPanel,
       show: Screen => Unit,
       openAbout: () => Unit,
-      logout: () => Unit
+      logoutThisDevice: () => Unit,
+      logoutAllDevices: () => Unit
   ): Element =
     val cameraState = Var[CameraState](CameraState.Idle)
     // Reps counted before the current detector run, which the detector itself knows nothing about: those carried over
@@ -124,7 +125,9 @@ private[fe] object CounterScreen:
     val adjustables = Var(Seq.empty[Adjustable])
     val adjustOpen = Var(false)
     val roleRequests = RequestScope()
+    val ownershipRequests = RequestScope()
     val workoutRequests = RequestScope()
+    var ownershipPolling = Option.empty[Int]
     // Frozen at Start so editing settings during a workout cannot rewrite what that workout means in history.
     var workoutSettings: AccountSettings = settingsPanel.settings.now()
 
@@ -296,6 +299,24 @@ private[fe] object CounterScreen:
 
     def reportWhileActive(): Unit =
       reporter.start(() => measuredProgress())
+
+    /** Watches ownership even between workouts.
+      *
+      * Progress reports also discover a takeover through HTTP 409, but they exist only while a workout is active. An
+      * idle counter still owns a camera and must stand down when another installation takes over or its renewable
+      * Counter lease expires, so presence is checked independently for the whole lifetime of this screen. Either loss
+      * ends this device's login: no signed-out screen may retain a camera or a stale Counter role.
+      */
+    def watchCounterOwnership(): Unit =
+      ownershipPolling.foreach(dom.window.clearInterval)
+      def check(): Unit =
+        ownershipRequests.run(api.acquirerPresence()):
+          case Right(presence) if live && !RoleSelection.belongsToThisInstance(presence, api.instanceId) =>
+            logoutThisDevice()
+          case _ => ()
+      ownershipPolling = Some(
+        dom.window.setInterval(() => check(), CounterScreen.OwnershipPollMillis.toDouble)
+      )
 
     def workoutSnapshot(progress: RepProgress): WorkoutSnapshot =
       WorkoutSnapshot(
@@ -547,15 +568,19 @@ private[fe] object CounterScreen:
             if state.active then reportWhileActive() else resetCount()
             lastPublished = None
             publish()
+            watchCounterOwnership()
         startCamera()
         // Leaving this screen is what releases the camera; staying would leave a phone counting into a room it no
         // longer owns, with its own tally still climbing on screen.
-        reporter.onDisplaced = () => show(Screen.Selection)
+        reporter.onDisplaced = () => logoutThisDevice()
       },
       onUnmountCallback { _ =>
         live = false
         roleRequests.invalidate()
+        ownershipRequests.invalidate()
         workoutRequests.invalidate()
+        ownershipPolling.foreach(dom.window.clearInterval)
+        ownershipPolling = None
         peer.close()
         reporter.stop()
         release()
@@ -641,7 +666,8 @@ private[fe] object CounterScreen:
           menuItem("About", openAbout),
           Menu.documentItems(menuOpen),
           menuItem("Back", () => show(Screen.Selection)),
-          menuItem("Logout", logout)
+          menuItem("Log out this device only", logoutThisDevice),
+          menuItem("Log out all devices", logoutAllDevices)
         )
       ),
       // A sheet at the foot of the screen rather than a panel in the flow: what these sliders do is only visible in the
@@ -708,3 +734,5 @@ private[fe] object CounterScreen:
         Seq(Quadrant.Q2, Quadrant.Q1, Quadrant.Q3, Quadrant.Q4).map(graphPane)
       )
     )
+
+  private[fe] val OwnershipPollMillis = 3000

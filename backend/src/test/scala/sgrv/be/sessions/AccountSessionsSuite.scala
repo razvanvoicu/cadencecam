@@ -27,6 +27,54 @@ class AccountSessionsSuite extends munit.FunSuite:
     // It has just opened; the operator is still framing the camera.
     assert(!AccountSessions.goneQuiet(None, now, tenMinutes))
 
+  test("a legacy idle Counter marker with no lease timestamps is stale"):
+    assert(
+      AccountSessions.counterExpired(
+        counter = Some("old-session"),
+        counterSeenAt = None,
+        counterExpiresAt = None,
+        lastRepAt = None,
+        now,
+        tenMinutes
+      )
+    )
+
+  test("a recent Counter heartbeat keeps an idle role open"):
+    assert(
+      !AccountSessions.counterExpired(
+        counter = Some("open-session"),
+        counterSeenAt = Some(now.minusSeconds(30)),
+        counterExpiresAt = Some(now.plusSeconds(300)),
+        lastRepAt = None,
+        now,
+        tenMinutes
+      )
+    )
+
+  test("authentication expiry ends a Counter lease even after a recent heartbeat"):
+    assert(
+      AccountSessions.counterExpired(
+        counter = Some("expired-session"),
+        counterSeenAt = Some(now.minusSeconds(1)),
+        counterExpiresAt = Some(now),
+        lastRepAt = Some(now.minusSeconds(1)),
+        now,
+        tenMinutes
+      )
+    )
+
+  test("an older active Counter can use its last report as its migration heartbeat"):
+    assert(
+      !AccountSessions.counterExpired(
+        counter = Some("reporting-session"),
+        counterSeenAt = None,
+        counterExpiresAt = None,
+        lastRepAt = Some(now.minusSeconds(30)),
+        now,
+        tenMinutes
+      )
+    )
+
   test("a session is kept as a record, and says why it ended"):
     assertEquals(SessionEnd.values.map(_.toString).toSet, Set("Stopped", "Idle", "TakenOver", "LoggedOut"))
 

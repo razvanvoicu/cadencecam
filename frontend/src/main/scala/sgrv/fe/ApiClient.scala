@@ -20,7 +20,7 @@ import scala.util.control.NonFatal
   * Peer signaling, progress reporting and trace capture remain protocol-specific helpers over [[HttpService]]: their
   * polling, displacement and upload state machines are not ordinary one-shot API calls and already own their lifecycle.
   */
-private[fe] final class ApiClient(private[fe] val http: HttpService):
+private[fe] final class ApiClient(private[fe] val http: HttpService, private[fe] val instanceId: String):
   import ApiClient.*
 
   def session(): ApiCall[MeResult] =
@@ -41,7 +41,12 @@ private[fe] final class ApiClient(private[fe] val http: HttpService):
     getJson[AcquirerPresence](AcquirerPresence.Path, "read counter presence", "counter presence")
 
   def takeCounterRole(): ApiCall[WorkoutState] =
-    sendEmptyJson[WorkoutState](AcquirerPresence.Path, dom.HttpMethod.POST, "take the counting role", "workout state")
+    val init = new dom.RequestInit:
+      method = dom.HttpMethod.POST
+      if instanceId.nonEmpty then headers = js.Dictionary(AcquirerPresence.InstanceHeader -> instanceId)
+    request(() => http.send(AcquirerPresence.Path, init), "take the counting role", RetryPolicy.Never)(
+      decodeJson[WorkoutState](_, "workout state")
+    )
 
   def controlWorkout(
       action: WorkoutAction,
@@ -65,8 +70,11 @@ private[fe] final class ApiClient(private[fe] val http: HttpService):
   def deleteAccountData(): ApiCall[Unit] =
     sendEmpty(AccountData.Path, dom.HttpMethod.DELETE, "delete the account's data")
 
-  def logout(): ApiCall[Unit] =
+  def logoutAllDevices(): ApiCall[Unit] =
     sendEmpty("/logout", dom.HttpMethod.POST, "log out")
+
+  def logoutThisDevice(): ApiCall[Unit] =
+    sendEmpty("/logout/device", dom.HttpMethod.POST, "log out this device")
 
   def about(): ApiCall[AboutInfo] =
     getJson[AboutInfo]("/about", "read About information", "About information")
@@ -102,16 +110,6 @@ private[fe] final class ApiClient(private[fe] val http: HttpService):
       method = requestMethod
       headers = js.Dictionary("Content-Type" -> "application/json")
       body = requestBody
-    request(() => http.send(path, init), action, RetryPolicy.Never)(decodeJson[A](_, description))
-
-  private def sendEmptyJson[A: JsonDecoder](
-      path: String,
-      requestMethod: dom.HttpMethod,
-      action: String,
-      description: String
-  ): ApiCall[A] =
-    val init = new dom.RequestInit:
-      method = requestMethod
     request(() => http.send(path, init), action, RetryPolicy.Never)(decodeJson[A](_, description))
 
   private def sendEmpty(path: String, requestMethod: dom.HttpMethod, action: String): ApiCall[Unit] =

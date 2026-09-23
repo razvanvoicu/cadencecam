@@ -14,6 +14,7 @@ import sgrv.fe.refreshstate.{RefreshStateStore, SessionRefreshWorker}
 object Main:
   def main(args: Array[String]): Unit =
     val storage = dom.window.localStorage
+    val instanceId = Device.instanceId(storage)
     val stateStore = FrontendStateStore(storage)
     val refreshStateStore = RefreshStateStore(storage)
     val repCountStore = RepCountStore(storage)
@@ -31,12 +32,12 @@ object Main:
       startByPresence = () => roles.startByPresence()
     )
     lazy val http: HttpService = HttpService(() => session.handleUnauthorized())
-    lazy val api: ApiClient = ApiClient(http)
+    lazy val api: ApiClient = ApiClient(http, instanceId)
     lazy val refreshWorker: SessionRefreshWorker = SessionRefreshWorker(http)
     lazy val settingsPanel: SettingsPanel = SettingsPanel(api)
     lazy val historyPanel: HistoryPanel = HistoryPanel(api)
     lazy val roles: RoleSelection =
-      RoleSelection(api, show, Screen.benchOffered(dom.window.location.hash))
+      RoleSelection(api, show, instanceId, Screen.benchOffered(dom.window.location.hash))
 
     // Asked once, at the start: Chrome on Android keeps the handset's model out of its user agent, and the only way to
     // learn it is an explicit request that answers later.

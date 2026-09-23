@@ -126,13 +126,16 @@ object TestEvent:
 /** Whether this account already has a device counting for it.
   *
   * Asked before a device takes the acquirer's role, so taking over from another one is something the person chooses
-  * rather than something that happens to them.
+  * rather than something that happens to them. `instanceId` identifies the installation which took the role, not its
+  * authentication credential: signing in again on the same installation must resume its own counter without asking it
+  * to take over from itself.
   */
 @jsonNoExtraFields
-final case class AcquirerPresence(acquiring: Boolean)
+final case class AcquirerPresence(acquiring: Boolean, instanceId: Option[String] = None)
 
 object AcquirerPresence:
   val Path = "/live/acquirer"
+  val InstanceHeader = "X-CadenceCam-Instance"
   given JsonCodec[AcquirerPresence] = DeriveJsonCodec.gen[AcquirerPresence]
 
 /** Which end of a peer link a message came from.

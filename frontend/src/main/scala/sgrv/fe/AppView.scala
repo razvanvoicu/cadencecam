@@ -37,7 +37,8 @@ private[fe] object AppView:
           open,
           Menu.item(open, "About", () => session.openAbout()),
           Menu.documentItems(open),
-          Menu.item(open, "Logout", () => session.logout())
+          Menu.item(open, "Log out this device only", () => session.logoutThisDevice()),
+          Menu.item(open, "Log out all devices", () => session.logoutAllDevices())
         )
       )
 
@@ -66,7 +67,8 @@ private[fe] object AppView:
             settingsPanel,
             show,
             () => session.openAbout(),
-            () => session.logout()
+            () => session.logoutThisDevice(),
+            () => session.logoutAllDevices()
           )
         case Screen.Dashboard =>
           DashboardView(
@@ -76,7 +78,8 @@ private[fe] object AppView:
             storage,
             show,
             () => session.openAbout(),
-            () => session.logout(),
+            () => session.logoutThisDevice(),
+            () => session.logoutAllDevices(),
             () => session.forgetPending.set(true)
           )
         case Screen.Bench => BenchView(api.http, () => show(Screen.Selection))

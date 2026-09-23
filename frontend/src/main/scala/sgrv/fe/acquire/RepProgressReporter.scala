@@ -33,8 +33,9 @@ private[fe] final class RepProgressReporter(
 
   /** Called when the server says another device now holds the counter's role.
     *
-    * Nothing else carries a stand-down, so this is how a displaced device learns: its next report is refused with a
-    * conflict, because the account's record names somebody else as the counter.
+    * This is the active-workout fast path for standing down: the counter screen also polls ownership so an idle camera
+    * learns about takeover. Here the next report is refused with a conflict because the account's record names somebody
+    * else as the counter.
     */
   var onDisplaced: () => Unit = () => ()
 

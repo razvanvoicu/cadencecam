@@ -83,20 +83,23 @@ private[fe] final class SessionController(
           stateStore.update(_.copy(aboutState = AboutState.Failed(error.message)))
         case _ => ()
 
-  def logout(): Unit =
+  def logoutAllDevices(): Unit = logout(api.logoutAllDevices())
+
+  def logoutThisDevice(): Unit = logout(api.logoutThisDevice())
+
+  private def logout(request: => ApiClient.ApiCall[Unit]): Unit =
     if stateStore.current.logoutState != LogoutState.InProgress then
       worker.disable()
       refreshStateStore.update(_.copy(expired = false))
       stateStore.update(_.copy(logoutState = LogoutState.InProgress))
-      api
-        .logout()
+      request
         .foreach:
           case Right(_) =>
             stateStore.update(SessionController.signedOut(Unauthenticated))
           // The HTTP boundary has already moved a remotely revoked device to Login. Reporting that same 401 as a
           // failed logout would put contradictory wording on the login screen.
           case Left(ApiError.Http(_, 401, _)) if stateStore.current.user == Unauthenticated => ()
-          case Left(error) =>
+          case Left(error)                                                                  =>
             worker.enable()
             stateStore.update(_.copy(logoutState = LogoutState.Failed(error.message)))
 
@@ -111,7 +114,7 @@ private[fe] final class SessionController(
     api
       .deleteAccountData()
       .foreach:
-        case Right(_)               => logout()
+        case Right(_)               => logoutAllDevices()
         case Left(_: ApiError.Http) =>
           stateStore.update(_.copy(logoutState = LogoutState.Failed("Your data could not be deleted.")))
         case Left(error) =>

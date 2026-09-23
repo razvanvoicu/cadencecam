@@ -4,8 +4,9 @@ import com.google.cloud.Timestamp
 import com.google.cloud.firestore.Firestore
 import java.time.Instant
 import scala.jdk.CollectionConverters.*
+import sgrv.be.sessions.WorkoutSessions
 import sgrv.be.store.GoogleFuture
-import zio.{Task, ZIO, ZLayer}
+import zio.{Cause, Task, ZIO, ZLayer}
 
 private[auth] object SessionSchema:
   val collection = "Access"
@@ -20,8 +21,15 @@ trait SessionStore:
   ): Task[Unit]
   def find(sessionKey: String, now: Instant): Task[Option[SessionUser]]
 
-  /** Reads a retained session record without applying its active-session expiry, so its refresh token can be validated
-    * before renewal. Firestore TTL may already have removed the record.
+  /** The expiry attached to an application credential, including one close enough to expiry that a Counter lease must
+    * not outlive it. Implementations used by older plugins may omit this optional capability.
+    */
+  def expiresAt(sessionKey: String): Task[Option[Instant]] =
+    ZIO.succeed(sessionKey).as(Option.empty[Instant])
+
+  /** Reads a retained session record without applying its active-session expiry. Kept for administrative/internal
+    * inspection only: interactive renewal must use [[find]] so a sleeping client cannot resurrect an expired login.
+    * Firestore TTL may already have removed the record.
     */
   def findForRefresh(sessionKey: String): Task[Option[SessionUser]]
 
@@ -54,6 +62,9 @@ private[be] object SessionStore:
   def findForRefresh(sessionKey: String): ZIO[SessionStore, Throwable, Option[SessionUser]] =
     ZIO.serviceWithZIO[SessionStore](_.findForRefresh(sessionKey))
 
+  def expiresAt(sessionKey: String): ZIO[SessionStore, Throwable, Option[Instant]] =
+    ZIO.serviceWithZIO[SessionStore](_.expiresAt(sessionKey))
+
   def renew(sessionKey: String, expiresAt: Instant): ZIO[SessionStore, Throwable, Unit] =
     ZIO.serviceWithZIO[SessionStore](_.renew(sessionKey, expiresAt))
 
@@ -63,9 +74,10 @@ private[be] object SessionStore:
   def invalidateAll(email: String): ZIO[SessionStore, Throwable, Unit] =
     ZIO.serviceWithZIO[SessionStore](_.invalidateAll(email))
 
-  val live: ZLayer[Firestore, Nothing, SessionStore] = ZLayer.fromFunction(Live(_))
+  val live: ZLayer[Firestore & WorkoutSessions, Nothing, SessionStore] =
+    ZLayer.fromFunction(Live(_, _))
 
-  private final case class Live(firestore: Firestore) extends SessionStore:
+  private final case class Live(firestore: Firestore, workouts: WorkoutSessions) extends SessionStore:
     override def create(
         sessionKey: String,
         user: SessionUser,
@@ -80,7 +92,22 @@ private[be] object SessionStore:
       yield ()
 
     override def find(sessionKey: String, now: Instant): Task[Option[SessionUser]] =
-      read(sessionKey).map(_.collect { case (user, expiresAt) if now.isBefore(expiresAt) => user })
+      read(sessionKey).flatMap:
+        case Some((user, expiresAt)) if now.isBefore(expiresAt) => ZIO.some(user)
+        case Some((user, _))                                    =>
+          // Expiry has no explicit Logout request to perform the workout-side cleanup. The first request made by the
+          // expired client therefore closes any workout it owned and removes its Counter lease before authentication
+          // answers 401. This makes an active Counter stop and sign out together instead of leaving a ghost owner.
+          workouts
+            .closeOnSessionExpiry(user.email, sessionKey, now)
+            .catchAll(error =>
+              ZIO.logErrorCause("Could not close the Counter owned by an expired session", Cause.fail(error))
+            )
+            .as(None)
+        case None => ZIO.none
+
+    override def expiresAt(sessionKey: String): Task[Option[Instant]] =
+      read(sessionKey).map(_.map(_._2))
 
     override def findForRefresh(sessionKey: String): Task[Option[SessionUser]] =
       read(sessionKey).map(_.map(_._1))

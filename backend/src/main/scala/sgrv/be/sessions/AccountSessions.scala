@@ -19,7 +19,8 @@ import zio.json.*
   * it is what the history lists -- and only the one in progress is live.
   *
   * {{{
-  *   CountingSessions/{keyed digest of the email}           activeSession, counter, lastRepAt, settings
+  *   CountingSessions/{keyed digest of the email}           activeSession, counter, counterInstance,
+  *                                                          counterSeenAt, counterExpiresAt, lastRepAt, settings
   *     events/{auto id}                                     Login or Logout, authentication session, timestamp
   *     peerSignals/{auto id}                                one step of a peer exchange
   *     sessions/{session id}                                startedAt, completedAt, endedBy, counter,
@@ -37,6 +38,7 @@ private[sessions] object AccountSchema:
     */
   val traces = "traces"
   val peerSignals = "peerSignals"
+
   /** The old per-workout mailbox, retained only so deleting an older workout removes everything beneath it. */
   val signals = "signals"
 
@@ -60,6 +62,19 @@ private[sessions] object AccountSchema:
 
   /** Which browser session is counting, so a takeover is a change of hand rather than a new session. */
   val counter = "counter"
+
+  /** Which durable app installation took the counter role.
+    *
+    * Unlike `counter`, this survives a new authentication session. It is used only to avoid asking an installation to
+    * take over from itself; the session-derived `counter` remains the credential checked on every write.
+    */
+  val counterInstance = "counterInstance"
+
+  /** The Counter role is a renewable lease rather than a permanent marker. The foreground Counter refreshes its
+    * activity mark through ownership checks, while the authentication expiry puts an absolute ceiling on the lease.
+    */
+  val counterSeenAt = "counterSeenAt"
+  val counterExpiresAt = "counterExpiresAt"
 
   /** What a workout measured, plus the settings and calorie conclusion frozen for its history row. */
   val reps = "reps"
@@ -107,6 +122,25 @@ private[sessions] object AccountSessions:
   def goneQuiet(lastRepAt: Option[Instant], now: Instant, idleAfter: Duration): Boolean =
     lastRepAt.exists(quiet => quiet.isBefore(now.minus(idleAfter)))
 
+  /** Whether a persisted Counter owner can no longer represent an open client session.
+    *
+    * A pre-lease idle marker has no activity or authentication timestamp and is stale immediately. An older active
+    * workout can use its last report as the migration heartbeat, so deploying this change does not interrupt a Counter
+    * which is actually still reporting.
+    */
+  def counterExpired(
+      counter: Option[String],
+      counterSeenAt: Option[Instant],
+      counterExpiresAt: Option[Instant],
+      lastRepAt: Option[Instant],
+      now: Instant,
+      idleAfter: Duration
+  ): Boolean =
+    counter.exists: _ =>
+      val lastActivity = counterSeenAt.orElse(lastRepAt)
+      counterExpiresAt.exists(expiry => !now.isBefore(expiry)) ||
+      lastActivity.forall(activity => activity.isBefore(now.minus(idleAfter)))
+
   /** The account's store, with the configured timeout. */
   def store(firestore: Firestore): ZIO[Any, Nothing, AccountSessionStore] =
     idleAfter.map(AccountSessionStore(firestore, _))
@@ -120,7 +154,11 @@ private[sessions] object AccountSessions:
     accountState(firestore, email).map(_.flatMap((name, state) => state.active.map(name -> _)))
 
   /** The account record after applying the idle timeout, paired with its opaque document name. */
-  def accountState(firestore: Firestore, email: String): ZIO[Any, Throwable, Option[(String, AccountState)]] =
+  def accountState(
+      firestore: Firestore,
+      email: String,
+      caller: Option[CounterLease] = None
+  ): ZIO[Any, Throwable, Option[(String, AccountState)]] =
     AccountKey
       .of(email)
       .flatMap:
@@ -129,7 +167,7 @@ private[sessions] object AccountSessions:
           for
             keeper <- store(firestore)
             now <- Clock.instant
-            state <- keeper.state(name, now)
+            state <- keeper.state(name, now, caller)
           yield Some(name -> state)
 
   /** The configured timeout, or the default when it is unset or unreadable. */
@@ -144,7 +182,13 @@ private[sessions] object AccountSessions:
           .fold(defaultIdle)(Duration.ofMinutes)
 
 /** What a device is told when it arrives: whether this account already has something counting. */
-private[sessions] final case class AccountState(active: Option[String], counter: Option[String])
+private[sessions] final case class AccountState(
+    active: Option[String],
+    counter: Option[String],
+    counterInstance: Option[String]
+)
+
+private[sessions] final case class CounterLease(session: String, expiresAt: Option[Instant])
 
 private[sessions] object AccountSessionStore:
   /** Firestore caps a batch at five hundred; this leaves room and keeps one commit small. */
@@ -201,15 +245,22 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
         )
 
   private def stateOf(snapshot: DocumentSnapshot): AccountState =
-    if !snapshot.exists then AccountState(None, None)
+    if !snapshot.exists then AccountState(None, None, None)
     else
       AccountState(
         Option(snapshot.getString(AccountSchema.activeSession)),
-        Option(snapshot.getString(AccountSchema.counter))
+        Option(snapshot.getString(AccountSchema.counter)),
+        Option(snapshot.getString(AccountSchema.counterInstance))
       )
 
   private def quietSince(snapshot: DocumentSnapshot): Option[Instant] =
     Option(snapshot.getTimestamp(AccountSchema.lastRepAt)).map(_.toDate.toInstant)
+
+  private def counterSeenAt(snapshot: DocumentSnapshot): Option[Instant] =
+    Option(snapshot.getTimestamp(AccountSchema.counterSeenAt)).map(_.toDate.toInstant)
+
+  private def counterExpiresAt(snapshot: DocumentSnapshot): Option[Instant] =
+    Option(snapshot.getTimestamp(AccountSchema.counterExpiresAt)).map(_.toDate.toInstant)
 
   private def end(
       transaction: Transaction,
@@ -231,34 +282,91 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
     val cleared = Map.newBuilder[String, AnyRef]
     cleared += (AccountSchema.activeSession -> com.google.cloud.firestore.FieldValue.delete())
     cleared += (AccountSchema.lastRepAt -> com.google.cloud.firestore.FieldValue.delete())
-    if clearCounter then cleared += (AccountSchema.counter -> com.google.cloud.firestore.FieldValue.delete())
+    if clearCounter then
+      cleared += (AccountSchema.counter -> com.google.cloud.firestore.FieldValue.delete())
+      cleared += (AccountSchema.counterInstance -> com.google.cloud.firestore.FieldValue.delete())
+      cleared += (AccountSchema.counterSeenAt -> com.google.cloud.firestore.FieldValue.delete())
+      cleared += (AccountSchema.counterExpiresAt -> com.google.cloud.firestore.FieldValue.delete())
     val _ = transaction.update(reference, cleared.result().asJava)
+
+  private def clearCounter(transaction: Transaction, reference: DocumentReference): Unit =
+    val _ = transaction.update(
+      reference,
+      Map[String, AnyRef](
+        AccountSchema.counter -> com.google.cloud.firestore.FieldValue.delete(),
+        AccountSchema.counterInstance -> com.google.cloud.firestore.FieldValue.delete(),
+        AccountSchema.counterSeenAt -> com.google.cloud.firestore.FieldValue.delete(),
+        AccountSchema.counterExpiresAt -> com.google.cloud.firestore.FieldValue.delete()
+      ).asJava
+    )
+
+  /** Applies both workout inactivity and Counter-lease expiry before a request is allowed to observe or mutate the
+    * account. Expiry closes an active workout as Idle and always removes ownership, so a later login cannot be asked to
+    * take over from a client session which no longer exists.
+    */
+  private def current(
+      transaction: Transaction,
+      reference: DocumentReference,
+      snapshot: DocumentSnapshot,
+      now: Instant
+  ): AccountState =
+    val found = stateOf(snapshot)
+    val workoutExpired = found.active.exists(_ => AccountSessions.goneQuiet(quietSince(snapshot), now, idleAfter))
+    val leaseExpired = AccountSessions.counterExpired(
+      found.counter,
+      counterSeenAt(snapshot),
+      counterExpiresAt(snapshot),
+      quietSince(snapshot),
+      now,
+      idleAfter
+    )
+    if workoutExpired || leaseExpired then
+      found.active match
+        case Some(session) => end(transaction, reference, session, SessionEnd.Idle, now, clearCounter = true)
+        case None          => clearCounter(transaction, reference)
+      AccountState(None, None, None)
+    else found
 
   /** What is counting for this account, closing a session first if it has gone quiet for longer than the timeout.
     *
     * Evaluated when someone asks rather than swept by a timer: an idle instance runs no code, so a background job would
     * need scheduling, while every question that matters arrives as a request anyway.
     */
-  def state(name: String, now: Instant): Task[AccountState] =
+  def state(name: String, now: Instant, caller: Option[CounterLease] = None): Task[AccountState] =
     transact(name): (transaction, reference, snapshot) =>
-      val current = stateOf(snapshot)
-      current.active match
-        case Some(session) if AccountSessions.goneQuiet(quietSince(snapshot), now, idleAfter) =>
-          end(transaction, reference, session, SessionEnd.Idle, now, clearCounter = true)
-          AccountState(None, None)
-        case _ => current
+      val found = current(transaction, reference, snapshot, now)
+      caller
+        .filter(lease => found.counter.contains(lease.session))
+        .foreach: lease =>
+          val heartbeat = Map.newBuilder[String, AnyRef]
+          heartbeat += (AccountSchema.counterSeenAt -> stamp(now))
+          lease.expiresAt.foreach(expiry => heartbeat += (AccountSchema.counterExpiresAt -> stamp(expiry)))
+          val _ = transaction.set(reference, heartbeat.result().asJava, com.google.cloud.firestore.SetOptions.merge())
+      found
 
   /** Takes the counter's role without starting a workout. If a workout is already active this is a takeover within it,
     * preserving the run while ensuring that only the new browser may report or stop it.
     */
-  def takeCounter(name: String, browserSession: String, now: Instant): Task[AccountState] =
+  def takeCounter(
+      name: String,
+      browserSession: String,
+      instanceId: Option[String],
+      sessionExpiresAt: Option[Instant],
+      now: Instant
+  ): Task[AccountState] =
     transact(name): (transaction, reference, snapshot) =>
-      val before = stateOf(snapshot)
-      val active = before.active.filterNot(_ => AccountSessions.goneQuiet(quietSince(snapshot), now, idleAfter))
-      before.active.filterNot(active.contains).foreach(session =>
-        end(transaction, reference, session, SessionEnd.Idle, now, clearCounter = false)
+      val before = current(transaction, reference, snapshot, now)
+      val active = before.active
+      val moved = Map[String, AnyRef](
+        AccountSchema.counter -> browserSession,
+        AccountSchema.counterInstance -> instanceId.fold[AnyRef](
+          com.google.cloud.firestore.FieldValue.delete()
+        )(identity),
+        AccountSchema.counterSeenAt -> stamp(now),
+        AccountSchema.counterExpiresAt -> sessionExpiresAt.fold[AnyRef](
+          com.google.cloud.firestore.FieldValue.delete()
+        )(stamp)
       )
-      val moved = Map[String, AnyRef](AccountSchema.counter -> browserSession)
       val _ = transaction.set(reference, moved.asJava, com.google.cloud.firestore.SetOptions.merge())
       active.foreach: session =>
         val _ = transaction.set(
@@ -266,7 +374,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
           moved.asJava,
           com.google.cloud.firestore.SetOptions.merge()
         )
-      AccountState(active, Some(browserSession))
+      AccountState(active, Some(browserSession), instanceId)
 
   /** Opens a workout for the browser currently holding the counter role. Repeated Start requests are idempotent. */
   def startWorkout(
@@ -279,14 +387,11 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
     // session rather than leaving the caller with whichever random id the final attempt happened to choose.
     val newSession = f"${now.toEpochMilli}%d-${scala.util.Random.nextInt(0x1000)}%03x"
     transact(name): (transaction, reference, snapshot) =>
-      val current = stateOf(snapshot)
-      Option.when(current.counter.contains(browserSession)):
-        current.active.filterNot(_ => AccountSessions.goneQuiet(quietSince(snapshot), now, idleAfter)) match
+      val found = current(transaction, reference, snapshot, now)
+      Option.when(found.counter.contains(browserSession)):
+        found.active match
           case Some(session) => session
           case None          =>
-            current.active.foreach(session =>
-              end(transaction, reference, session, SessionEnd.Idle, now, clearCounter = false)
-            )
             val opened = Map[String, AnyRef](
               AccountSchema.startedAt -> stamp(now),
               AccountSchema.counter -> browserSession
@@ -299,7 +404,8 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
               reference,
               Map[String, AnyRef](
                 AccountSchema.activeSession -> newSession,
-                AccountSchema.lastRepAt -> stamp(now)
+                AccountSchema.lastRepAt -> stamp(now),
+                AccountSchema.counterSeenAt -> stamp(now)
               ).asJava,
               com.google.cloud.firestore.SetOptions.merge()
             )
@@ -333,9 +439,9 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       now: Instant
   ): Task[Option[String]] =
     transact(name): (transaction, reference, snapshot) =>
-      val current = stateOf(snapshot)
-      current.active
-        .filter(_ => current.counter.contains(browserSession))
+      val found = current(transaction, reference, snapshot, now)
+      found.active
+        .filter(_ => found.counter.contains(browserSession))
         .map: session =>
           val _ = transaction.set(
             reference.collection(AccountSchema.sessions).document(session),
@@ -343,6 +449,11 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
             com.google.cloud.firestore.SetOptions.merge()
           )
           end(transaction, reference, session, SessionEnd.Stopped, now, clearCounter = false)
+          val _ = transaction.set(
+            reference,
+            Map[String, AnyRef](AccountSchema.counterSeenAt -> stamp(now)).asJava,
+            com.google.cloud.firestore.SetOptions.merge()
+          )
           session
 
   /** Records what a workout has measured so far. Also moves the account's idle mark, whatever the count: see
@@ -355,9 +466,9 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       now: Instant
   ): Task[Option[String]] =
     transact(name): (transaction, reference, snapshot) =>
-      val current = stateOf(snapshot)
-      current.active
-        .filter(_ => current.counter.contains(browserSession))
+      val found = current(transaction, reference, snapshot, now)
+      found.active
+        .filter(_ => found.counter.contains(browserSession))
         .map: session =>
           val _ = transaction.set(
             reference.collection(AccountSchema.sessions).document(session),
@@ -366,7 +477,10 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
           )
           val _ = transaction.set(
             reference,
-            Map[String, AnyRef](AccountSchema.lastRepAt -> stamp(now)).asJava,
+            Map[String, AnyRef](
+              AccountSchema.lastRepAt -> stamp(now),
+              AccountSchema.counterSeenAt -> stamp(now)
+            ).asJava,
             com.google.cloud.firestore.SetOptions.merge()
           )
           session
@@ -592,8 +706,57 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
     */
   def close(name: String, why: SessionEnd, now: Instant): Task[Option[String]] =
     transact(name): (transaction, reference, snapshot) =>
-      stateOf(snapshot).active.map: session =>
-        val actual =
-          if AccountSessions.goneQuiet(quietSince(snapshot), now, idleAfter) then SessionEnd.Idle else why
-        end(transaction, reference, session, actual, now, clearCounter = true)
-        session
+      val current = stateOf(snapshot)
+      current.active match
+        case Some(session) =>
+          val actual =
+            if AccountSessions.goneQuiet(quietSince(snapshot), now, idleAfter) then SessionEnd.Idle else why
+          end(transaction, reference, session, actual, now, clearCounter = true)
+          Some(session)
+        case None if current.counter.isDefined =>
+          val _ = transaction.update(
+            reference,
+            Map[String, AnyRef](
+              AccountSchema.counter -> com.google.cloud.firestore.FieldValue.delete(),
+              AccountSchema.counterInstance -> com.google.cloud.firestore.FieldValue.delete(),
+              AccountSchema.counterSeenAt -> com.google.cloud.firestore.FieldValue.delete(),
+              AccountSchema.counterExpiresAt -> com.google.cloud.firestore.FieldValue.delete(),
+              AccountSchema.lastRepAt -> com.google.cloud.firestore.FieldValue.delete()
+            ).asJava
+          )
+          None
+        case None => None
+
+  /** Releases this device only when it still owns the counter role, closing its workout at the same time.
+    *
+    * A dashboard logging out must not stop another device's workout. Conversely, invalidating the credential of the
+    * actual counter without closing its workout would leave an owner which can never report again.
+    */
+  def closeForCounter(
+      name: String,
+      browserSession: String,
+      why: SessionEnd,
+      now: Instant
+  ): Task[Option[String]] =
+    transact(name): (transaction, reference, snapshot) =>
+      val current = stateOf(snapshot)
+      if !current.counter.contains(browserSession) then None
+      else
+        current.active match
+          case Some(session) =>
+            val actual =
+              if AccountSessions.goneQuiet(quietSince(snapshot), now, idleAfter) then SessionEnd.Idle else why
+            end(transaction, reference, session, actual, now, clearCounter = true)
+            Some(session)
+          case None =>
+            val _ = transaction.update(
+              reference,
+              Map[String, AnyRef](
+                AccountSchema.counter -> com.google.cloud.firestore.FieldValue.delete(),
+                AccountSchema.counterInstance -> com.google.cloud.firestore.FieldValue.delete(),
+                AccountSchema.counterSeenAt -> com.google.cloud.firestore.FieldValue.delete(),
+                AccountSchema.counterExpiresAt -> com.google.cloud.firestore.FieldValue.delete(),
+                AccountSchema.lastRepAt -> com.google.cloud.firestore.FieldValue.delete()
+              ).asJava
+            )
+            None
