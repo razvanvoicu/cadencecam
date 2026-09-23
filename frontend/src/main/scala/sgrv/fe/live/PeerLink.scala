@@ -69,8 +69,10 @@ private[fe] final class PeerLink(
   private var polling: Option[Int] = None
   private var wanted = false
 
-  /** A watcher's own name, fixed for the life of this link; a counter answers to whatever names arrive. */
-  private val mine = newPeerId()
+  /** A watcher's current attempt. A reconnect gets a new name so the counter cannot mistake its new offer for the
+    * already-consumed exchange belonging to the broken connection.
+    */
+  private var mine = newPeerId()
 
   def isOpen: Boolean = links.values.exists(link => link.channel.exists(_.readyState == "open"))
 
@@ -90,7 +92,7 @@ private[fe] final class PeerLink(
       role match
         case PeerRole.Watcher =>
           // The watcher offers, under its own name; a counter with nobody watching has nothing to offer.
-          val _ = start(mine)
+          startWatcherAttempt()
           poll(pollWhileConnectingMillis)
         case PeerRole.Counter => poll(pollWhileIdleMillis)
 
@@ -149,14 +151,24 @@ private[fe] final class PeerLink(
         link
 
   private def forget(link: Link): Unit =
-    shutDown(link)
-    links = links - link.peerId
-    watchers.set(links.values.count(one => one.channel.exists(_.readyState == "open")))
-    if !isOpen then
-      phase.set(if wanted then "connecting" else "off")
-      onClosed()
-      // A counter goes back to watching for whoever appears next; a watcher tries again under the same name.
-      if wanted then poll(if role == PeerRole.Counter then pollWhileIdleMillis else pollWhileConnectingMillis)
+    // A channel close and a peer-state change can report the same failure. Only the first one owns the retry.
+    if links.get(link.peerId).contains(link) then
+      links = links - link.peerId
+      shutDown(link)
+      watchers.set(links.values.count(one => one.channel.exists(_.readyState == "open")))
+      if !isOpen then
+        phase.set(if wanted then "connecting" else "off")
+        onClosed()
+        if wanted then
+          role match
+            case PeerRole.Counter => poll(pollWhileIdleMillis)
+            case PeerRole.Watcher =>
+              startWatcherAttempt()
+              poll(pollWhileConnectingMillis)
+
+  private def startWatcherAttempt(): Unit =
+    mine = newPeerId()
+    val _ = start(mine)
 
   private def adopt(link: Link, created: Channel): Unit =
     link.channel = Some(created)
