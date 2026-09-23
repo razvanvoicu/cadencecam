@@ -1,7 +1,7 @@
 package sgrv.be
 
 import com.google.cloud.firestore.Firestore
-import sgrv.be.auth.{GoogleOAuth, InvitationAccounts, SessionStore, TokenGenerator}
+import sgrv.be.auth.{AppleOAuth, GoogleOAuth, InvitationAccounts, SessionStore, TokenGenerator}
 import sgrv.be.core.{Capability, CurrentUserDetails, SessionNotifier}
 import sgrv.be.sessions.WorkoutSessions
 import zio.http.Client
@@ -11,10 +11,11 @@ import zio.http.Client
   * and join the capability registry afterwards, so they cannot also be inputs to it.
   */
 type BackendEnvironment =
-  GoogleOAuth & InvitationAccounts & SessionStore & TokenGenerator & Client & Firestore & WorkoutSessions
+  AppleOAuth & GoogleOAuth & InvitationAccounts & SessionStore & TokenGenerator & Client & Firestore & WorkoutSessions
 
 private[be] object BackendCapabilities:
   val googleOAuth: Capability[GoogleOAuth] = Capability("google-oauth")
+  val appleOAuth: Capability[AppleOAuth] = Capability("apple-oauth")
   val invitationAccounts: Capability[InvitationAccounts] = Capability("invitation-accounts")
   val sessionStore: Capability[SessionStore] = Capability("session-store")
   val tokenGenerator: Capability[TokenGenerator] = Capability("token-generator")

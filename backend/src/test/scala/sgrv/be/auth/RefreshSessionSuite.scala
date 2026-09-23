@@ -2,6 +2,7 @@ package sgrv.be.auth
 
 import java.time.Instant
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
+import sgrv.api.InvitationCredential
 import sgrv.be.core.{CapabilityRegistry, PluginStatus, RouteDiscovery}
 import zio.{Runtime, Task, UIO, Unsafe, ZEnvironment, ZIO}
 import zio.http.{Cookie, Header, Request, Status, URL}
@@ -13,8 +14,15 @@ class RefreshSessionSuite extends munit.FunSuite:
       Runtime.default.unsafe.run(effect).getOrThrowFiberFailure()
     }
 
-  private def routes(sessionStore: SessionStore, googleOAuth: GoogleOAuth) =
-    val registry = CapabilityRegistry.fromEnvironment(ZEnvironment(sessionStore, googleOAuth))
+  private def routes(
+      sessionStore: SessionStore,
+      googleOAuth: GoogleOAuth,
+      appleOAuth: AppleOAuth = unusedAppleOAuth,
+      invitations: InvitationAccounts = activeInvitations
+  ) =
+    val registry = CapabilityRegistry.fromEnvironment(
+      ZEnvironment(sessionStore, googleOAuth, appleOAuth, invitations)
+    )
     RouteDiscovery.activate(RefreshSession, RefreshSession.getClass.getName, registry) match
       case PluginStatus.Active(_, _, activeRoutes) => activeRoutes
       case other                                   => fail(s"Expected RefreshSession to activate, got $other")
@@ -92,6 +100,35 @@ class RefreshSessionSuite extends munit.FunSuite:
       assertEquals(response.status, Status.ServiceUnavailable)
       assertEquals(response.headers.get(Header.CacheControl), Some(Header.CacheControl.NoStore))
 
+  test("validates an Apple refresh token with the client id that issued it"):
+    val validated = AtomicReference(Option.empty[(String, String)])
+    val user = SessionUser(
+      "relay@privaterelay.appleid.com",
+      "Jane",
+      refreshToken = Some("apple-refresh"),
+      identityProvider = IdentityProvider.Apple,
+      providerSubject = Some("apple-subject"),
+      accountId = Some("apple:apple-subject"),
+      providerClientId = Some("sg.raz.cadencecam")
+    )
+    val store = sessionStore(ZIO.some(user), (_, _) => ZIO.unit)
+    val apple = new AppleOAuth:
+      override def configured = ZIO.succeed(true)
+      override def authorizationUrl(state: String) = ZIO.fail(new UnsupportedOperationException)
+      override def authenticateBrowser(code: String, givenName: Option[String], familyName: Option[String]) =
+        ZIO.fail(new UnsupportedOperationException)
+      override def authenticateNative(code: String, givenName: Option[String], familyName: Option[String]) =
+        ZIO.fail(new UnsupportedOperationException)
+      override def validate(refreshToken: String, clientId: String) =
+        ZIO.succeed(validated.set(Some(refreshToken -> clientId)))
+      override def revoke(token: String, clientId: String) = ZIO.unit
+      override def callbackIsSecure = ZIO.succeed(true)
+
+    val response = run(ZIO.scoped(routes(store, googleOAuth(_ => ZIO.dieMessage("unused")), apple).runZIO(request())))
+
+    assertEquals(response.status, Status.Ok)
+    assertEquals(validated.get(), Some("apple-refresh" -> "sg.raz.cadencecam"))
+
   private def sessionStore(
       findEffect: Task[Option[SessionUser]],
       renewEffect: (String, Instant) => Task[Unit]
@@ -123,3 +160,24 @@ class RefreshSessionSuite extends munit.FunSuite:
       override def callbackIsSecure: UIO[Boolean] = ZIO.succeed(true)
       override def accessToken(refreshToken: String): Task[String] = accessTokenEffect(refreshToken)
       override def revoke(refreshToken: String): Task[Unit] = ZIO.unit
+
+  private val unusedAppleOAuth: AppleOAuth = new AppleOAuth:
+    override def configured: UIO[Boolean] = ZIO.succeed(false)
+    override def authorizationUrl(state: String): Task[String] = ZIO.fail(new UnsupportedOperationException)
+    override def authenticateBrowser(code: String, givenName: Option[String], familyName: Option[String]) =
+      ZIO.fail(new UnsupportedOperationException)
+    override def authenticateNative(code: String, givenName: Option[String], familyName: Option[String]) =
+      ZIO.fail(new UnsupportedOperationException)
+    override def validate(refreshToken: String, clientId: String): Task[Unit] =
+      ZIO.fail(new UnsupportedOperationException)
+    override def revoke(token: String, clientId: String): Task[Unit] = ZIO.fail(new UnsupportedOperationException)
+    override def callbackIsSecure: UIO[Boolean] = ZIO.succeed(true)
+
+  private val activeInvitations: InvitationAccounts = new InvitationAccounts:
+    override def create(invitations: Seq[NewInvitation], at: Instant): Task[Seq[InvitationCredential]] =
+      ZIO.succeed(Seq.empty)
+    override def authenticate(username: String, accessCode: String, at: Instant): Task[SessionUser] =
+      ZIO.fail(new UnsupportedOperationException)
+    override def isActive(subject: String): Task[Boolean] = ZIO.succeed(true)
+    override def revoke(username: String, at: Instant): Task[Unit] = ZIO.unit
+    override def delete(subject: String, at: Instant): Task[Unit] = ZIO.unit

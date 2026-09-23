@@ -24,10 +24,12 @@ private[be] object IdentityProvider:
   def stored(provider: IdentityProvider): String = provider.toString.toLowerCase
 
   def fromStored(value: String): Option[IdentityProvider] =
-    Option(value).map(_.trim.toLowerCase).collect:
-      case "google"     => IdentityProvider.Google
-      case "apple"      => IdentityProvider.Apple
-      case "invitation" => IdentityProvider.Invitation
+    Option(value)
+      .map(_.trim.toLowerCase)
+      .collect:
+        case "google"     => IdentityProvider.Google
+        case "apple"      => IdentityProvider.Apple
+        case "invitation" => IdentityProvider.Invitation
 
 final case class SessionUser(
     email: String,
@@ -36,7 +38,8 @@ final case class SessionUser(
     accessTokenForRevocation: Option[String] = None,
     identityProvider: IdentityProvider = IdentityProvider.Google,
     providerSubject: Option[String] = None,
-    accountId: Option[String] = None
+    accountId: Option[String] = None,
+    providerClientId: Option[String] = None
 ):
   /** The stable identity used to file account data and invalidate all of its sessions.
     *
@@ -129,7 +132,10 @@ private[be] object GoogleOAuth:
       val verifier = new GoogleIdTokenVerifier.Builder(transport, jsonFactory)
         .setAudience(Seq(config.clientId).asJava)
         .build()
-      val idToken = Option(encoded).map(_.trim).filter(_.nonEmpty).flatMap(value => Option(verifier.verify(value)))
+      val idToken = Option(encoded)
+        .map(_.trim)
+        .filter(_.nonEmpty)
+        .flatMap(value => Option(verifier.verify(value)))
         .getOrElse(throw new IllegalStateException("The Google ID token failed verification"))
       val payload = idToken.getPayload
       val email = Option(payload.getEmail)

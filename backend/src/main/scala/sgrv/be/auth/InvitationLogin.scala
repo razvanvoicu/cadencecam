@@ -10,8 +10,8 @@ import zio.json.*
 /** Exchanges reusable invitation credentials for an ordinary CadenceCam session.
   *
   * The same endpoint serves browsers and native apps. Browsers retain the HttpOnly cookie; native clients retain the
-  * opaque token in the JSON response. From then on neither client receives special treatment from the account,
-  * workout, Counter or dashboard code.
+  * opaque token in the JSON response. From then on neither client receives special treatment from the account, workout,
+  * Counter or dashboard code.
   */
 object InvitationLogin extends BackendPlugin:
   type Requires = InvitationAccounts & SessionStore & TokenGenerator & SessionNotifier & GoogleOAuth

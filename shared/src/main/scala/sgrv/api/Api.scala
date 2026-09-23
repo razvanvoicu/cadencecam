@@ -28,6 +28,20 @@ object MobileAuthentication:
   val Path = "/auth/mobile"
   given JsonCodec[MobileAuthentication] = DeriveJsonCodec.gen[MobileAuthentication]
 
+/** The short-lived, single-use authorization code returned by Apple's native AuthenticationServices flow. Apple
+  * supplies the name only on the first authorization, so both components are optional.
+  */
+@jsonNoExtraFields
+final case class AppleMobileAuthentication(
+    authorizationCode: String,
+    givenName: Option[String] = None,
+    familyName: Option[String] = None
+)
+
+object AppleMobileAuthentication:
+  val Path = "/auth/apple/mobile"
+  given JsonCodec[AppleMobileAuthentication] = DeriveJsonCodec.gen[AppleMobileAuthentication]
+
 /** A reusable invitation identity. The access code is exchanged once per login for an ordinary opaque CadenceCam
   * session; it is never accepted by workout or dashboard routes.
   */
@@ -115,9 +129,9 @@ final case class RepProgress(
     elapsedSeconds: Double = 0.0,
     /** The calorie total computed from this progress and the settings frozen when the workout started.
       *
-      * Periodic reports carry the same conclusion used by the live workout, so an in-progress workout and one closed
-      * by a path other than Stop cannot leave history with the zero-calorie snapshot written at Start. Optionality
-      * keeps reports from older Counter builds readable during an upgrade.
+      * Periodic reports carry the same conclusion used by the live workout, so an in-progress workout and one closed by
+      * a path other than Stop cannot leave history with the zero-calorie snapshot written at Start. Optionality keeps
+      * reports from older Counter builds readable during an upgrade.
       */
     calories: Option[Double] = None
 )

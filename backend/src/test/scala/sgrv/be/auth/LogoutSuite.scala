@@ -25,9 +25,12 @@ class LogoutSuite extends munit.FunSuite:
       sessionStore: SessionStore,
       googleOAuth: GoogleOAuth,
       notifier: SessionNotifier = SessionNotifier.none,
-      workouts: WorkoutSessions = workoutSessions(_ => ZIO.unit)
+      workouts: WorkoutSessions = workoutSessions(_ => ZIO.unit),
+      appleOAuth: AppleOAuth = unusedAppleOAuth
   ) =
-    val registry = CapabilityRegistry.fromEnvironment(ZEnvironment(sessionStore, googleOAuth, notifier, workouts))
+    val registry = CapabilityRegistry.fromEnvironment(
+      ZEnvironment(sessionStore, googleOAuth, appleOAuth, notifier, workouts)
+    )
     RouteDiscovery.activate(Logout, Logout.getClass.getName, registry) match
       case PluginStatus.Active(_, _, activeRoutes) => activeRoutes
       case other                                   => fail(s"Expected Logout to activate, got $other")
@@ -114,6 +117,36 @@ class LogoutSuite extends munit.FunSuite:
     assertEquals(response.status, Status.NoContent)
     assertEquals(revokedToken.get(), Some("access-token"))
 
+  test("revokes Apple with the refresh token and client id that issued it"):
+    val revoked = AtomicReference(Option.empty[(String, String)])
+    val user = SessionUser(
+      "relay@privaterelay.appleid.com",
+      "Jane",
+      refreshToken = Some("apple-refresh"),
+      identityProvider = IdentityProvider.Apple,
+      providerSubject = Some("apple-subject"),
+      accountId = Some("apple:apple-subject"),
+      providerClientId = Some("sg.raz.cadencecam")
+    )
+    val store = sessionStore(user, _ => ZIO.unit)
+    val apple = new AppleOAuth:
+      override def configured = ZIO.succeed(true)
+      override def authorizationUrl(state: String) = ZIO.fail(new UnsupportedOperationException)
+      override def authenticateBrowser(code: String, givenName: Option[String], familyName: Option[String]) =
+        ZIO.fail(new UnsupportedOperationException)
+      override def authenticateNative(code: String, givenName: Option[String], familyName: Option[String]) =
+        ZIO.fail(new UnsupportedOperationException)
+      override def validate(refreshToken: String, clientId: String) = ZIO.unit
+      override def revoke(token: String, clientId: String) = ZIO.succeed(revoked.set(Some(token -> clientId)))
+      override def callbackIsSecure = ZIO.succeed(true)
+
+    val response = run(
+      ZIO.scoped(routes(store, googleOAuth(_ => ZIO.dieMessage("unused")), appleOAuth = apple).runZIO(request))
+    )
+
+    assertEquals(response.status, Status.NoContent)
+    assertEquals(revoked.get(), Some("apple-refresh" -> "sg.raz.cadencecam"))
+
   test("keeps the browser cookie retryable when account-wide invalidation fails"):
     val revocations = new AtomicInteger(0)
     val user = SessionUser("jane@example.com", "Jane", Some("refresh-token"))
@@ -193,6 +226,18 @@ class LogoutSuite extends munit.FunSuite:
       override def callbackIsSecure: UIO[Boolean] = ZIO.succeed(true)
       override def accessToken(refreshToken: String): Task[String] = ZIO.fail(new UnsupportedOperationException)
       override def revoke(refreshToken: String): Task[Unit] = revokeEffect(refreshToken)
+
+  private val unusedAppleOAuth: AppleOAuth = new AppleOAuth:
+    override def configured: UIO[Boolean] = ZIO.succeed(false)
+    override def authorizationUrl(state: String): Task[String] = ZIO.fail(new UnsupportedOperationException)
+    override def authenticateBrowser(code: String, givenName: Option[String], familyName: Option[String]) =
+      ZIO.fail(new UnsupportedOperationException)
+    override def authenticateNative(code: String, givenName: Option[String], familyName: Option[String]) =
+      ZIO.fail(new UnsupportedOperationException)
+    override def validate(refreshToken: String, clientId: String): Task[Unit] =
+      ZIO.fail(new UnsupportedOperationException)
+    override def revoke(token: String, clientId: String): Task[Unit] = ZIO.fail(new UnsupportedOperationException)
+    override def callbackIsSecure: UIO[Boolean] = ZIO.succeed(true)
 
   test("raises the logout event once the session is really gone"):
     val events = new AtomicReference(List.empty[LogoutEvent])

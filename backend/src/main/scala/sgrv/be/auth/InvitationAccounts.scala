@@ -66,25 +66,29 @@ private[be] object InvitationAccounts:
     override def create(invitations: Seq[NewInvitation], at: Instant): Task[Seq[InvitationCredential]] =
       if invitations.isEmpty then ZIO.succeed(Seq.empty)
       else
-        ZIO.attempt:
-          invitations.foreach(invitation => validateUsername(invitation.username))
-          val batch = firestore.batch()
-          invitations.foreach: invitation =>
-            val normalized = normalizeUsername(invitation.username)
-            batch.create(
-              firestore.collection(Collection).document(subject(normalized)),
-              Map[String, AnyRef](
-                "username" -> normalized,
-                "displayName" -> invitation.displayName.trim,
-                "accountId" -> invitation.accountId,
-                "codeDigest" -> codeDigest(invitation.accessCode),
-                "status" -> Available,
-                "createdAt" -> timestamp(at)
-              ).asJava
-            )
-          batch
-        .flatMap(batch => GoogleFuture.fromApiFuture(batch.commit()))
-        .as(invitations.map(invitation => InvitationCredential(normalizeUsername(invitation.username), invitation.accessCode)))
+        ZIO
+          .attempt:
+            invitations.foreach(invitation => validateUsername(invitation.username))
+            val batch = firestore.batch()
+            invitations.foreach: invitation =>
+              val normalized = normalizeUsername(invitation.username)
+              batch.create(
+                firestore.collection(Collection).document(subject(normalized)),
+                Map[String, AnyRef](
+                  "username" -> normalized,
+                  "displayName" -> invitation.displayName.trim,
+                  "accountId" -> invitation.accountId,
+                  "codeDigest" -> codeDigest(invitation.accessCode),
+                  "status" -> Available,
+                  "createdAt" -> timestamp(at)
+                ).asJava
+              )
+            batch
+          .flatMap(batch => GoogleFuture.fromApiFuture(batch.commit()))
+          .as(
+            invitations
+              .map(invitation => InvitationCredential(normalizeUsername(invitation.username), invitation.accessCode))
+          )
 
     override def authenticate(username: String, accessCode: String, at: Instant): Task[SessionUser] =
       val attempted = for
@@ -181,7 +185,9 @@ private[be] object InvitationAccounts:
     ZIO.fromOption(Option(value).map(_.trim).filter(_.nonEmpty)).orElseFail(new IllegalStateException(message))
 
   private def normalizedSubject(value: String): Option[String] =
-    Option(value).map(_.trim.toLowerCase).filter(subject => subject.length == 64 && subject.forall("0123456789abcdef".contains(_)))
+    Option(value)
+      .map(_.trim.toLowerCase)
+      .filter(subject => subject.length == 64 && subject.forall("0123456789abcdef".contains(_)))
 
   private def timestamp(instant: Instant): Timestamp =
     Timestamp.ofTimeSecondsAndNanos(instant.getEpochSecond, instant.getNano)

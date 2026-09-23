@@ -12,6 +12,9 @@ object Dependencies {
   // Google Cloud: Firestore access-log persistence and OAuth 2.0 code exchange / ID-token verification
   lazy val firestore = "com.google.cloud" % "google-cloud-firestore" % "3.43.0"
   lazy val googleApiClient = "com.google.api-client" % "google-api-client" % "2.8.0"
+  // Apple signs identity tokens with rotating RSA keys and requires an ES256 client-secret JWT. Nimbus handles the
+  // JOSE encodings and key formats so this authentication boundary does not carry home-grown signature code.
+  lazy val nimbusJoseJwt = "com.nimbusds" % "nimbus-jose-jwt" % "10.10"
   // JSON parsing for Google responses (OAuth revocation error bodies) and for asserting on packaged JSON
   // resources in tests; already on the classpath transitively via google-api-client's GsonFactory, declared
   // explicitly so the dependency doesn't rely on that transitive detail.

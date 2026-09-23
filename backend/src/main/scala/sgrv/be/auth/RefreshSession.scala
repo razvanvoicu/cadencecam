@@ -11,11 +11,13 @@ import zio.http.{Header, Method, Request, Response, Routes, Status, handler}
   * app, and the active lookup also performs the Counter/workout cleanup associated with that expiry.
   */
 object RefreshSession extends BackendPlugin:
-  type Requires = GoogleOAuth & SessionStore
+  type Requires = AppleOAuth & GoogleOAuth & InvitationAccounts & SessionStore
 
   override val id = "auth-refresh-session"
   override val requirements: CapabilitySet[Requires] =
-    CapabilitySet.one(BackendCapabilities.googleOAuth) ++
+    CapabilitySet.one(BackendCapabilities.appleOAuth) ++
+      CapabilitySet.one(BackendCapabilities.googleOAuth) ++
+      CapabilitySet.one(BackendCapabilities.invitationAccounts) ++
       CapabilitySet.one(BackendCapabilities.sessionStore)
   override val accessPolicy: AccessPolicy[Requires] = AccessPolicy.Public
   override val routes: Routes[Requires & RequestContext, Nothing] =
@@ -25,7 +27,7 @@ object RefreshSession extends BackendPlugin:
 
   private sealed trait RefreshFailure
   private case object NotRenewable extends RefreshFailure
-  private final case class GoogleRefreshFailed(cause: Throwable) extends RefreshFailure
+  private final case class IdentityValidationFailed(provider: IdentityProvider, cause: Throwable) extends RefreshFailure
   private final case class SessionStoreFailed(operation: String, cause: Throwable) extends RefreshFailure
 
   private def apply(request: Request): ZIO[Requires, Nothing, Response] =
@@ -41,8 +43,7 @@ object RefreshSession extends BackendPlugin:
         .find(sessionKey, now)
         .mapError(SessionStoreFailed("reading", _))
         .someOrFail(NotRenewable)
-      refreshToken <- ZIO.fromOption(user.refreshToken).orElseFail(NotRenewable)
-      _ <- GoogleOAuth.accessToken(refreshToken).mapError(GoogleRefreshFailed.apply)
+      _ <- validateIdentity(user)
       expiresAt = now.plus(Callback.sessionLifetime)
       _ <- SessionStore
         .renew(sessionKey, expiresAt)
@@ -55,12 +56,41 @@ object RefreshSession extends BackendPlugin:
 
   private def failureResponse(failure: RefreshFailure): ZIO[Any, Nothing, Response] =
     failure match
-      case NotRenewable               => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
-      case GoogleRefreshFailed(error) =>
-        ZIO.logWarningCause("Could not renew the Google-backed browser session", Cause.fail(error)) *>
+      case NotRenewable                              => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
+      case IdentityValidationFailed(provider, error) =>
+        ZIO.logWarningCause(
+          s"Could not renew the ${provider.toString.toLowerCase}-backed browser session",
+          Cause.fail(error)
+        ) *>
           ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
       case SessionStoreFailed(operation, error) =>
         ZIO.logErrorCause(s"Could not renew the browser session while $operation Firestore", Cause.fail(error)) *>
           ZIO.succeed(noStore(Response.status(Status.ServiceUnavailable)))
 
   private def noStore(response: Response): Response = response.addHeader(Header.CacheControl.NoStore)
+
+  private def validateIdentity(user: SessionUser): ZIO[Requires, RefreshFailure, Unit] =
+    val validation = user.identityProvider match
+      case IdentityProvider.Google =>
+        ZIO
+          .fromOption(user.refreshToken)
+          .orElseFail(new IllegalStateException("No Google refresh token"))
+          .flatMap(GoogleOAuth.accessToken)
+          .unit
+      case IdentityProvider.Apple =>
+        for
+          refreshToken <- ZIO
+            .fromOption(user.refreshToken)
+            .orElseFail(new IllegalStateException("No Apple refresh token"))
+          clientId <- ZIO.fromOption(user.providerClientId).orElseFail(new IllegalStateException("No Apple client id"))
+          _ <- AppleOAuth.validate(refreshToken, clientId)
+        yield ()
+      case IdentityProvider.Invitation =>
+        for
+          subject <- ZIO
+            .fromOption(user.providerSubject)
+            .orElseFail(new IllegalStateException("No invitation identity"))
+          active <- InvitationAccounts.isActive(subject)
+          _ <- ZIO.unless(active)(ZIO.fail(new IllegalStateException("Invitation is no longer active")))
+        yield ()
+    validation.mapError(IdentityValidationFailed(user.identityProvider, _))

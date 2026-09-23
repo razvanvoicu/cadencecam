@@ -14,11 +14,12 @@ import zio.http.{Header, Method, Response, Routes, Status, handler}
   * and the role released; logging out a dashboard does not disturb the counter on another device.
   */
 object Logout extends BackendPlugin:
-  type Requires = GoogleOAuth & SessionStore & SessionNotifier & WorkoutSessions
+  type Requires = AppleOAuth & GoogleOAuth & SessionStore & SessionNotifier & WorkoutSessions
 
   override val id = "auth-logout"
   override val requirements: CapabilitySet[Requires] =
-    CapabilitySet.one(BackendCapabilities.googleOAuth) ++
+    CapabilitySet.one(BackendCapabilities.appleOAuth) ++
+      CapabilitySet.one(BackendCapabilities.googleOAuth) ++
       CapabilitySet.one(BackendCapabilities.sessionStore) ++
       CapabilitySet.one(BackendCapabilities.sessionNotifier) ++
       CapabilitySet.one(BackendCapabilities.workoutSessions)
@@ -32,7 +33,7 @@ object Logout extends BackendPlugin:
   private sealed trait LogoutFailure:
     def cause: Throwable
 
-  private final case class GoogleRevocationFailed(cause: Throwable) extends LogoutFailure
+  private final case class ProviderRevocationFailed(provider: IdentityProvider, cause: Throwable) extends LogoutFailure
   private final case class WorkoutClosureFailed(cause: Throwable) extends LogoutFailure
   private final case class SessionInvalidationFailed(cause: Throwable) extends LogoutFailure
 
@@ -101,17 +102,26 @@ object Logout extends BackendPlugin:
 
   private def invalidate(user: SessionUser, now: java.time.Instant): ZIO[Requires, LogoutFailure, Unit] =
     WorkoutSessions.closeOnLogout(user.account, now).mapError(WorkoutClosureFailed.apply) *>
+      revokeProvider(user).mapError(ProviderRevocationFailed(user.identityProvider, _)) *>
+      SessionStore.invalidateAll(user.account).mapError(SessionInvalidationFailed.apply)
+
+  private def revokeProvider(user: SessionUser): ZIO[Requires, Throwable, Unit] = user.identityProvider match
+    case IdentityProvider.Google =>
       user.refreshToken
         .orElse(user.accessTokenForRevocation)
         .fold[ZIO[GoogleOAuth, Throwable, Unit]](ZIO.unit)(GoogleOAuth.revoke)
-        .mapError(GoogleRevocationFailed.apply) *>
-      SessionStore.invalidateAll(user.account).mapError(SessionInvalidationFailed.apply)
+    case IdentityProvider.Apple =>
+      (user.refreshToken, user.providerClientId) match
+        case (Some(token), Some(clientId)) => AppleOAuth.revoke(token, clientId)
+        case _                             => ZIO.unit
+    case IdentityProvider.Invitation => ZIO.unit
 
   private def failureResponse(failure: LogoutFailure): ZIO[Any, Nothing, Response] =
     failure match
-      case GoogleRevocationFailed(error) =>
-        ZIO.logErrorCause("Could not revoke Google authorization during logout", Cause.fail(error)) *>
-          ZIO.succeed(Response.text("Could not revoke Google authorization. Try again.").status(Status.BadGateway))
+      case ProviderRevocationFailed(provider, error) =>
+        val name = provider.toString
+        ZIO.logErrorCause(s"Could not revoke $name authorization during logout", Cause.fail(error)) *>
+          ZIO.succeed(Response.text(s"Could not revoke $name authorization. Try again.").status(Status.BadGateway))
       case WorkoutClosureFailed(error) =>
         ZIO.logErrorCause("Could not close the active workout during logout", Cause.fail(error)) *>
           ZIO.succeed(Response.text("Could not close the active workout. Try again.").status(Status.ServiceUnavailable))

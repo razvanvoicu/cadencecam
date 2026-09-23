@@ -32,8 +32,12 @@ private[be] object SessionAuth:
     * HTTP stack happened to attach, while the browser continues down the cookie-only path it always used.
     */
   private[be] def sessionKey(request: Request): Option[String] =
-    val bearer = request.headers.get(Header.Authorization).collect:
-      case Header.Authorization.Bearer(token) => token.value.asString.trim
-    bearer.filter(_.nonEmpty).orElse(
-      request.cookie(Callback.sessionCookieName).map(_.content).map(_.trim).filter(_.nonEmpty)
-    )
+    val bearer = request.headers
+      .get(Header.Authorization)
+      .collect:
+        case Header.Authorization.Bearer(token) => token.value.asString.trim
+    bearer
+      .filter(_.nonEmpty)
+      .orElse(
+        request.cookie(Callback.sessionCookieName).map(_.content).map(_.trim).filter(_.nonEmpty)
+      )

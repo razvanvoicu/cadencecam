@@ -24,7 +24,9 @@ class InvitationLoginSuite extends munit.FunSuite:
 
     assertEquals(response.status, Status.Ok)
     assertEquals(response.headers.get(Header.CacheControl), Some(Header.CacheControl.NoStore))
-    val sessionCookie = response.headers.getAll(Header.SetCookie).map(_.value)
+    val sessionCookie = response.headers
+      .getAll(Header.SetCookie)
+      .map(_.value)
       .find(_.name == Callback.sessionCookieName)
     assertEquals(sessionCookie.map(_.content), Some("invitation-session"))
     assertEquals(body.map(_.accessToken), Right("invitation-session"))

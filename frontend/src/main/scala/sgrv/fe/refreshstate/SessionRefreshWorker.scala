@@ -60,8 +60,7 @@ private[fe] final class SessionRefreshWorker(
     * lightweight read is what lets an otherwise idle role-picker learn promptly that another device logged out.
     */
   private def checkPresence(generation: Int): Unit =
-    if isCurrent(generation) then
-      http.get("/me").onComplete(_ => schedulePresenceCheck(generation))
+    if isCurrent(generation) then http.get("/me").onComplete(_ => schedulePresenceCheck(generation))
 
   private def schedulePresenceCheck(generation: Int): Unit =
     if isCurrent(generation) then

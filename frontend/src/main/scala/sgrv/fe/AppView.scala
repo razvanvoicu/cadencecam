@@ -151,6 +151,7 @@ private[fe] object AppView:
         div(
           cls := "login-choices",
           a(cls := "login-button", href := "/auth/login", "Sign in with Google"),
+          a(cls := "login-button apple-login", href := "/auth/apple/login", "Sign in with Apple"),
           button(
             cls := "login-button",
             typ := "button",

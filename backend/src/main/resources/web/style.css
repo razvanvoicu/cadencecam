@@ -67,6 +67,12 @@ button,
   -webkit-tap-highlight-color: transparent;
 }
 
+.apple-login {
+  color: white;
+  background: black;
+  border-color: black;
+}
+
 .home {
   text-align: center;
 }

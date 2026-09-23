@@ -1,16 +1,29 @@
 package sgrv.be.auth
 
 import java.net.URI
+import java.nio.charset.StandardCharsets.UTF_8
+import java.util.Base64
 import zio.{System, Task, ZIO, ZLayer}
 
 private[be] final case class OAuthConfig(clientId: String, clientSecret: String, publicBaseUrl: String):
   val callbackUri: String = s"$publicBaseUrl/auth/callback"
   val callbackIsSecure: Boolean = publicBaseUrl.startsWith("https://")
 private[be] final case class FirestoreConfig(projectId: String, databaseId: String)
+private[be] final case class AppleOAuthConfig(
+    teamId: String,
+    keyId: String,
+    privateKeyPem: String,
+    iosClientId: String,
+    serviceId: String,
+    publicBaseUrl: String
+):
+  val callbackUri: String = s"$publicBaseUrl/auth/apple/callback"
+
 private[be] final case class AppConfig(
     oauth: OAuthConfig,
     firestore: FirestoreConfig,
-    googleServices: Seq[String] = Seq.empty
+    googleServices: Seq[String] = Seq.empty,
+    appleOAuth: Option[AppleOAuthConfig] = None
 )
 
 private[be] object AppConfig:
@@ -33,15 +46,60 @@ private[be] object AppConfig:
       publicBaseUrl <- validatePublicBaseUrl(configuredBaseUrl)
       projectId <- required("GCP_PROJECT_ID")
       databaseId <- required("FIRESTORE_DATABASE_ID")
+      apple <- appleOAuth(environment, publicBaseUrl)
     yield AppConfig(
       OAuthConfig(clientId, clientSecret, publicBaseUrl),
       FirestoreConfig(projectId, databaseId),
-      googleServices(environment)
+      googleServices(environment),
+      apple
     )
 
   /** GOOGLE_SERVICES is optional: missing or empty requests no additional Google API entitlements during login. */
   private[auth] def googleServices(environment: Map[String, String]): Seq[String] =
     environment.getOrElse("GOOGLE_SERVICES", "").split(",").map(_.trim).filter(_.nonEmpty).toSeq
+
+  private val appleVariables = Seq(
+    "APPLE_TEAM_ID",
+    "APPLE_KEY_ID",
+    "APPLE_PRIVATE_KEY_BASE64",
+    "APPLE_IOS_CLIENT_ID",
+    "APPLE_SERVICE_ID"
+  )
+
+  private def appleOAuth(
+      environment: Map[String, String],
+      publicBaseUrl: String
+  ): Either[IllegalArgumentException, Option[AppleOAuthConfig]] =
+    val present =
+      appleVariables.flatMap(name => environment.get(name).map(_.trim).filter(_.nonEmpty).map(name -> _)).toMap
+    if present.isEmpty then Right(None)
+    else
+      val missing = appleVariables.filterNot(present.contains)
+      if missing.nonEmpty then
+        Left(
+          new IllegalArgumentException(s"Sign in with Apple is partially configured; missing ${missing.mkString(", ")}")
+        )
+      else
+        try
+          val privateKey = new String(Base64.getDecoder.decode(present("APPLE_PRIVATE_KEY_BASE64")), UTF_8).trim
+          if !privateKey.contains("BEGIN PRIVATE KEY") then
+            Left(new IllegalArgumentException("APPLE_PRIVATE_KEY_BASE64 does not contain a PEM PKCS#8 private key"))
+          else
+            Right(
+              Some(
+                AppleOAuthConfig(
+                  present("APPLE_TEAM_ID"),
+                  present("APPLE_KEY_ID"),
+                  privateKey,
+                  present("APPLE_IOS_CLIENT_ID"),
+                  present("APPLE_SERVICE_ID"),
+                  publicBaseUrl
+                )
+              )
+            )
+        catch
+          case _: IllegalArgumentException =>
+            Left(new IllegalArgumentException("APPLE_PRIVATE_KEY_BASE64 is not valid base64"))
 
   private val localHosts = Set("localhost", "127.0.0.1", "::1")
 

@@ -154,6 +154,7 @@ private[be] object SessionStore:
                     .getOrElse(IdentityProvider.Google)
                   val providerSubject = normalized(session.getString("providerSubject"))
                   val accountId = normalized(session.getString("accountId"))
+                  val providerClientId = normalized(session.getString("providerClientId"))
                   if storedKey.contains(key) then
                     for
                       address <- email
@@ -165,13 +166,14 @@ private[be] object SessionStore:
                       accessTokenForRevocation,
                       identityProvider,
                       providerSubject,
-                      accountId
+                      accountId,
+                      providerClientId
                     ) -> expiry
                   else None
 
     override def invalidateAll(accountId: String): Task[Unit] =
       normalized(accountId) match
-        case None          => ZIO.fail(new IllegalArgumentException("The account email is empty"))
+        case None           => ZIO.fail(new IllegalArgumentException("The account email is empty"))
         case Some(identity) =>
           // The email query retains compatibility with sessions created before accountId was stored. New sessions are
           // found by accountId even when Apple supplies a private relay address or an invitation has no email at all.
@@ -206,7 +208,8 @@ private[be] object SessionStore:
     val revocation =
       user.refreshToken.map(token => "refreshToken" -> token) ++
         user.accessTokenForRevocation.map(token => "accessTokenForRevocation" -> token) ++
-        user.providerSubject.map(subject => "providerSubject" -> subject)
+        user.providerSubject.map(subject => "providerSubject" -> subject) ++
+        user.providerClientId.map(clientId => "providerClientId" -> clientId)
     session ++ revocation
 
   private def normalized(value: String): Option[String] =

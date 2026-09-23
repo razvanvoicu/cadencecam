@@ -14,7 +14,8 @@ private[fe] object Menu:
 
   private[fe] final case class Anchor(topPx: Double, rightPx: Double)
 
-  /** Fixed-position coordinates that put the sheet directly below, and right-aligned with, the button that opened it. */
+  /** Fixed-position coordinates that put the sheet directly below, and right-aligned with, the button that opened it.
+    */
   private[fe] def anchor(buttonRightPx: Double, buttonBottomPx: Double, viewportWidthPx: Double): Anchor =
     Anchor(math.max(0.0, buttonBottomPx), math.max(0.0, viewportWidthPx - buttonRightPx))
 

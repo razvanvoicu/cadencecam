@@ -13,6 +13,11 @@ val supportedAppConfigKeys = Set(
   "OAUTH_CONFIG_PATH",
   "ADMIN_PASSWORD_PATH",
   "ACCOUNT_KEY_PATH",
+  "APPLE_TEAM_ID",
+  "APPLE_KEY_ID",
+  "APPLE_PRIVATE_KEY_PATH",
+  "APPLE_IOS_CLIENT_ID",
+  "APPLE_SERVICE_ID",
   "LOCAL_BASE_URL",
   "ARTIFACT_BASE_URL",
   "PUBLIC_BASE_URL",
@@ -91,6 +96,9 @@ lazy val localAdminPasswordFile = taskKey[Option[File]](
 )
 lazy val localAccountKeyFile = taskKey[Option[File]](
   "Resolve the optional ACCOUNT_KEY_PATH from the shared application configuration"
+)
+lazy val localApplePrivateKeyFile = taskKey[Option[File]](
+  "Resolve the optional APPLE_PRIVATE_KEY_PATH from the shared application configuration"
 )
 lazy val optionalDebugPluginJar = taskKey[Option[File]](
   "Build the Debug plugin JAR when ADMIN_PASSWORD_PATH is configured"
@@ -348,6 +356,7 @@ lazy val backend = (project in file("backend"))
       zioLogging,
       firestore,
       googleApiClient,
+      nimbusJoseJwt,
       gson,
       munit % Test
     ),
@@ -362,6 +371,7 @@ lazy val backend = (project in file("backend"))
     localOAuthConfigFile := appBuildConfig.value.requiredPath("OAUTH_CONFIG_PATH"),
     localAdminPasswordFile := appBuildConfig.value.optionalPath("ADMIN_PASSWORD_PATH"),
     localAccountKeyFile := appBuildConfig.value.optionalPath("ACCOUNT_KEY_PATH"),
+    localApplePrivateKeyFile := appBuildConfig.value.optionalPath("APPLE_PRIVATE_KEY_PATH"),
     run / envVars ++= {
       val config = appBuildConfig.value
       parseEnvFile((Compile / resourceDirectory).value / "test.env") ++
@@ -369,7 +379,8 @@ lazy val backend = (project in file("backend"))
         OAuthBuild.configEnv(localOAuthConfigFile.value) ++
         PublicBaseUrlBuild.localConfigEnv("LOCAL_BASE_URL", config.required("LOCAL_BASE_URL")) ++
         localAdminPasswordFile.value.fold(Map.empty[String, String])(AdminBuild.configEnv) ++
-        localAccountKeyFile.value.fold(Map.empty[String, String])(AccountKeyBuild.configEnv)
+        localAccountKeyFile.value.fold(Map.empty[String, String])(AccountKeyBuild.configEnv) ++
+        AppleBuild.configEnv(config, localApplePrivateKeyFile.value)
     },
     optionalDebugPluginJar := Def.taskDyn {
       if (localAdminPasswordFile.value.nonEmpty)
@@ -693,6 +704,7 @@ lazy val root = {
           val generatedEnv = OAuthBuild.configEnv(oauthConfig) ++
             (backend / localAdminPasswordFile).value.fold(Map.empty[String, String])(AdminBuild.configEnv) ++
             (backend / localAccountKeyFile).value.fold(Map.empty[String, String])(AccountKeyBuild.configEnv) ++
+            AppleBuild.configEnv(config, (backend / localApplePrivateKeyFile).value) ++
             deploymentEnv
 
           // Stage the Docker build context: app.jar, lib/*.jar, a secret-bearing prod.env, runApp (the image's
@@ -760,6 +772,7 @@ lazy val root = {
           val runtimeEnv = OAuthBuild.configEnv(oauthConfig) ++
             (backend / localAdminPasswordFile).value.fold(Map.empty[String, String])(AdminBuild.configEnv) ++
             (backend / localAccountKeyFile).value.fold(Map.empty[String, String])(AccountKeyBuild.configEnv) ++
+            AppleBuild.configEnv(config, (backend / localApplePrivateKeyFile).value) ++
             deploymentEnv
 
           val dockerDir = outputDir / "docker-gcloud"

@@ -1,6 +1,8 @@
 package sgrv.be.auth
 
 import java.time.Instant
+import java.nio.charset.StandardCharsets.UTF_8
+import java.util.Base64
 import zio.*
 import zio.json.ast.Json
 import zio.http.{Header, Path, Request, URL, Method as ZioMethod}
@@ -103,6 +105,32 @@ class AuthSuite extends munit.FunSuite:
       .get
 
     assertEquals(error.getMessage, "Environment variable PUBLIC_BASE_URL is not set or is empty; see prod.env")
+
+  test("loads Apple credentials only when the complete optional configuration is present"):
+    val base = Map(
+      "GOOGLE_OAUTH_CLIENT_ID" -> "client-id",
+      "GOOGLE_OAUTH_CLIENT_SECRET" -> "client-secret",
+      "PUBLIC_BASE_URL" -> "https://app.example.com",
+      "GCP_PROJECT_ID" -> "project-id",
+      "FIRESTORE_DATABASE_ID" -> "database-id"
+    )
+    val partial = AppConfig.fromEnvironment(base + ("APPLE_TEAM_ID" -> "team-id")).left.toOption.get
+    assert(partial.getMessage.contains("Sign in with Apple is partially configured"))
+
+    val pem = "-----BEGIN PRIVATE KEY-----\nplaceholder\n-----END PRIVATE KEY-----"
+    val configured = AppConfig.fromEnvironment(
+      base ++ Map(
+        "APPLE_TEAM_ID" -> "team-id",
+        "APPLE_KEY_ID" -> "key-id",
+        "APPLE_PRIVATE_KEY_BASE64" -> Base64.getEncoder.encodeToString(pem.getBytes(UTF_8)),
+        "APPLE_IOS_CLIENT_ID" -> "sg.raz.cadencecam",
+        "APPLE_SERVICE_ID" -> "sg.raz.cadencecam.web"
+      )
+    )
+    assertEquals(
+      configured.toOption.flatMap(_.appleOAuth).map(_.callbackUri),
+      Some("https://app.example.com/auth/apple/callback")
+    )
 
   test("parses GOOGLE_SERVICES as a trimmed, comma-separated scope list"):
     assertEquals(AppConfig.googleServices(Map.empty), Seq.empty)

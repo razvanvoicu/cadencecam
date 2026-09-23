@@ -46,8 +46,12 @@ class MobileLoginSuite extends munit.FunSuite:
       Body.fromString("""{"idToken":"wrong"}""")
     )
 
-    val response = run(ZIO.scoped(routes(SessionUser("jane@example.com", "Jane"), created, loggedIn, reject = true)
-      .runZIO(request)))
+    val response = run(
+      ZIO.scoped(
+        routes(SessionUser("jane@example.com", "Jane"), created, loggedIn, reject = true)
+          .runZIO(request)
+      )
+    )
 
     assertEquals(response.status, Status.Unauthorized)
     assertEquals(created.get(), None)
