@@ -73,10 +73,12 @@ private[fe] final class SettingsPanel(api: ApiClient):
             case Left(error) =>
               failed.set(Some(error.message))
 
-    /** A number the user types, taken only when it parses and is above zero.
+    /** A number the user types, committed only after leaving the field and only when it parses above zero.
       *
-      * Rejecting rather than clamping: a half-typed "0.", or a field someone has just emptied to retype, is not a
-      * statement that their weight is nothing, and writing one into the draft would make the field fight the typing.
+      * In particular, the reactive factor field redraws a committed value in its standard form. Doing that on each
+      * input event turns the first digit of "1.25" straight back into "1.00", moves the caret, and makes the rest
+      * practically impossible to type. Blur is the boundary between unfinished text and a value the settings may
+      * normalize and redraw.
       */
     def numberField(shown: String, onValue: Double => Unit, extra: Modifier[HtmlElement]*): Element =
       input(
@@ -85,9 +87,7 @@ private[fe] final class SettingsPanel(api: ApiClient):
         stepAttr := "any",
         minAttr := "0",
         defaultValue := shown,
-        onInput.mapToValue --> { entered =>
-          entered.trim.toDoubleOption.filter(parsed => parsed > 0 && parsed.isFinite).foreach(onValue)
-        },
+        onBlur.mapToValue --> (entered => SettingsPanel.completedNumber(entered).foreach(onValue)),
         extra
       )
 
@@ -305,3 +305,10 @@ private[fe] final class SettingsPanel(api: ApiClient):
         )
       )
     )
+
+private[fe] object SettingsPanel:
+  /** Parses text only at the commit boundary chosen by the field above, preserving an explicitly typed value rather
+    * than snapping it to the increment used by the +/- controls.
+    */
+  def completedNumber(entered: String): Option[Double] =
+    entered.trim.toDoubleOption.filter(parsed => parsed > 0 && parsed.isFinite)
