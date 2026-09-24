@@ -733,6 +733,28 @@ App Engine to find out the size of the virtual machine it would run on, and how
 nginx is configured as a reverse proxy. However, as you deploy your real production
 app, make sure to configure the build to not include ``Debug``.
 
+Creating invitations directly in Firestore
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The local operator utility creates the same invitation documents without depending on a deployed CadenceCam
+revision or its admin HTTP route. It reads ``GCP_PROJECT_ID`` and ``FIRESTORE_DATABASE_ID`` from the shared
+``config.env`` and authenticates through Google Application Default Credentials. Create ADC first if this laptop
+does not already have it (see `Authentication`_), then run:
+
+.. code-block:: console
+
+   sbt 'createInvitations --prefix review --count 10 --output /absolute/private/path/review-invitations.json'
+
+The command validates everything before connecting, creates the entire Firestore batch atomically with create-only
+writes, and never replaces an old invitation or tombstone. It also refuses to replace an existing output file. The
+JSON output is created with owner-only permissions and is the only retained copy of the plaintext access codes;
+Firestore receives only their SHA-256 digests. Keep that file outside the repository and send individual credentials
+through an appropriate private channel.
+
+The utility deliberately does not inherit the backend's ``test.env``, because that file points ordinary local runs
+at the Firestore emulator. If ``FIRESTORE_EMULATOR_HOST`` is present in the launching shell anyway, the command
+refuses to proceed. For an intentional local integration test, add ``--allow-emulator``.
+
 Adding a backend plugin
 -----------------------
 
@@ -1194,6 +1216,7 @@ Repository layout
      web/                                        index.html, style.css, manifest, icons, privacy.html, tos.html
    backend/src/test/scala/                     backend tests
    frontend/src/test/scala/                    frontend tests
+   invitation-cli/                             direct-Firestore invitation creation utility and its tests
    debug-plugin/                               the optional, separately packaged Debug plugin
    e2etest/src/test/scala/                     Selenium suites
    scripts/icon/                               the icon's SVG sources and how the PNGs are made from them

@@ -105,6 +105,7 @@ lazy val optionalDebugPluginJar = taskKey[Option[File]](
 )
 
 addCommandAlias("artifact", "deploymentArtifact")
+addCommandAlias("createInvitations", "invitationCli/run")
 addCommandAlias("fmt", ";scalafixAll;debugPlugin/scalafixAll;e2etest/scalafixAll;scalafmtRepo")
 addCommandAlias(
   "fmtCheck",
@@ -401,6 +402,24 @@ lazy val debugPlugin = (project in file("debug-plugin"))
     libraryDependencies += munit % Test
   )
 
+/** Local operator utility for creating invitation identities directly in Firestore. It is deliberately separate from
+  * the backend project: unlike `sbt run`, its process must not inherit test.env's FIRESTORE_EMULATOR_HOST by default.
+  * Only the selected production project and database names enter its environment; Google authentication comes from the
+  * developer's Application Default Credentials.
+  */
+lazy val invitationCli = (project in file("invitation-cli"))
+  .dependsOn(backend)
+  .settings(
+    name := "cadencecam-invitation-cli",
+    publish / skip := true,
+    Compile / run / mainClass := Some("sgrv.be.auth.InvitationCli"),
+    run / fork := true,
+    run / connectInput := true,
+    run / envVars ++= AppConfigBuild.gcpRuntimeEnv((backend / appBuildConfig).value),
+    Test / fork := true,
+    libraryDependencies += munit % Test
+  )
+
 // End-to-end Selenium suite. Its `test` task doesn't just run tests: it first checks Chrome/Selenium are
 // actually launchable, then starts the real backend as a background process compiled with scoverage
 // instrumentation (via a nested `sbt ... coverage run`, mirroring the coverage workflow already documented
@@ -631,7 +650,7 @@ lazy val e2etest = (project in file("e2etest"))
 
 lazy val root = {
   Project(id = "root", base = file("."))
-    .aggregate(sharedJS, sharedJVM, frontend, backend)
+    .aggregate(sharedJS, sharedJVM, frontend, backend, invitationCli)
     .settings(
       name := "cadencecam",
       coverageEnabled := false,
@@ -645,11 +664,13 @@ lazy val root = {
             (frontend / Test / test).value
             (backend / Test / test).value
             (debugPlugin / Test / test).value
+            (invitationCli / Test / test).value
           }
         else
           Def.task {
             (frontend / Test / test).value
             (backend / Test / test).value
+            (invitationCli / Test / test).value
           }
       }.value,
       clean / aggregate := false,
@@ -659,6 +680,7 @@ lazy val root = {
         (frontend / clean).value
         (backend / clean).value
         (debugPlugin / clean).value
+        (invitationCli / clean).value
         IO.delete((Compile / target).value)
       },
       firestoreEmulator := {

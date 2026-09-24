@@ -32,21 +32,7 @@ object InvitationAdmin extends BackendPlugin:
     val created = for
       body <- request.body.asString
       requested <- ZIO.fromEither(body.fromJson[InvitationBatch]).mapError(new IllegalArgumentException(_))
-      prefix <- ZIO.attempt(InvitationAccounts.validateUsername(requested.prefix))
-      _ <- ZIO.unless(requested.count >= 1 && requested.count <= 20)(
-        ZIO.fail(new IllegalArgumentException("Invitation count must be from 1 to 20"))
-      )
-      seeds <- ZIO.foreach(1 to requested.count): _ =>
-        for
-          suffix <- TokenGenerator.generate(5)
-          code <- TokenGenerator.generate(24)
-          account <- TokenGenerator.generate(18)
-        yield NewInvitation(
-          username = s"$prefix-${suffix.toLowerCase}",
-          accessCode = code,
-          accountId = s"invitation:$account",
-          displayName = prefix
-        )
+      seeds <- InvitationProvisioning.generate(requested.prefix, requested.count)
       now <- Clock.instant
       credentials <- InvitationAccounts.create(seeds, now)
     yield noStore(Response.json(InvitationCredentials(credentials).toJson))
