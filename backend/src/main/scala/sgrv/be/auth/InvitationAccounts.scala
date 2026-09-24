@@ -28,7 +28,9 @@ trait InvitationAccounts:
   def create(invitations: Seq[NewInvitation], at: Instant): Task[Seq[InvitationCredential]]
   def authenticate(username: String, accessCode: String, at: Instant): Task[SessionUser]
   def isActive(subject: String): Task[Boolean]
-  def revoke(username: String, at: Instant): Task[Unit]
+
+  /** Revokes the invitation and returns its account id when the record existed, so its live sessions can be evicted. */
+  def revoke(username: String, at: Instant): Task[Option[String]]
   def delete(subject: String, at: Instant): Task[Unit]
 
 private[be] object InvitationAccounts:
@@ -54,7 +56,7 @@ private[be] object InvitationAccounts:
   def isActive(subject: String): ZIO[InvitationAccounts, Throwable, Boolean] =
     ZIO.serviceWithZIO[InvitationAccounts](_.isActive(subject))
 
-  def revoke(username: String, at: Instant): ZIO[InvitationAccounts, Throwable, Unit] =
+  def revoke(username: String, at: Instant): ZIO[InvitationAccounts, Throwable, Option[String]] =
     ZIO.serviceWithZIO[InvitationAccounts](_.revoke(username, at))
 
   def delete(subject: String, at: Instant): ZIO[InvitationAccounts, Throwable, Unit] =
@@ -128,16 +130,22 @@ private[be] object InvitationAccounts:
             .fromApiFuture(firestore.collection(Collection).document(name).get())
             .map(snapshot => snapshot.exists && Option(snapshot.getString("status")).contains(Active))
 
-    override def revoke(username: String, at: Instant): Task[Unit] =
+    override def revoke(username: String, at: Instant): Task[Option[String]] =
       for
         normalized <- ZIO.attempt(validateUsername(username))
-        _ <- GoogleFuture.fromApiFuture(
-          firestore
-            .collection(Collection)
-            .document(subject(normalized))
-            .update(Map[String, AnyRef]("status" -> Revoked, "revokedAt" -> timestamp(at)).asJava)
+        reference = firestore.collection(Collection).document(subject(normalized))
+        snapshot <- GoogleFuture.fromApiFuture(reference.get())
+        accountId = Option
+          .when(snapshot.exists)(snapshot.getString("accountId"))
+          .flatMap(Option(_))
+          .map(_.trim)
+          .filter(_.nonEmpty)
+        _ <- ZIO.when(snapshot.exists)(
+          GoogleFuture.fromApiFuture(
+            reference.update(Map[String, AnyRef]("status" -> Revoked, "revokedAt" -> timestamp(at)).asJava)
+          )
         )
-      yield ()
+      yield accountId
 
     override def delete(subject: String, at: Instant): Task[Unit] =
       normalizedSubject(subject) match
@@ -152,7 +160,10 @@ private[be] object InvitationAccounts:
                   Map[String, AnyRef](
                     "status" -> Deleted,
                     "deletedAt" -> timestamp(at),
-                    "codeDigest" -> FieldValue.delete()
+                    "codeDigest" -> FieldValue.delete(),
+                    "username" -> FieldValue.delete(),
+                    "displayName" -> FieldValue.delete(),
+                    "accountId" -> FieldValue.delete()
                   ).asJava
                 )
             )

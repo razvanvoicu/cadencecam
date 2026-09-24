@@ -95,7 +95,7 @@ object Callback extends BackendPlugin:
     * @return
     *   An HTTP cookie
     */
-  private[auth] def clearedStateCookie(secure: Boolean): Cookie.Response =
+  private[be] def clearedStateCookie(secure: Boolean): Cookie.Response =
     Cookie.Response(
       name = Login.stateCookieName,
       content = "",
@@ -105,7 +105,7 @@ object Callback extends BackendPlugin:
       maxAge = Option(Duration.Zero)
     )
 
-  private[auth] def clearedSessionCookie(secure: Boolean): Cookie.Response =
+  private[be] def clearedSessionCookie(secure: Boolean): Cookie.Response =
     Cookie.Response(
       name = sessionCookieName,
       content = "",

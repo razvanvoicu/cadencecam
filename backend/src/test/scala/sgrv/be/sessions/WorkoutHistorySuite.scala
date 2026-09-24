@@ -107,4 +107,7 @@ class WorkoutHistorySuite extends munit.FunSuite:
     val skipped = statuses.collectFirst:
       case PluginStatus.Skipped(AccountDataRoute.id, _, missing) => missing.map(_.id).toSet
 
-    assertEquals(skipped, Some(Set("firestore", "session-store")))
+    assertEquals(
+      skipped,
+      Some(Set("apple-oauth", "firestore", "google-oauth", "invitation-accounts", "session-store"))
+    )

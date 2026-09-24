@@ -3,6 +3,7 @@ package sgrv.be.auth
 import sgrv.api.{InvitationBatch, InvitationCredentials, InvitationRevocation}
 import sgrv.be.BackendCapabilities
 import sgrv.be.core.{AccessPolicy, BackendPlugin, CapabilitySet, RequestContext}
+import sgrv.be.sessions.WorkoutSessions
 import zio.{Cause, Clock, ZIO}
 import zio.http.{Header, Method, Request, Response, Routes, Status, handler}
 import zio.json.*
@@ -13,12 +14,14 @@ import zio.json.*
   * with the same human prefix cannot overwrite each other; the returned usernames are what belong in review notes.
   */
 object InvitationAdmin extends BackendPlugin:
-  type Requires = InvitationAccounts & TokenGenerator
+  type Requires = InvitationAccounts & SessionStore & TokenGenerator & WorkoutSessions
 
   override val id = "invitation-admin"
   override val requirements: CapabilitySet[Requires] =
     CapabilitySet.one(BackendCapabilities.invitationAccounts) ++
+      CapabilitySet.one(BackendCapabilities.sessionStore) ++
       CapabilitySet.one(BackendCapabilities.tokenGenerator)
+      ++ CapabilitySet.one(BackendCapabilities.workoutSessions)
   override val accessPolicy: AccessPolicy[Requires] = AccessPolicy.AdminPassword
   override val routes: Routes[Requires & RequestContext, Nothing] = Routes(
     Method.POST / "admin" / "invitations" -> handler((request: Request) => create(request)),
@@ -57,7 +60,9 @@ object InvitationAdmin extends BackendPlugin:
       body <- request.body.asString
       requested <- ZIO.fromEither(body.fromJson[InvitationRevocation]).mapError(new IllegalArgumentException(_))
       now <- Clock.instant
-      _ <- InvitationAccounts.revoke(requested.username, now)
+      accountId <- InvitationAccounts.revoke(requested.username, now)
+      _ <- ZIO.foreachDiscard(accountId): account =>
+        WorkoutSessions.closeOnLogout(account, now) *> SessionStore.invalidateAll(account)
     yield noStore(Response.status(Status.NoContent))
 
     revoked.catchAll: error =>

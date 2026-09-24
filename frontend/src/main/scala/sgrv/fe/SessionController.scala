@@ -130,7 +130,10 @@ private[fe] final class SessionController(
     api
       .deleteAccountData()
       .foreach:
-        case Right(_)               => logoutAllDevices()
+        case Right(_) =>
+          worker.disable()
+          refreshStateStore.update(_.copy(expired = false))
+          stateStore.update(SessionController.signedOut(Unauthenticated))
         case Left(_: ApiError.Http) =>
           stateStore.update(_.copy(logoutState = LogoutState.Failed("Your data could not be deleted.")))
         case Left(error) =>

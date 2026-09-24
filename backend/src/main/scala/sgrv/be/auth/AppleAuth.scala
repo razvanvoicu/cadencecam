@@ -28,7 +28,11 @@ final case class AppleAuthentication(user: SessionUser)
 trait AppleOAuth:
   def configured: UIO[Boolean]
   def authorizationUrl(state: String): Task[String]
-  def authenticateBrowser(code: String, givenName: Option[String], familyName: Option[String]): Task[AppleAuthentication]
+  def authenticateBrowser(
+      code: String,
+      givenName: Option[String],
+      familyName: Option[String]
+  ): Task[AppleAuthentication]
   def authenticateNative(code: String, givenName: Option[String], familyName: Option[String]): Task[AppleAuthentication]
   def validate(refreshToken: String, clientId: String): Task[Unit]
   def revoke(token: String, clientId: String): Task[Unit]
@@ -92,7 +96,9 @@ private[be] object AppleOAuth:
         givenName: Option[String],
         familyName: Option[String]
     ): Task[AppleAuthentication] =
-      requireConfig.flatMap(apple => authenticate(code, apple.serviceId, Some(apple.callbackUri), givenName, familyName))
+      requireConfig.flatMap(apple =>
+        authenticate(code, apple.serviceId, Some(apple.callbackUri), givenName, familyName)
+      )
 
     override def authenticateNative(
         code: String,
@@ -201,7 +207,8 @@ private[be] object AppleOAuth:
       val jwt = SignedJWT.parse(encoded)
       if jwt.getHeader.getAlgorithm != JWSAlgorithm.RS256 then
         throw new IllegalArgumentException("Apple identity token uses an unexpected signature algorithm")
-      val keyId = Option(jwt.getHeader.getKeyID).getOrElse(throw new IllegalArgumentException("Apple identity token has no key id"))
+      val keyId = Option(jwt.getHeader.getKeyID)
+        .getOrElse(throw new IllegalArgumentException("Apple identity token has no key id"))
       val verified = verify(jwt, keyId, appleKeys(force = false)) || verify(jwt, keyId, appleKeys(force = true))
       if !verified then throw new IllegalArgumentException("Apple identity token signature is invalid")
       val claims = jwt.getJWTClaimsSet
@@ -216,14 +223,16 @@ private[be] object AppleOAuth:
       claims
 
     private def verify(jwt: SignedJWT, keyId: String, keys: JWKSet): Boolean =
-      Option(keys.getKeyByKeyId(keyId)).collect { case key: RSAKey => key }.exists: key =>
-        jwt.verify(RSASSAVerifier(key.toRSAPublicKey))
+      Option(keys.getKeyByKeyId(keyId))
+        .collect { case key: RSAKey => key }
+        .exists: key =>
+          jwt.verify(RSASSAVerifier(key.toRSAPublicKey))
 
     private def appleKeys(force: Boolean): JWKSet =
       val now = Instant.now()
       cachedKeys.get() match
         case Some((loadedAt, keys)) if !force && loadedAt.plus(Duration.ofHours(1)).isAfter(now) => keys
-        case _                                                                                  =>
+        case _                                                                                   =>
           val request = HttpRequest.newBuilder(keysEndpoint).timeout(Duration.ofSeconds(20)).GET().build()
           val response = http.send(request, HttpResponse.BodyHandlers.ofString())
           if response.statusCode() / 100 != 2 then
@@ -251,13 +260,17 @@ private[be] object AppleOAuth:
   private def encode(value: String): String = URLEncoder.encode(value, UTF_8)
 
   private def bounded(value: String, message: String): Task[String] =
-    ZIO.fromOption(normalized(Option(value)).filter(_.length <= 16384)).orElseFail(new IllegalArgumentException(message))
+    ZIO
+      .fromOption(normalized(Option(value)).filter(_.length <= 16384))
+      .orElseFail(new IllegalArgumentException(message))
 
   private def required(value: Option[String], message: String): Task[String] =
     ZIO.fromOption(value.flatMap(item => normalized(Option(item)))).orElseFail(new IllegalStateException(message))
 
   private def requiredJson(json: com.google.gson.JsonObject, name: String): String =
-    Option(json.get(name)).map(_.getAsString).flatMap(value => normalized(Option(value)))
+    Option(json.get(name))
+      .map(_.getAsString)
+      .flatMap(value => normalized(Option(value)))
       .getOrElse(throw new IllegalStateException(s"Apple returned no $name"))
 
   private def normalized(value: Option[String]): Option[String] = value.map(_.trim).filter(_.nonEmpty)

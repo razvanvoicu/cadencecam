@@ -48,7 +48,7 @@ object AppleLogin extends BackendPlugin:
     sameSite = Some(Cookie.SameSite.None)
   )
 
-  private[auth] def clearedStateCookie: Cookie.Response = Cookie.Response(
+  private[be] def clearedStateCookie: Cookie.Response = Cookie.Response(
     name = stateCookieName,
     content = "",
     path = Some(cookiePath),
@@ -77,9 +77,13 @@ object AppleCallback extends BackendPlugin:
       body <- request.body.asString
       form <- ZIO.attempt(parseForm(body))
       _ <- checkState(request, form.getOrElse("state", ""))
-      code <- ZIO.fromOption(form.get("code").filter(_.nonEmpty)).orElseFail(
-        new IllegalArgumentException(form.get("error").fold("Apple returned no authorization code")(e => s"Apple reported: $e"))
-      )
+      code <- ZIO
+        .fromOption(form.get("code").filter(_.nonEmpty))
+        .orElseFail(
+          new IllegalArgumentException(
+            form.get("error").fold("Apple returned no authorization code")(e => s"Apple reported: $e")
+          )
+        )
       (givenName, familyName) = names(form.get("user"))
       authentication <- AppleOAuth.authenticateBrowser(code, givenName, familyName)
       now <- Clock.instant
@@ -110,10 +114,15 @@ object AppleCallback extends BackendPlugin:
     else ZIO.fail(new IllegalArgumentException("The Apple state parameter does not match the login cookie"))
 
   private[auth] def parseForm(body: String): Map[String, String] =
-    Option(body).getOrElse("").split("&").iterator.filter(_.nonEmpty).map: pair =>
-      val parts = pair.split("=", 2)
-      decode(parts(0)) -> decode(if parts.length == 2 then parts(1) else "")
-    .toMap
+    Option(body)
+      .getOrElse("")
+      .split("&")
+      .iterator
+      .filter(_.nonEmpty)
+      .map: pair =>
+        val parts = pair.split("=", 2)
+        decode(parts(0)) -> decode(if parts.length == 2 then parts(1) else "")
+      .toMap
 
   private def decode(value: String): String = URLDecoder.decode(value, UTF_8)
 

@@ -65,7 +65,7 @@ class InvitationLoginSuite extends munit.FunSuite:
             )
           )
       override def isActive(subject: String): Task[Boolean] = ZIO.succeed(true)
-      override def revoke(username: String, at: Instant): Task[Unit] = ZIO.unit
+      override def revoke(username: String, at: Instant): Task[Option[String]] = ZIO.none
       override def delete(subject: String, at: Instant): Task[Unit] = ZIO.unit
 
     val sessions = new SessionStore:

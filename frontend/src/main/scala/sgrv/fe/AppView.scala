@@ -235,10 +235,13 @@ private[fe] object AppView:
           role := "alertdialog",
           div(cls := "about-header", h2("Delete all your data?")),
           p(
-            "This removes every workout you have counted, the recordings they produced, and your settings. " +
-              "It cannot be undone, and there is nothing left afterwards to recover it from."
+            "This removes every workout you have counted, the recordings they produced, your settings, and every " +
+              "signed-in session. It cannot be undone, and there is nothing left afterwards to recover it from."
           ),
-          p(cls := "field-hint", "You will be signed out. You can sign in again and start over."),
+          p(
+            cls := "field-hint",
+            "Your provider authorization will be removed; an invitation used for this account will be permanently retired."
+          ),
           div(
             cls := "takeover-actions",
             button(
