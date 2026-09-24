@@ -208,9 +208,9 @@ Static files are wired directly in ``Main``, and reserved against conflicting ro
      - The application icon, for browser tabs and home screens
    * - ``/icon-maskable-192.png``, ``/icon-maskable-512.png``
      - The same icon inside the safe zone Android's launcher masks cut to
-   * - ``/privacy.html``, ``/tos.html``, ``/delete-account.html``
-     - The privacy policy, terms, and public account-deletion instructions: self-contained pages that need neither the
-       application nor a session
+   * - ``/privacy.html``, ``/tos.html``, ``/delete-account.html``, ``/support.html``
+     - The privacy policy, terms, public account-deletion instructions, and support page: self-contained pages that need
+       neither the application nor a session
 
 Every other route comes from a discovered plugin and answers with ``Cache-Control: no-store``, except the two OAuth
 redirects.

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CadenceCam Support</title>
+    <link rel="icon" href="/favicon.ico" sizes="256x256" />
+    <!-- Self-contained so support remains reachable when the application itself cannot load. -->
+    <style>
+      :root {
+        color-scheme: light dark;
+        --fg: #1c1d21;
+        --muted: #5b5f6a;
+        --bg: #fbfbfc;
+        --rule: #e2e3e8;
+        --accent: #1f7a45;
+        --note-bg: #eef7f1;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #e6e7ea;
+          --muted: #a2a5ae;
+          --bg: #111315;
+          --rule: #2a2d33;
+          --accent: #35c46a;
+          --note-bg: #16221b;
+        }
+      }
+      body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+      main { max-width: 44rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+      h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 0.25rem; }
+      h2 { font-size: 1.2rem; margin: 2.5rem 0 0.5rem; padding-top: 1rem; border-top: 1px solid var(--rule); }
+      p, li { margin: 0.5rem 0; }
+      ul { padding-left: 1.25rem; }
+      a { color: var(--accent); }
+      .meta { color: var(--muted); margin: 0 0 1.5rem; }
+      .summary { background: var(--note-bg); border-radius: 10px; padding: 0.75rem 1.25rem; }
+      footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.9rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>CadenceCam Support</h1>
+      <p class="meta">Help with the CadenceCam web, iOS and Android apps</p>
+
+      <div class="summary">
+        <p>For support, email <a href="mailto:raz@raz.sg?subject=CadenceCam%20support">raz@raz.sg</a>. Include the device,
+          operating-system version and what you were trying to do, but never send a password or invitation access code.</p>
+      </div>
+
+      <h2>Camera and counting</h2>
+      <ul>
+        <li>Allow camera access when CadenceCam asks for it.</li>
+        <li>Prop the phone securely where the moving part of the exercise crosses a substantial part of the picture.</li>
+        <li>Use even lighting and avoid a bright window behind the movement.</li>
+        <li>If the count is unstable, try another camera angle or use Camera controls to hold exposure and focus.</li>
+      </ul>
+
+      <h2>Counter and dashboard</h2>
+      <p>Only one device can be the Counter for an account. A second device can display the Dashboard when both devices can
+        reach each other on the same local network. Taking over the Counter signs the displaced Counter out of that role.</p>
+
+      <h2>Login and account</h2>
+      <p>The menu can log out only the current device, log out all devices, or permanently delete the account and its data.
+        See the <a href="/delete-account.html">account-deletion instructions</a> if you cannot use the in-app control.</p>
+
+      <footer>
+        <p><a href="/privacy.html">Privacy Policy</a> · <a href="/tos.html">Terms of Service</a> ·
+          <a href="mailto:raz@raz.sg">Contact support</a></p>
+      </footer>
+    </main>
+  </body>
+</html>

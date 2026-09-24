@@ -91,6 +91,7 @@ object Main extends ZIOAppDefault:
     Method.GET / Documents.Terms -> handler(asset(Documents.Terms, text.html, staticCacheCtrl)),
     Method.GET / Documents.AccountDeletion ->
       handler(asset(Documents.AccountDeletion, text.html, staticCacheCtrl)),
+    Method.GET / Documents.Support -> handler(asset(Documents.Support, text.html, staticCacheCtrl)),
     Method.GET / "main.js" -> handler(asset("main.js", text.javascript, staticCacheCtrl)),
     Method.GET / "main.js.map" -> handler(asset("main.js.map", application.json, staticCacheCtrl))
   )

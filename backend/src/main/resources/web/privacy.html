@@ -92,17 +92,21 @@
         <li>Your counting sessions: when each started and ended, and how it ended.</li>
         <li>The number of repetitions counted, and the timing of those repetitions, which the app uses to show your pace and
           estimate calories.</li>
-        <li>Which of your devices is counting, so that only one does at a time.</li>
+        <li>Which of your devices is counting, so that only one does at a time. Each installation creates a random identifier
+          for this purpose. It is not a hardware or advertising identifier and contains no account information.</li>
       </ul>
 
       <h3>Your camera</h3>
       <p><strong>The camera image is processed on your device and is never uploaded or stored by us.</strong> The app reduces
         each frame to four brightness values — one for each quarter of the picture — and counts repetitions from how those
         values change. No photo or video is recorded.</p>
-      <p>Those brightness values stay on your device unless a <em>signal trace</em> is captured, a diagnostic feature used to
-        check and improve counting accuracy. A trace contains the brightness values for the recent past, the number of
-        repetitions counted, the model of your device as reported by your browser, and the capabilities and settings your
-        camera reports. It never contains an image.</p>
+      <p>In the native iOS and Android apps, those brightness values stay on the device and are neither uploaded nor stored.
+        The native apps have no signal-trace submission feature.</p>
+      <p>The browser Counter has an optional <em>signal trace</em> diagnostic used to check and improve counting accuracy. It
+        uploads a trace when you choose <em>Capture signal trace</em>; the browser’s Test mode also captures one after each
+        requested test. A trace contains brightness values for the recent past, the number of repetitions counted, the
+        model of your device as reported by the browser, and the capabilities and settings your camera reports. It never
+        contains an image or video.</p>
 
       <h3>Technical information</h3>
       <ul>
@@ -118,7 +122,10 @@
       <h3>On your device</h3>
       <p>The website uses one essential sign-in cookie. The native app keeps its CadenceCam session token in the device’s
         secure storage. The app also keeps your displayed identity, current rep count, settings and current screen locally
-        so it can restore its state. We use no analytics, advertising or third-party tracking of any kind.</p>
+        so it can restore its state. Its random installation identifier remains after logout so that the same installation
+        can reclaim its Counter role after signing in again; uninstalling the app removes it.</p>
+      <p>We use no advertising, third-party analytics or tracking. We review the browser-only signal traces and Test-mode
+        results described above solely to diagnose counting problems and improve the counting feature.</p>
 
       <h2>3. How we use it</h2>
       <p>We use your data only to:</p>
@@ -150,6 +157,8 @@
         <li><strong>When the law requires it</strong>, or where it is necessary to protect the rights, property or safety of
           our users or others.</li>
       </ul>
+      <p>We require providers processing personal data for CadenceCam to protect it to the same or an equivalent standard
+        as this policy and applicable law.</p>
       <p>CadenceCam’s use and transfer of information received from Google APIs adheres to the
         <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
         including its Limited Use requirements.</p>
@@ -157,14 +166,18 @@
       <h2>6. Where it is stored, and for how long</h2>
       <p>Your data is stored on Google Cloud in Singapore (region <code>asia-southeast1</code>).</p>
       <ul>
-        <li><strong>Usage data</strong> — sessions, rep counts, signal traces, test results and connection details — is
-          deleted <strong>90 days</strong> after it is recorded.</li>
+        <li><strong>Usage data</strong> — sessions, rep counts, browser signal traces, browser test results and connection
+          details — is deleted <strong>90 days</strong> after it is recorded.</li>
         <li><strong>Your settings</strong> are kept until you change them or delete your data.</li>
         <li><strong>Your sign-in sessions</strong>, including any authorisation token, are deleted when you log out all
           devices, delete your account, or when the session expires.</li>
         <li><strong>Server logs</strong> are deleted after 30 days.</li>
         <li><strong>Data on your device</strong> remains until you clear the website’s storage or uninstall the native app.
-          The app removes its sign-in token and displayed identity when you sign out.</li>
+          The app removes its sign-in token and displayed identity when you sign out, but retains the random installation
+          identifier described above until uninstall so that it can recognize the same installation.</li>
+        <li><strong>Deleted invitations</strong> leave only a disabled invitation record containing the username, one-way
+          access-code digest and deletion status. We retain this tombstone solely to prevent a deleted credential from being
+          reactivated; it contains no workouts, settings or provider identity.</li>
       </ul>
 
       <h2 id="account-deletion">7. Your rights, choices and account deletion</h2>
@@ -173,8 +186,8 @@
         <li><strong>Take a copy.</strong> You can export your data from the app as a CSV file.</li>
         <li><strong>Correct it.</strong> You can change your settings at any time.</li>
         <li><strong>Delete your account.</strong> Choose <em>Delete account</em> in the app’s menu and confirm. This removes
-          your workouts, rep counts, settings, signal traces, test results and CadenceCam sessions, and revokes the linked
-          provider authorisation or permanently retires the invitation. See the public
+          your workouts, rep counts, settings, browser signal traces, browser test results and CadenceCam sessions, and
+          revokes the linked provider authorisation or permanently retires the invitation as described in section 6. See the public
           <a href="/delete-account.html">account-deletion instructions</a> if you cannot use the in-app control.</li>
         <li><strong>Withdraw consent.</strong> Delete your account and stop using the app. You can also remove CadenceCam’s
           access in your Google or Apple account settings at any time.</li>

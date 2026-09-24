@@ -209,6 +209,32 @@ class MainSuite extends munit.FunSuite:
     assert(document.contains("raz@raz.sg"))
     assert(!document.contains("<script"))
 
+  test("serves a public support page with contact and legal links"):
+    val routes = run(ZIO.succeed(Main.staticRoutes(testStaticCacheControl)))
+    val response = run(
+      ZIO.scoped(routes.runZIO(Request.get(URL.decode(Documents.path(Documents.Support)).toOption.get)))
+    )
+    val document = run(response.body.asString)
+
+    assertEquals(response.status, Status.Ok)
+    assertEquals(response.headers.get(Header.ContentType), Some(Header.ContentType(MediaType.text.html)))
+    assert(document.contains("raz@raz.sg"))
+    assert(document.contains(Documents.path(Documents.Privacy)))
+    assert(document.contains(Documents.path(Documents.Terms)))
+    assert(document.contains(Documents.path(Documents.AccountDeletion)))
+    assert(!document.contains("<script"))
+
+  test("the privacy policy limits signal-trace collection to the browser"):
+    val routes = run(ZIO.succeed(Main.staticRoutes(testStaticCacheControl)))
+    val response = run(
+      ZIO.scoped(routes.runZIO(Request.get(URL.decode(Documents.path(Documents.Privacy)).toOption.get)))
+    )
+    val document = run(response.body.asString)
+
+    assert(document.contains("native apps have no signal-trace submission feature"))
+    assert(document.contains("browser Counter has an optional"))
+    assert(document.contains("random installation identifier"))
+
   test("packages and serves the favicon as a cached Microsoft icon"):
     val packaged = resourceBytes("web/favicon.ico")
     val routes = run(ZIO.succeed(Main.staticRoutes(testStaticCacheControl)))

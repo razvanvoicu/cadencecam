@@ -10,6 +10,7 @@ object Documents:
   val Privacy = "privacy.html"
   val Terms = "tos.html"
   val AccountDeletion = "delete-account.html"
+  val Support = "support.html"
 
   /** Every legal document the application menu should offer, in display order. */
   val All: Seq[String] = Seq(Privacy, Terms)
