@@ -9,20 +9,22 @@ The picture never leaves the phone. The browser reads only how bright each quart
 second, and counts the movement from that; no photo or video is recorded or uploaded.
 
 It is a Scala 3 web application: a Scala.js frontend served by a ZIO HTTP backend from one deployment artifact, with
-Firestore for storage. The backend's infrastructure — Google login, application sessions, discovered and
+Firestore for storage. The backend's infrastructure — Google, Apple and invitation login, application sessions, discovered and
 capability-checked plugins — began as a reusable web-application template, and the later sections of this document
 describe it in those terms.
 
 Using CadenceCam
 ----------------
 
-CadenceCam is deployed at https://cadencecam.raz.sg and is free to use by anyone with a Google account. Of that
-account it uses only your name and email address. Read the `privacy policy <https://cadencecam.raz.sg/privacy.html>`_
+CadenceCam is deployed at https://cadencecam.raz.sg and supports Google, Apple, and owner-issued invitation
+accounts. Of a Google or Apple account it uses only the identity fields described in the privacy policy. Read the
+`privacy policy <https://cadencecam.raz.sg/privacy.html>`_
 and the `terms of service <https://cadencecam.raz.sg/tos.html>`_; both are also in the ☰ menu on every screen, where
 they open in a tab of their own.
 
 You need a phone for the camera and, if you want a separate display, a tablet or a second phone signed in to the same
-Google account. Both run in the browser; either can also be installed to the home screen from the browser's menu.
+CadenceCam account. The Counter runs in the native Android/iOS app or in the browser; the Dashboard runs in the
+browser, which can also be installed to the home screen.
 
 1. **Count.** Sign in on the phone. If nothing is counting for your account yet, it goes straight to the **Counter**
    screen and asks for the camera. Prop it where the moving part of the exercise fills a good share of the picture,
@@ -41,8 +43,8 @@ Google account. Both run in the browser; either can also be installed to the hom
    calories. Any workout can be deleted, and the history's own menu exports the list as a CSV file.
 5. **Default to dashboard on / off** (dashboard menu): makes this device open straight on the dashboard at every
    start. It is remembered by this browser only, so the phone signed in to the same account still opens its camera.
-6. **Delete all my data** (dashboard menu): removes every workout, recording and setting kept for the account, then
-   signs you out.
+6. **Delete account** (dashboard or native-app menu): removes every workout, recording, setting, sign-in session, and
+   the account's provider authorization, then signs you out. An invitation is permanently retired.
 
 On the counter, the menu switches between cameras, and **Camera controls** set exposure and sensitivity by hand when
 automatic exposure gets the picture wrong (**Back to automatic** undoes that). **Capture signal trace** uploads the
@@ -88,11 +90,12 @@ traces (``POST /test/run/discard``).
 
 Every shape the two ends exchange is defined once, in the ``shared`` project (``sgrv.api``), together with the route
 it travels on where it has one, so the frontend and the backend cannot drift apart. The ☰ menu on every screen carries
-**About**, the two documents and — once signed in — **Logout**. About shows the signed-in account, the build
+**About**, the two documents and — once signed in — **Log out this device only** and **Log out all devices**. About shows the signed-in account, the build
 information from the authenticated ``GET /about`` route, and the frontend build the browser is actually running;
-before sign-in it shows only the last. Logout invokes ``POST /logout`` and returns every active client to the signed-out
-home page only after the server has closed an open workout, revoked the Google grant, and removed all of the account's
-application sessions. The login screen explains
+before sign-in it shows only the last. Account-wide logout invokes ``POST /logout`` and returns every active client to
+the signed-out home page only after the server has closed an open workout, revoked the provider grant, and removed all
+of the account's application sessions. Device-only logout invalidates only the caller, unless it owns the Counter, in
+which case its workout is closed too. The login screen explains
 what the app does before asking anyone to sign in.
 
 The backend owns the static-file routes, but application API routes are not
@@ -123,6 +126,8 @@ Technology
 * WebRTC data channels between a counting device and the devices watching it
 * ZIO HTTP for the backend server, and ZIO Logging for console logging
 * Google OAuth 2.0 (google-api-client) for "Login with Google", requesting only ``openid email profile``
+* Sign in with Apple, with server-side identity-token verification and token revocation
+* Reusable promotional invitations whose access codes are stored only as one-way digests
 * Google Cloud Firestore for application sessions, the accounts' workouts and settings, and pairing messages
 * ClassGraph for discovering independently loadable, capability-checked backend plugins
 * MUnit for frontend and backend tests, and sbt-scoverage for backend coverage
@@ -203,9 +208,9 @@ Static files are wired directly in ``Main``, and reserved against conflicting ro
      - The application icon, for browser tabs and home screens
    * - ``/icon-maskable-192.png``, ``/icon-maskable-512.png``
      - The same icon inside the safe zone Android's launcher masks cut to
-   * - ``/privacy.html``, ``/tos.html``
-     - The privacy policy and the terms of service: self-contained pages that need neither the application nor a
-       session
+   * - ``/privacy.html``, ``/tos.html``, ``/delete-account.html``
+     - The privacy policy, terms, and public account-deletion instructions: self-contained pages that need neither the
+       application nor a session
 
 Every other route comes from a discovered plugin and answers with ``Cache-Control: no-store``, except the two OAuth
 redirects.
@@ -223,6 +228,15 @@ redirects.
    * - ``GET /auth/callback``
      - Public
      - Completes the Google login, then redirects to ``/``
+   * - ``GET /auth/apple/login``, ``POST /auth/apple/callback``
+     - Public
+     - Starts and completes browser Sign in with Apple
+   * - ``POST /auth/mobile``, ``POST /auth/apple/mobile``
+     - Public
+     - Exchanges a native Google ID token or Apple authorization code for a CadenceCam bearer session
+   * - ``POST /auth/invitation``
+     - Public
+     - Exchanges an invitation username and access code for an ordinary CadenceCam session
    * - ``GET /me``
      - Public
      - The signed-in user as JSON, or ``401``
@@ -231,8 +245,11 @@ redirects.
      - Validates the stored Google refresh token; renews Firestore/cookie expiry and reports it in a header
    * - ``POST /logout``
      - Signed in
-     - Closes an open workout, revokes Google authorization, deletes every application session for the account, and
+     - Closes an open workout, revokes provider authorization, deletes every application session for the account, and
        expires the calling browser's authentication cookies
+   * - ``POST /logout/device``
+     - Signed in
+     - Invalidates only the caller; closes the workout only when that session owns the Counter
    * - ``GET /about``
      - Signed in
      - Build metadata as JSON
@@ -262,7 +279,10 @@ redirects.
      - Reads and replaces the account's weight and exercises
    * - ``DELETE /account/data``
      - Signed in
-     - Deletes everything kept for the account
+     - Deletes the account, provider authorization, sessions, and everything kept for it
+   * - ``POST /admin/invitations``, ``DELETE /admin/invitations``
+     - Admin password
+     - Creates invitation credentials or revokes one invitation and all of its live sessions
    * - ``POST /test/event``
      - Signed in
      - Files one observation from a bench run
@@ -343,12 +363,16 @@ Data model
 Everything the backend keeps is in the project's ``(default)`` Firestore database, in three collections.
 
 ``Access``
-   One document per browser or native application session, expired by a TTL policy; see `Login with Google`_.
+   One document per browser or native application session, expired by a TTL policy; see `Authentication`_.
+
+``InvitationAccounts``
+   One document per promotional invitation. It stores a digest rather than the plaintext access code. Deletion leaves
+   only a tombstone, so a deleted reviewer identity cannot silently become a fresh account later.
 
 ``CountingSessions``
-   One document per account, named by a keyed digest of the account's email — HMAC-SHA256 under ``ACCOUNT_KEY`` —
-   so no email appears in a document path, and nobody holding the database can confirm whether an address has an
-   account without also holding the key. ``AccountSchema`` in ``AccountSessions.scala`` is the authority on the
+   One document per account, named by a keyed digest of its provider-neutral internal identity — HMAC-SHA256 under
+   ``ACCOUNT_KEY`` — so no email appears in a document path, and nobody holding the database can confirm whether an
+   identity has an account without also holding the key. ``AccountSchema`` in ``AccountSessions.scala`` is the authority on the
    fields:
 
    .. code-block:: text
@@ -375,8 +399,8 @@ least 32 characters, such as the output of ``openssl rand -hex 32`` — and ever
 to the backend. Without it no account can be named: reads come back empty, writes answer ``503``, and no session
 opens. There is deliberately no unkeyed fallback, which would give up the property the key exists for.
 
-Login with Google
------------------
+Authentication
+--------------
 
 OAuth configuration file
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -402,6 +426,11 @@ A complete configuration has this shape:
    OAUTH_CONFIG_PATH=oauth.config.json
    ACCOUNT_KEY_PATH=account.key
    # ADMIN_PASSWORD_PATH=admin.pwd
+   # APPLE_TEAM_ID=<Apple developer team id>
+   # APPLE_KEY_ID=<Sign in with Apple key id>
+   # APPLE_PRIVATE_KEY_PATH=AuthKey_<key id>.p8
+   # APPLE_IOS_CLIENT_ID=sg.raz.cadencecam
+   # APPLE_SERVICE_ID=<browser Services ID>
    LOCAL_BASE_URL=http://localhost:<local-port>
    ARTIFACT_BASE_URL=https://<standalone-host>
    PUBLIC_BASE_URL=https://<cloud-run-host>
@@ -412,8 +441,9 @@ A complete configuration has this shape:
    ARTIFACT_REGISTRY_REPOSITORY=<repository-name>
    GCLOUD_SERVICE_ACCOUNT=<runtime-service-account-email>
 
-Relative paths in ``OAUTH_CONFIG_PATH``, ``ACCOUNT_KEY_PATH`` and ``ADMIN_PASSWORD_PATH`` are resolved from the
-directory containing ``config.env``. This makes the configuration and its referenced secret files portable as one shared directory,
+Relative paths in ``OAUTH_CONFIG_PATH``, ``ACCOUNT_KEY_PATH``, ``ADMIN_PASSWORD_PATH`` and
+``APPLE_PRIVATE_KEY_PATH`` are resolved from the directory containing ``config.env``. This makes the configuration
+and its referenced secret files portable as one shared directory,
 while every development machine needs only its own small ``APPCONFIGPATH`` locator.
 
 The compulsory OAuth JSON must use Google's standard ``Web application`` structure
@@ -424,7 +454,10 @@ generated ``prod.env`` staged into the Docker build context; the source ``prod.e
 resulting Docker image therefore contains a client secret and must be handled as a secret-bearing artifact (see
 `Packaging and deployment`_). ``sbt deployGCloud`` instead supplies the values to the Cloud Run revision and
 keeps them out of its image. The optional admin-password path follows the corresponding mechanism and is
-described in `Admin-protected routes`_.
+described in `Admin-protected routes`_. The five Apple settings are also optional, but all-or-nothing: when present
+the build validates the private key and supplies the public identifiers plus a base64 copy of the key to the process
+or Cloud Run revision without putting the key in the deployment image. Browser Apple login uses
+``PUBLIC_BASE_URL + /auth/apple/callback``; the Services ID must register that exact HTTPS return URL.
 
 The backend reads the OAuth client ID and secret directly from its environment; it does not copy them into
 Firestore. The external JSON is the local source of truth. A standalone artifact receives the values from its
@@ -444,7 +477,7 @@ URL must include an explicit port, which is also injected as ``PORT``. The stand
 ``ARTIFACT_PORT``. Cloud Run supplies ``PORT`` itself. The shared file is read at task execution, so edits are
 picked up by the next task invocation without an sbt reload.
 
-Authentication uses the server-side OAuth 2.0 authorization-code flow.
+Google browser authentication uses the server-side OAuth 2.0 authorization-code flow.
 ``/auth/login`` redirects the browser to Google with a CSRF-protecting
 ``state`` cookie. Google redirects back to ``/auth/callback``, where the
 backend exchanges the authorization code, verifies the Google-signed ID token
@@ -459,15 +492,23 @@ JavaScript. The HttpOnly attribute also prevents JavaScript from reading the
 session key, although same-origin JavaScript can still issue requests carrying
 the cookie.
 
-After sign-in, the frontend's Logout control sends an authenticated ``POST /logout``. The backend first closes any
-open workout as ``LoggedOut``. It then posts the stored refresh token to Google's OAuth revocation endpoint; if Google
-issued no refresh token at login, the access token retained solely for this fallback is revoked instead. An already
-expired or revoked token is treated as an idempotent success. It finally deletes every ``Access`` document carrying
-the account's email and returns ``204 No Content`` with expired ``session`` and ``auth_state`` cookies. The calling
+Apple browser login follows the same state-cookie and server-session shape. Native Google and Apple clients exchange
+their provider proof at ``/auth/mobile`` or ``/auth/apple/mobile`` and receive an opaque CadenceCam bearer token,
+which they store in platform secure storage. Invitation login validates a username and access code against a digest
+in Firestore, then creates the same kind of application session; downstream routes do not special-case the provider.
+
+After sign-in, account-wide logout sends an authenticated ``POST /logout``. The backend first closes any open workout
+as ``LoggedOut``. It then revokes the stored Google or Apple token; invitations have no upstream provider to revoke.
+An already expired or revoked token is treated as an idempotent success. It finally deletes every ``Access`` document
+carrying the account identity and returns ``204 No Content`` with expired authentication cookies. The calling
 client moves directly to Login; other browser and native clients discover the revoked application session on their
 ten-second check and do the same. The ordered failure behavior keeps credentials available for retry when revocation
 or Firestore is temporarily unavailable. Successful revocation removes the OAuth scopes granted to this project and
 invalidates its issued access and refresh tokens; it does not sign the user out of their Google account itself.
+
+``POST /logout/device`` instead closes and invalidates only the caller. It closes the workout when that caller owns the
+Counter, but logging out a Dashboard leaves another device's Counter and session alone. ``DELETE /account/data``
+deletes all application data, revokes the provider, invalidates every session, and permanently retires an invitation.
 
 The Google and Firestore SDKs are isolated behind ZIO service interfaces.
 ``AppConfig`` loads and validates deployment settings as an effect;
@@ -525,13 +566,12 @@ One-time setup:
 
 Each document in the ``Access`` collection represents one browser or native application session. Its
 document ID is a random 256-bit URL-safe session key, which is also stored in
-the ``sessionKey`` field. The other fields are ``email``, ``name``,
-``createdAt``, and ``expiresAt``. If Google returns an OAuth refresh token, it
-is stored as ``refreshToken``. Otherwise the short-lived access token is stored as ``accessTokenForRevocation``
-solely so Logout can revoke the grant; the two fields are never populated together. A protected
+the ``sessionKey`` field. The record carries the provider-neutral account identity, display fields, provider kind and
+subject, ``createdAt``, and ``expiresAt``. Provider tokens and the Apple client ID are retained only when required for
+renewal or revocation. A protected
 request is authenticated by looking up the cookie or bearer token's session key and rejecting
 missing or expired records. A successful logout deletes every document for the account after closing its active
-workout and revoking the associated Google grant. There is no process-global encryption key and backend restarts do not
+workout and revoking the associated provider grant. There is no process-global encryption key and backend restarts do not
 invalidate sessions; Firestore is the durable session store. Treat document
 IDs, ``sessionKey``, and ``refreshToken`` values as secrets.
 
@@ -542,7 +582,7 @@ asynchronously, rather than retaining every rejected session forever. Set it onc
 
    gcloud firestore fields ttls update expiresAt --collection-group=Access --database='(default)' --enable-ttl
 
-Nothing checks or repairs this at runtime (see the startup note under `Login with Google`_), so a project where
+Nothing checks or repairs this at runtime (see the startup note under `Authentication`_), so a project where
 it was never run accumulates dead session documents indefinitely. It is idempotent, and its server-side backfill
 runs in the background. The emulator has no TTL support and needs nothing: its data is in-memory and is cleared
 whenever it restarts.
@@ -613,9 +653,9 @@ The mechanism itself still works. ``GOOGLE_SERVICES`` is an optional comma-separ
 missing or empty requests no additional entitlements, while a value is appended to the ``scope`` parameter by
 ``GoogleOAuth.authorizationUrl``. Google shows a consent screen the first time a user grants a given scope set.
 
-``access_type=offline`` is requested on every login regardless of scopes, so Google still issues a refresh token
-for the base scopes alone. It is stored on the browser-session document alongside ``email``/``name`` (see
-`Login with Google`_) and resolved onto ``SessionUser.refreshToken`` by ``SessionStore.find``. Two things depend
+``access_type=offline`` is requested on every Google login regardless of scopes, so Google still issues a refresh token
+for the base scopes alone. It is stored on the browser-session document alongside the provider identity (see
+`Authentication`_) and resolved onto ``SessionUser.refreshToken`` by ``SessionStore.find``. Two things depend
 on it today: ``Logout``'s revocation of the Google grant, and session renewal, which exchanges it for a
 short-lived access token purely to confirm Google still honours the grant before extending the session. A route
 needing to call a Google API on the user's behalf would authorize that call with the same
@@ -624,13 +664,15 @@ needing to call a Google API on the user's behalf would authorize that call with
 Admin-protected routes
 -----------------------
 
-``AccessPolicy.AdminPassword`` requires a ``?pwd=`` query parameter equal to the ``ADMIN_PASSWORD`` environment
-variable before the handler runs. A missing or incorrect password produces ``401 Unauthorized``; a missing or
-unreadable ``ADMIN_PASSWORD`` produces ``503 Service Unavailable`` (fail closed rather than fall open).
+``AccessPolicy.AdminPassword`` normally requires the ``X-CadenceCam-Admin-Password`` request header to equal the
+``ADMIN_PASSWORD`` environment variable before the handler runs. ``?pwd=`` remains accepted for the existing local
+debug page opened by hand, but scripts should use the header so the password is not copied into request-URL logs or
+browser history. A missing or incorrect password produces ``401 Unauthorized``; a missing or unreadable
+``ADMIN_PASSWORD`` produces ``503 Service Unavailable`` (fail closed rather than fall open).
 ``AuthenticatedAndAdminPassword`` composes that check with browser-session authentication.
 
 The separately built ``Debug`` plugin uses ``AccessPolicy.AuthenticatedAndAdminPassword``, so reaching it requires
-*both* a signed-in Google session and the correct password. To enable it, add this setting to the external
+*both* a signed-in CadenceCam session and the correct password. To enable it, add this setting to the external
 ``config.env``:
 
 .. code-block:: text
@@ -648,6 +690,27 @@ into the Docker image. The password is supplied as
 ``https://<host>/debug?pwd=<password>`` directly in the browser's address bar; there is intentionally no on-page
 link or button to it. A plugin that an operator should reach without signing in would instead use
 ``AccessPolicy.AdminPassword``.
+
+The built-in invitation administration routes use this policy. Create one to twenty credentials at a time; the
+plaintext codes appear only in this response:
+
+.. code-block:: console
+
+   curl --fail-with-body \
+     -H 'Content-Type: application/json' \
+     -H 'X-CadenceCam-Admin-Password: <password>' \
+     -d '{"prefix":"review","count":10}' \
+     https://cadencecam.raz.sg/admin/invitations
+
+Revoke one invitation, close its workout, and invalidate all of its sessions with:
+
+.. code-block:: console
+
+   curl --fail-with-body -X DELETE \
+     -H 'Content-Type: application/json' \
+     -H 'X-CadenceCam-Admin-Password: <password>' \
+     -d '{"username":"<invitation username>"}' \
+     https://cadencecam.raz.sg/admin/invitations
 
 If the setting is absent or commented out, the plugin's JAR is absent from backend classpaths and deployment
 artifacts, root tests skip its suite, and no admin password is read or injected. The project remains available
@@ -925,7 +988,7 @@ since it's native browser UI rather than part of the page's DOM). Nor does Googl
 emulator for this: ``gcloud emulators`` covers Firestore/Datastore/Bigtable/Pub/Sub/Spanner only, and while the
 separate Firebase Local Emulator Suite does have an Authentication Emulator, it only intercepts calls made
 through the *Firebase Auth SDK* — this app implements the OAuth 2.0 flow directly
-(`Login with Google`_), so there's nothing for it to intercept.
+(`Authentication`_), so there's nothing for it to intercept.
 
 Instead, sign in once by hand and let a later test run reuse that session. Start with:
 
@@ -1070,7 +1133,7 @@ loopback so nothing else on the network can reach the container directly:
 
 Application Default Credentials work differently depending on where the image runs. On Cloud Run/GKE/GCE, an
 image built without a local ADC file falls through to the platform's workload identity (the attached service
-account), exactly as described in `Login with Google`_. If a local file is bundled, Google's well-known-file
+account), exactly as described in `Authentication`_. If a local file is bundled, Google's well-known-file
 lookup precedes workload identity, so use an artifact built without that file when the platform identity should
 apply. Running the image *outside* a GCP platform — a plain ``docker run`` on any other host, including for local
 testing — needs credentials from somewhere, since there's no metadata server to ask;
@@ -1150,13 +1213,13 @@ What absolutely needs changing
 
 1. **A Google Cloud project of your own**, with the Firestore API enabled, its ``(default)`` database created,
    and the ``Access.expiresAt`` TTL policy set — all one-time console/CLI steps, since the backend deliberately
-   does none of them at startup (see `Login with Google`_). Every Google API is enabled and billed
+   does none of them at startup (see `Authentication`_). Every Google API is enabled and billed
    independently, so any scope you later add to
    ``GOOGLE_SERVICES`` also needs its API turned on for the project — calls fail with ``403`` if it isn't, even
    though the OAuth scope was granted.
 
 2. **A new OAuth 2.0 web client**, created in that project, with your own callback URIs registered (step 1 under
-   `Login with Google`_'s one-time setup). Download its JSON as your fork's ``oauth.config.json`` and keep it
+   `Authentication`_'s one-time setup). Download its JSON as your fork's ``oauth.config.json`` and keep it
    outside source control. The build is intentionally unusable until the external configuration and its
    compulsory ``OAUTH_CONFIG_PATH`` resolve successfully.
 
@@ -1181,7 +1244,7 @@ What absolutely needs changing
    source control and point to it with ``ADMIN_PASSWORD_PATH`` in the shared configuration (see
    `Admin-protected routes`_). Omit or comment out that setting to leave Debug out of normal builds.
 
-5. **Application Default Credentials for the new project** (`Login with Google`_): locally,
+5. **Application Default Credentials for the new project** (`Authentication`_): locally,
    ``gcloud auth application-default login --impersonate-service-account=<new-project's-Firestore-service-account>``;
    in deployment, run the service under that same service account.
 
