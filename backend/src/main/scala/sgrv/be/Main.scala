@@ -84,11 +84,13 @@ object Main extends ZIOAppDefault:
     Method.GET / "manifest.webmanifest" ->
       handler(asset("manifest.webmanifest", application.`manifest+json`, staticCacheCtrl)),
     Method.GET / "style.css" -> handler(asset("style.css", text.css, staticCacheCtrl)),
-    // Served like any other static file, and deliberately not through the app: these two are read by people deciding
-    // whether to sign in, and by reviewers who never will, so neither may depend on the bundle having loaded. Named
-    // from the shared list the app's menus link to, so what is served and what is offered cannot drift apart.
+    // Served like any other static file, and deliberately not through the app: these are read by people deciding
+    // whether to sign in, and by reviewers who never will, so none may depend on the bundle having loaded. Their names
+    // are shared with the clients or the store listing, so a published link cannot quietly drift away from its route.
     Method.GET / Documents.Privacy -> handler(asset(Documents.Privacy, text.html, staticCacheCtrl)),
     Method.GET / Documents.Terms -> handler(asset(Documents.Terms, text.html, staticCacheCtrl)),
+    Method.GET / Documents.AccountDeletion ->
+      handler(asset(Documents.AccountDeletion, text.html, staticCacheCtrl)),
     Method.GET / "main.js" -> handler(asset("main.js", text.javascript, staticCacheCtrl)),
     Method.GET / "main.js.map" -> handler(asset("main.js.map", application.json, staticCacheCtrl))
   )

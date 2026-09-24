@@ -193,6 +193,22 @@ class MainSuite extends munit.FunSuite:
     assert(served(Documents.Privacy).contains(Documents.path(Documents.Terms)))
     assert(served(Documents.Terms).contains(Documents.path(Documents.Privacy)))
 
+  test("serves public account-deletion instructions for the app stores"):
+    val routes = run(ZIO.succeed(Main.staticRoutes(testStaticCacheControl)))
+    val response = run(
+      ZIO.scoped(
+        routes.runZIO(Request.get(URL.decode(Documents.path(Documents.AccountDeletion)).toOption.get))
+      )
+    )
+    val document = run(response.body.asString)
+
+    assertEquals(response.status, Status.Ok)
+    assertEquals(response.headers.get(Header.ContentType), Some(Header.ContentType(MediaType.text.html)))
+    assert(document.contains("Delete account"))
+    assert(document.contains(Documents.path(Documents.Privacy)))
+    assert(document.contains("raz@raz.sg"))
+    assert(!document.contains("<script"))
+
   test("packages and serves the favicon as a cached Microsoft icon"):
     val packaged = resourceBytes("web/favicon.ico")
     val routes = run(ZIO.succeed(Main.staticRoutes(testStaticCacheControl)))

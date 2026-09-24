@@ -9,8 +9,9 @@ package sgrv.api
 object Documents:
   val Privacy = "privacy.html"
   val Terms = "tos.html"
+  val AccountDeletion = "delete-account.html"
 
-  /** Every document, in the order a menu should offer them. */
+  /** Every legal document the application menu should offer, in display order. */
   val All: Seq[String] = Seq(Privacy, Terms)
 
   /** Where a document is served, as a link should ask for it. */
