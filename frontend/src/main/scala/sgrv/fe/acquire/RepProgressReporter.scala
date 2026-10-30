@@ -13,8 +13,8 @@ import scala.util.Success
 /** Reports what the acquirer's workout has measured so far to the account's session, at a fixed interval.
   *
   * The whole measurement rather than the count alone: the rep count, the cadence accumulated over it, and how long the
-  * set has run. The history works its calorie figure and its duration out of the last two, and a session that was only
-  * ever told the count shows every workout as having taken no time and, counted by frequency, burned nothing.
+  * set has run. Dashboards need the cadence accumulator to calculate frequency-based calories locally, while the
+  * elapsed time keeps the duration and live projections correct.
   *
   * On a timer rather than on every rep: the session needs a record that is roughly current, not every increment, and a
   * workout at two hertz would otherwise mean a request per half second. Reporting unchanged totals too is deliberate —
@@ -38,6 +38,9 @@ private[fe] final class RepProgressReporter(
     * else as the counter.
     */
   var onDisplaced: () => Unit = () => ()
+
+  /** Called when a dashboard closed the workout while a periodic report was already in flight. */
+  var onWorkoutClosed: () => Unit = () => ()
 
   /** Begins reporting whatever `progress` returns at each tick. Starting twice is a no-op rather than a second timer.
     */
@@ -64,6 +67,9 @@ private[fe] final class RepProgressReporter(
           outcome match
             // Failure is not escalated and the timer keeps running: the next tick reports the same total, so a lost
             // report costs nothing. A 401 is already handled by the HTTP boundary, which ends the session.
+            case Success(response) if response.status == 410 =>
+              stop()
+              onWorkoutClosed()
             case Success(response) if response.status == 409 =>
               dom.console.info("Another device is now counting for this account; standing down")
               stop()

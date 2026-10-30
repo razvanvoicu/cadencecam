@@ -53,8 +53,11 @@ enum WorkoutAction:
 object WorkoutAction:
   given JsonCodec[WorkoutAction] = DeriveJsonCodec.gen[WorkoutAction]
 
-/** A workout lifecycle request. Both actions carry the settings snapshot; Stop also carries the final measurement so
-  * closing a session cannot race its last periodic progress report and leave the history a few reps behind the screen.
+/** A workout lifecycle request.
+  *
+  * Start is issued by the counter and carries no settings. A dashboard Stop carries its final raw measurement and the
+  * locally computed snapshot that belongs in history. A counter may still Stop without a snapshot when no dashboard is
+  * responsible for the close, leaving an honestly incomplete history row rather than inventing calories.
   */
 @jsonNoExtraFields
 final case class WorkoutControl(

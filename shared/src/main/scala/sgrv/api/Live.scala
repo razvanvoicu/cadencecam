@@ -67,10 +67,27 @@ object LiveReading:
   * refuse a shape they do not know, and a dashboard and a counter on different builds must still understand each other.
   */
 @jsonNoExtraFields
-final case class LiveState(acquiring: Boolean, reading: Option[LiveReading] = None)
+final case class LiveState(
+    acquiring: Boolean,
+    reading: Option[LiveReading] = None,
+    /** The last exercise selection a dashboard asked the counter to relay.
+      *
+      * Nested so `None` means "this older counter has no selection update", while `Some(ExerciseSelection(None))`
+      * deliberately means that no configured exercise is selected. The counter treats the id as opaque and never reads
+      * the exercise's weight, factor or calorie result.
+      */
+    exerciseSelection: Option[ExerciseSelection] = None
+)
 
 object LiveState:
   given JsonCodec[LiveState] = DeriveJsonCodec.gen[LiveState]
+
+/** An exercise choice relayed between dashboards through the counter. */
+@jsonNoExtraFields
+final case class ExerciseSelection(exerciseId: Option[String])
+
+object ExerciseSelection:
+  given JsonCodec[ExerciseSelection] = DeriveJsonCodec.gen[ExerciseSelection]
 
 /** What a watching device asks the acquirer to do.
   *
@@ -81,6 +98,12 @@ enum LiveCommand:
   case Reset
   case Start
   case Stop
+
+  /** The dashboard has already stored the completed workout and the counter only needs to stop acquiring into it. */
+  case DashboardStopped
+
+  /** Relayed unchanged to every connected dashboard. The counter never resolves the id into exercise settings. */
+  case SelectExercise(exerciseId: Option[String])
 
   /** `note` says who asked and why, and ends up on the recording itself.
     *

@@ -76,7 +76,7 @@ private[sessions] object AccountSchema:
   val counterSeenAt = "counterSeenAt"
   val counterExpiresAt = "counterExpiresAt"
 
-  /** What a workout measured, plus the settings and calorie conclusion frozen for its history row. */
+  /** What a workout measured, plus the dashboard conclusion frozen for a completed history row. */
   val reps = "reps"
   val repsAt = "repsAt"
   val cadenceSum = "cadenceSum"
@@ -187,6 +187,14 @@ private[sessions] final case class AccountState(
     counter: Option[String],
     counterInstance: Option[String]
 )
+
+/** The atomic result of filing a counter's raw progress. Keeping the two refusals distinct lets an in-flight report
+  * learn that a dashboard has already stopped this workout without mistaking that ordinary close for a takeover.
+  */
+private[sessions] enum ProgressWrite:
+  case Recorded(session: String)
+  case NotActive
+  case Displaced
 
 private[sessions] final case class CounterLease(session: String, expiresAt: Option[Instant])
 
@@ -380,7 +388,6 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
   def startWorkout(
       name: String,
       browserSession: String,
-      workoutSnapshot: WorkoutSnapshot,
       now: Instant
   ): Task[Option[String]] =
     // Chosen outside the callback because Firestore may retry a transaction. Every attempt must create the same
@@ -395,7 +402,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
             val opened = Map[String, AnyRef](
               AccountSchema.startedAt -> stamp(now),
               AccountSchema.counter -> browserSession
-            ) ++ snapshotFields(workoutSnapshot)
+            )
             val _ = transaction.create(
               reference.collection(AccountSchema.sessions).document(newSession),
               opened.asJava
@@ -417,7 +424,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       AccountSchema.repsAt -> stamp(now),
       AccountSchema.cadenceSum -> java.lang.Double.valueOf(progress.cadenceSum),
       AccountSchema.elapsedSeconds -> java.lang.Double.valueOf(progress.elapsedSeconds)
-    ) ++ progress.calories.map(value => AccountSchema.calories -> java.lang.Double.valueOf(value))
+    )
 
   private def snapshotFields(snapshot: WorkoutSnapshot): Map[String, AnyRef] =
     Map[String, AnyRef](
@@ -428,24 +435,44 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       AccountSchema.countsBy -> snapshot.countsBy.toString
     )
 
-  /** Writes the final measurement and closes the active workout in the same transaction. The counter role remains so
-    * either screen can start the next workout without re-entering or re-pairing.
-    */
-  def stopWorkout(
+  /** Closes from the counter's own control, with raw measurement only. */
+  def stopWorkoutFromCounter(
       name: String,
       browserSession: String,
       progress: RepProgress,
+      now: Instant
+  ): Task[Option[String]] =
+    stopWorkout(name, Some(browserSession), progress, None, now)
+
+  /** Closes from a dashboard and stores exactly the snapshot calculated by that dashboard. */
+  def stopWorkoutFromDashboard(
+      name: String,
+      progress: RepProgress,
       workoutSnapshot: WorkoutSnapshot,
+      now: Instant
+  ): Task[Option[String]] =
+    stopWorkout(name, None, progress, Some(workoutSnapshot), now)
+
+  /** Writes the final measurement and closes the active workout in the same transaction. The counter role remains so
+    * either screen can start the next workout without re-entering or re-pairing.
+    */
+  private def stopWorkout(
+      name: String,
+      requiredCounter: Option[String],
+      progress: RepProgress,
+      workoutSnapshot: Option[WorkoutSnapshot],
       now: Instant
   ): Task[Option[String]] =
     transact(name): (transaction, reference, snapshot) =>
       val found = current(transaction, reference, snapshot, now)
       found.active
-        .filter(_ => found.counter.contains(browserSession))
+        .filter(_ => requiredCounter.forall(found.counter.contains))
         .map: session =>
+          val completed =
+            progressFields(progress, now) ++ workoutSnapshot.fold(Map.empty[String, AnyRef])(snapshotFields)
           val _ = transaction.set(
             reference.collection(AccountSchema.sessions).document(session),
-            (progressFields(progress, now) ++ snapshotFields(workoutSnapshot)).asJava,
+            completed.asJava,
             com.google.cloud.firestore.SetOptions.merge()
           )
           end(transaction, reference, session, SessionEnd.Stopped, now, clearCounter = false)
@@ -464,12 +491,13 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
       browserSession: String,
       progress: RepProgress,
       now: Instant
-  ): Task[Option[String]] =
+  ): Task[ProgressWrite] =
     transact(name): (transaction, reference, snapshot) =>
       val found = current(transaction, reference, snapshot, now)
-      found.active
-        .filter(_ => found.counter.contains(browserSession))
-        .map: session =>
+      found.active match
+        case None                                               => ProgressWrite.NotActive
+        case Some(_) if !found.counter.contains(browserSession) => ProgressWrite.Displaced
+        case Some(session)                                      =>
           val _ = transaction.set(
             reference.collection(AccountSchema.sessions).document(session),
             progressFields(progress, now).asJava,
@@ -483,7 +511,7 @@ private[sessions] final class AccountSessionStore(firestore: Firestore, idleAfte
             ).asJava,
             com.google.cloud.firestore.SetOptions.merge()
           )
-          session
+          ProgressWrite.Recorded(session)
 
   /** What the account has set, or nothing when it has never said.
     *

@@ -2,16 +2,7 @@ package sgrv.fe
 
 import com.raquo.laminar.api.L.*
 import org.scalajs.dom
-import sgrv.api.{
-  AccountSettings,
-  LiveCommand,
-  LiveReading,
-  LiveState,
-  PeerRole,
-  RepProgress,
-  WorkoutAction,
-  WorkoutSnapshot
-}
+import sgrv.api.{ExerciseSelection, LiveCommand, LiveReading, LiveState, PeerRole, RepProgress, WorkoutAction}
 import sgrv.fe.acquire.{
   Adjustable,
   Camera,
@@ -128,8 +119,8 @@ private[fe] object CounterScreen:
     val ownershipRequests = RequestScope()
     val workoutRequests = RequestScope()
     var ownershipPolling = Option.empty[Int]
-    // Frozen at Start so editing settings during a workout cannot rewrite what that workout means in history.
-    var workoutSettings: AccountSettings = settingsPanel.settings.now()
+    // The counter remembers only the opaque choice it is relaying. It never resolves the id into settings or calories.
+    var relayedExercise = Option.empty[ExerciseSelection]
 
     val video = videoTag(cls := "camera-video")
     val frozen = canvasTag(
@@ -181,7 +172,10 @@ private[fe] object CounterScreen:
       if !lastPublished.contains(reading) then
         // To whoever is watching, over their own link. Nothing is published when nobody is: a count with no audience is
         // the ordinary case, and there is no server left to tell.
-        if peer.send(LiveState(acquiring = true, reading = Some(reading)).toJson) then lastPublished = Some(reading)
+        if peer.send(
+            LiveState(acquiring = true, reading = Some(reading), exerciseSelection = relayedExercise).toJson
+          )
+        then lastPublished = Some(reading)
 
     def countSample(sample: Sample): Unit =
       // The detector's own window, not the whole buffer. The buffer is now six minutes so a trace can carry a whole
@@ -294,8 +288,7 @@ private[fe] object CounterScreen:
       publish()
 
     def measuredProgress(): RepProgress =
-      val progress = baseline.plus(counter.reading).progress
-      progress.copy(calories = Some(Effort.calories(progress.reps, progress.cadenceSum, workoutSettings)))
+      baseline.plus(counter.reading).progress
 
     def reportWhileActive(): Unit =
       reporter.start(() => measuredProgress())
@@ -318,21 +311,10 @@ private[fe] object CounterScreen:
         dom.window.setInterval(() => check(), CounterScreen.OwnershipPollMillis.toDouble)
       )
 
-    def workoutSnapshot(progress: RepProgress): WorkoutSnapshot =
-      WorkoutSnapshot(
-        exerciseType = workoutSettings.selectedExercise.map(_.name.trim).filter(_.nonEmpty).getOrElse("Counting"),
-        calories = Effort.calories(progress.reps, progress.cadenceSum, workoutSettings),
-        exerciseFactor = workoutSettings.factor,
-        weightKilograms = workoutSettings.weightKilograms,
-        countsBy = workoutSettings.countsBy
-      )
-
     def startWorkout(): Unit =
       if !workoutActive.now() && !workoutBusy.now() then
         workoutBusy.set(true)
-        workoutSettings = settingsPanel.settings.now()
-        val empty = RepProgress(0)
-        workoutRequests.run(api.controlWorkout(WorkoutAction.Start, snapshot = Some(workoutSnapshot(empty)))):
+        workoutRequests.run(api.controlWorkout(WorkoutAction.Start)):
           case Right(state) if state.active =>
             resetCount()
             workoutActive.set(true)
@@ -352,9 +334,7 @@ private[fe] object CounterScreen:
         workoutBusy.set(true)
         reporter.stop()
         val finalProgress = measuredProgress()
-        workoutRequests.run(
-          api.controlWorkout(WorkoutAction.Stop, Some(finalProgress), Some(workoutSnapshot(finalProgress)))
-        ):
+        workoutRequests.run(api.controlWorkout(WorkoutAction.Stop, Some(finalProgress))):
           case Right(state) if !state.active =>
             workoutActive.set(false)
             workoutBusy.set(false)
@@ -368,6 +348,15 @@ private[fe] object CounterScreen:
             workoutBusy.set(false)
             reportWhileActive()
             dom.console.warn(error.message)
+
+    /** Applies a Stop which its dashboard has already stored. No API call and no calorie value passes through here. */
+    def dashboardStopped(): Unit =
+      if workoutActive.now() then
+        reporter.stop()
+        workoutActive.set(false)
+        workoutBusy.set(false)
+        lastPublished = None
+        publish()
 
     def captureTrace(note: Option[String] = None): Unit =
       if TraceCapture.worthSending(signals) then
@@ -398,6 +387,11 @@ private[fe] object CounterScreen:
         case Right(LiveCommand.Reset)              => resetCount()
         case Right(LiveCommand.Start)              => startWorkout()
         case Right(LiveCommand.Stop)               => stopWorkout()
+        case Right(LiveCommand.DashboardStopped)   => dashboardStopped()
+        case Right(LiveCommand.SelectExercise(id)) =>
+          relayedExercise = Some(ExerciseSelection(id))
+          lastPublished = None
+          publish()
         case Right(LiveCommand.CaptureTrace(note)) => captureTrace(note)
         case Left(details)                         => dom.console.warn(s"Ignoring an unreadable command: $details")
 
@@ -408,7 +402,11 @@ private[fe] object CounterScreen:
       api.http,
       PeerRole.Counter,
       obey,
-      onOpen = () => dom.console.info("A watching device is reading the count directly"),
+      onOpen = () => {
+        dom.console.info("A watching device is reading the count directly")
+        lastPublished = None
+        publish()
+      },
       onClosed = () => dom.console.info("The direct link closed; nothing reads the count until a watcher offers again")
     )
 
@@ -427,8 +425,8 @@ private[fe] object CounterScreen:
       signals.clear()
       restOffsets.set(Map.empty)
       // Detection starts over from nothing, but what was already counted stands: switching cameras mid-set is a change
-      // of viewpoint, not a new workout. Absorbing it into the baseline first is what keeps it -- the whole of it, since
-      // a set whose calories reset at a camera change would be no better off than one whose reps did.
+      // of viewpoint, not a new workout. Absorbing the whole raw measurement into the baseline first preserves both the
+      // reps and the cadence accumulator from which each dashboard draws its own conclusion.
       baseline = baseline.plus(counter.reading)
       counter.reset()
       totalSamples = 0
@@ -573,6 +571,7 @@ private[fe] object CounterScreen:
         // Leaving this screen is what releases the camera; staying would leave a phone counting into a room it no
         // longer owns, with its own tally still climbing on screen.
         reporter.onDisplaced = () => logoutThisDevice()
+        reporter.onWorkoutClosed = () => dashboardStopped()
       },
       onUnmountCallback { _ =>
         live = false

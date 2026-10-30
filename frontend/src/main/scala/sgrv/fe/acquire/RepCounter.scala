@@ -144,7 +144,7 @@ private[fe] final case class RepReading(
     count: Int,
     lock: LockState,
     margin: Option[Double] = None,
-    /** The frequency accumulator behind the calorie figure. See [[RepCounter.cadenceSum]]. */
+    /** The frequency accumulator dashboards use for frequency-based calculations. See [[RepCounter.cadenceSum]]. */
     cadenceSum: Double = 0.0,
     /** How long the set has been running, from its first counted rep. */
     elapsedSeconds: Double = 0.0

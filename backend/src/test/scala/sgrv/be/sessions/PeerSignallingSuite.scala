@@ -41,8 +41,11 @@ class PeerSignallingSuite extends munit.FunSuite:
 
   test("live commands use the JSON representation understood by native counters"):
     val capture: LiveCommand = LiveCommand.CaptureTrace(Some("dashboard"))
+    val selection: LiveCommand = LiveCommand.SelectExercise(Some("cycle"))
     assertEquals(LiveCommand.Start.toJson, """{"Start":{}}""")
     assertEquals(LiveCommand.Stop.toJson, """{"Stop":{}}""")
+    assertEquals(LiveCommand.DashboardStopped.toJson, """{"DashboardStopped":{}}""")
+    assertEquals(selection.toJson, """{"SelectExercise":{"exerciseId":"cycle"}}""")
     assertEquals(LiveCommand.Reset.toJson, """{"Reset":{}}""")
     assertEquals(
       capture.toJson,

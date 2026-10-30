@@ -18,7 +18,7 @@ private[fe] final case class SavedRepCount(
     count: Int,
     atMillis: Double,
     /** The frequency accumulator that goes with the count. Carried for the same reason the count is: a reload halfway
-      * through a set must not halve the calories any more than it may halve the reps.
+      * through a set must not discard part of the raw measurement used by a dashboard.
       */
     cadenceSum: Double = 0.0,
     /** How long the set had been running. Carried so the rates and the projection resume rather than restarting from a

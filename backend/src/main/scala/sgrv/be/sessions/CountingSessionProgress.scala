@@ -38,10 +38,10 @@ object CountingSessionProgress extends BackendPlugin:
     */
   private case object Unauthenticated extends ProgressFailure
 
-  /** Signed in, but the account has nothing counting: it was never opened, or it has since closed. Either way this
-    * device is no longer the counter and should stand down, which is what a conflict says.
-    */
+  /** Signed in, but the account has no active workout. The Counter role remains; only its reporter should stop. */
   private case object NotCounting extends ProgressFailure
+
+  /** Another browser now holds the Counter role, so the whole displaced counter must stand down. */
   private case object Displaced extends ProgressFailure
   private final case class Malformed(details: String) extends ProgressFailure
   private final case class WriteFailed(cause: Throwable) extends ProgressFailure
@@ -64,12 +64,15 @@ object CountingSessionProgress extends BackendPlugin:
       account <- AccountKey.of(email).someOrFail(NotCounting)
       keeper <- AccountSessions.store(firestore)
       now <- Clock.instant
-      recorded <- keeper
+      result <- keeper
         .counted(account, mine, progress, now)
         .mapError(WriteFailed.apply)
       // The ownership check and progress write happen in the same transaction. Another device taking over between a
       // read and this write therefore cannot let a displaced counter file one last report.
-      _ <- ZIO.fail(Displaced).when(recorded.isEmpty)
+      _ <- result match
+        case ProgressWrite.Recorded(_) => ZIO.unit
+        case ProgressWrite.NotActive   => ZIO.fail(NotCounting)
+        case ProgressWrite.Displaced   => ZIO.fail(Displaced)
     yield ()
 
   /** The count a request body reports, or why it does not report one.
@@ -88,8 +91,6 @@ object CountingSessionProgress extends BackendPlugin:
       Left(s"Cadence sum ${progress.cadenceSum} is not a number at or above zero")
     else if !progress.elapsedSeconds.isFinite || progress.elapsedSeconds < 0 then
       Left(s"Elapsed ${progress.elapsedSeconds} is not a duration")
-    else if progress.calories.exists(value => !value.isFinite || value < 0) then
-      Left(s"Calories ${progress.calories.get} is not a number at or above zero")
     else Right(progress)
 
   /** The count alone, which is all most readers want of a report. */
@@ -98,10 +99,11 @@ object CountingSessionProgress extends BackendPlugin:
   private def failureResponse(failure: ProgressFailure): ZIO[Any, Nothing, Response] =
     failure match
       case Unauthenticated => ZIO.succeed(noStore(Response.status(Status.Unauthorized)))
-      // Conflict rather than an error: the report was well formed and the device was entitled to send it a moment
-      // ago. It simply no longer holds the role, and this is how it learns.
-      case NotCounting | Displaced => ZIO.succeed(noStore(Response.status(Status.Conflict)))
-      case Malformed(details)      =>
+      // Gone means the workout was closed while a final report was in flight; the device still owns the Counter role.
+      // Conflict is reserved for a real takeover, which makes the whole counter stand down.
+      case NotCounting        => ZIO.succeed(noStore(Response.status(Status.Gone)))
+      case Displaced          => ZIO.succeed(noStore(Response.status(Status.Conflict)))
+      case Malformed(details) =>
         ZIO.logWarning(s"Rejected a counting-session progress report: $details") *>
           ZIO.succeed(noStore(Response.status(Status.BadRequest)))
       case WriteFailed(error) =>

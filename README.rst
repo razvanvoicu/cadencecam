@@ -72,15 +72,18 @@ settled by replaying recorded traces say so in their comments.
 them (``sgrv.fe.live.PeerLink``). The offer, the answer and the ICE candidates are exchanged through Firestore by the
 ``/live/signal`` routes, and no STUN or TURN server is configured, which is why the two must share a network. The
 counter sends a ``LiveReading`` whenever what it would say changes — the count, its status line, the elapsed time,
-the accumulated cadence — and the dashboard works pace, calories and projections out of those (``sgrv.fe.Effort``).
-The dashboard's two commands, reset and capture a trace, travel back on the same channel as ``LiveCommand``.
+the accumulated cadence — and each dashboard works pace, calories and projections out of that raw measurement and its
+own settings (``sgrv.fe.Effort``). An exercise change travels as an opaque id to the counter, which merely includes it
+in the state sent to connected dashboards; it never reads the exercise's factor or calculates calories. Dashboard
+commands such as reset and capture a trace travel back on the same channel as ``LiveCommand``.
 
 **The account's session** is the record a workout leaves behind (``sgrv.be.sessions``). Taking the counter's role
-(``POST /live/acquirer``) opens a session in Firestore, or moves the one in progress to this device. The counter then
-reports its count, cadence and elapsed time every ten seconds (``POST /countingSession/reps``). A report from a device
-that is no longer the counter is refused with ``409``, which is how a displaced device learns to stand down. Logging
-out closes the session, and so does ten minutes without a report; closed sessions are the history. See
-`Data model`_.
+(``POST /live/acquirer``) establishes which device owns the role. Start opens a raw workout in Firestore and the
+counter reports only its count, cadence and elapsed time every ten seconds (``POST /countingSession/reps``). When Stop
+is pressed on a dashboard, that dashboard calculates and stores the completed settings/calorie snapshot immediately,
+then tells the counter to halt. A report from a device that is no longer the counter is refused with ``409``, which is
+how a displaced device learns to stand down. Logging out also closes an open session, as does ten minutes without a
+report; those non-dashboard endings retain raw progress but do not invent a calorie snapshot. See `Data model`_.
 
 **The bench** (``sgrv.fe.bench``, offered only with ``#test`` at the end of the address) is a development
 instrument. A desktop screen animates a figure at a known cadence for a phone on a tripod to count, compares the
@@ -264,7 +267,11 @@ redirects.
      - Files one step of a WebRTC exchange; hands over what the other end has filed since a cursor
    * - ``POST /countingSession/reps``
      - Signed in
-     - The counter's progress report; ``409`` when this browser is no longer the counter
+     - The counter's raw progress report; ``409`` when this browser is no longer the counter and ``410`` when the
+       workout has already closed
+   * - ``POST /countingSession/control``
+     - Signed in
+     - Starts a raw workout for the Counter, or stops it with the pressing dashboard's completed snapshot
    * - ``POST /countingSession/trace``
      - Signed in
      - Files a captured signal recording under the workout in progress
@@ -379,7 +386,9 @@ Everything the backend keeps is in the project's ``(default)`` Firestore databas
 
       CountingSessions/{digest}      activeSession, counter, lastRepAt, settings (AccountSettings as JSON)
         sessions/{session id}        startedAt, completedAt, endedBy, counter,
-                                     reps, repsAt, cadenceSum, elapsedSeconds
+                                     reps, repsAt, cadenceSum, elapsedSeconds,
+                                     exerciseType, calories, exerciseFactor,
+                                     weightKilograms, countsBy
           traces/{trace id}          one captured signal recording (TraceSchema)
           signals/{auto id}          one step of a WebRTC exchange
 
@@ -388,8 +397,9 @@ Everything the backend keeps is in the project's ``(default)`` Firestore databas
    report, and a device taking the role over changes it without starting a new workout. Every accepted report moves
    ``lastRepAt``; a session whose mark is older than ``COUNTING_IDLE_MINUTES`` (ten by default) is closed as ``Idle``
    by whichever request next looks at it — there is no timer. Closed sessions are kept, because they are the
-   history, and a calorie figure is never stored: only what it is worked out from, since the weight and the factor
-   behind it can change afterwards.
+   history. A dashboard Stop freezes that dashboard's locally calculated calories and the chosen exercise's factor,
+   weight and counting mode in the history row at the moment Stop is pressed. A counter Stop or automatic closure has
+   no dashboard conclusion to store and leaves those optional snapshot fields absent.
 
 ``TestEvents``
    One document per bench observation, filed with the email of the account that ran the bench.
@@ -1049,9 +1059,9 @@ Chrome DevTools Protocol's ``debuggerAddress`` option instead of launching a fre
 browser window), and runs ``sgrv.e2e.SignedInE2ESuite``: it opens About from the menu and asserts it shows the
 signed-in account and every build-information field, then goes to the role picker and walks each role — into the
 dashboard and back, then into the counter, taking over if another device holds the role, and back. Entering the
-counter is real: it takes the role for the signed-in account and opens a workout in its history. Since it attaches to
-the same coverage-instrumented backend ``launchTestBrowser`` started, this traffic accumulates into the same
-measurement data as everything else.
+counter is real: it takes the role for the signed-in account, though it does not open a workout until Start is pressed.
+Since it attaches to the same coverage-instrumented backend ``launchTestBrowser`` started, this traffic accumulates
+into the same measurement data as everything else.
 
 Rendering README.rst to HTML
 -----------------------------

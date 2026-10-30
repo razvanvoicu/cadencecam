@@ -4,13 +4,15 @@ import com.raquo.laminar.api.L.*
 import org.scalajs.dom
 import sgrv.api.LiveCommand
 
+import scala.concurrent.ExecutionContext.Implicits.global
 import scala.scalajs.js
 
 /** The dashboard that watches whichever device is acquiring for this account.
   *
-  * It holds no count of its own. Everything shown here is a copy of what the acquirer last said, and the two controls
-  * ask that device to do the things its own controls do rather than acting locally — so the acquirer stays the single
-  * authority on the tally, and a dashboard that has been away simply catches up.
+  * It holds no count of its own. The raw measurement is a copy of what the acquirer last said, while this dashboard
+  * resolves the shared exercise id against its own settings and calculates calories locally. Start asks the counter to
+  * open the workout; Stop freezes this dashboard's own conclusion and writes it directly to history before asking the
+  * counter only to halt.
   */
 private[fe] object DashboardView:
   def apply(
@@ -24,8 +26,11 @@ private[fe] object DashboardView:
       logoutAllDevices: () => Unit,
       confirmForget: () => Unit
   ): Element =
-    val controller = DashboardController(api.http)
+    val controller = DashboardController(api.http, settingsPanel.settings.now().selected)
     val menuOpen = Var(false)
+    val workoutBusy = Var(false)
+    val workoutFailure = Var(Option.empty[String])
+    val workoutRequests = RequestScope()
 
     /** Whether this device opens on the dashboard. Mirrors what is stored, so the menu can say which way the next tap
       * turns it.
@@ -36,13 +41,19 @@ private[fe] object DashboardView:
       * combined once and every figure below is read off the result. Separately derived signals would each re-evaluate
       * the same arithmetic and, worse, could disagree about which reading they were describing.
       */
+    val selectedSettings = settingsPanel.settings.signal
+      .combineWith(controller.exerciseId)
+      .map((settings, exerciseId) => DashboardWorkout.selectedSettings(settings, exerciseId))
+
     val figures = controller.reading
-      .combineWith(controller.window.signal, settingsPanel.settings.signal)
+      .combineWith(controller.window.signal, selectedSettings)
       .map: (latest, marks, settings) =>
         val counted = latest.fold(0)(_.reps)
         val elapsedMinutes = latest.fold(0.0)(_.elapsedSeconds) / 60.0
-        val calories = Effort.calories(counted, latest.fold(0.0)(_.cadenceSum), settings)
-        (counted, elapsedMinutes, calories, Effort.pace(marks), Effort.burn(marks, settings))
+        val cadenceSum = latest.fold(0.0)(_.cadenceSum)
+        val calories = settings.fold(0.0)(Effort.calories(counted, cadenceSum, _))
+        val burn = settings.flatMap(Effort.burn(marks, _))
+        (counted, elapsedMinutes, calories, Effort.pace(marks), burn)
 
     val boundary =
       controller.elapsedSeconds.map(seconds => Effort.boundaryLabel(Effort.boundaryMinutes(seconds / 60.0)))
@@ -83,8 +94,42 @@ private[fe] object DashboardView:
     val resizeListener: js.Function1[dom.Event, Unit] = _ => scheduleTypography()
 
     val typographyInputs = figures
-      .combineWith(boundary, settingsPanel.settings.signal)
+      .combineWith(boundary, selectedSettings)
       .combineWith(controller.elapsedSeconds)
+
+    val shownStatus = controller.status
+      .combineWith(workoutFailure.signal)
+      .map((status, failure) => failure.getOrElse(status))
+
+    /** Freezes this dashboard's reading and settings before starting either asynchronous action. */
+    def stopWorkout(): Unit =
+      if !workoutBusy.now() then
+        val command = for
+          reading <- controller.currentReading.filter(_.active)
+          stop <- DashboardWorkout.stop(
+            reading,
+            settingsPanel.settings.now(),
+            controller.currentExerciseId
+          )
+        yield stop
+        command match
+          case None =>
+            workoutFailure.set(Some("The selected exercise is not available on this dashboard."))
+          case Some(stop) =>
+            workoutBusy.set(true)
+            workoutFailure.set(None)
+            workoutRequests.run(api.controlWorkout(stop.action, stop.progress, stop.snapshot)):
+              case Right(state) if !state.active =>
+                workoutBusy.set(false)
+                // The completed snapshot is already in history. This command contains no calories; it only makes the
+                // counter stop acquiring and reporting into the workout which has just closed.
+                controller.ask(LiveCommand.DashboardStopped)
+              case Right(_) =>
+                workoutBusy.set(false)
+                workoutFailure.set(Some("The workout is still active. Try Stop again."))
+              case Left(error) =>
+                workoutBusy.set(false)
+                workoutFailure.set(Some(error.message))
 
     /** One of the two cards: a headline figure, and the two smaller ones that qualify it.
       *
@@ -123,6 +168,7 @@ private[fe] object DashboardView:
     lazy val dashboardRoot: HtmlElement = div(
       cls := "dashboard-view",
       typographyInputs --> (_ => scheduleTypography()),
+      settingsPanel.settings.signal.map(_.selected).distinct --> controller.chooseExercise,
       onMountCallback { _ =>
         typographyRoot = Some(dashboardRoot.ref)
         controller.connect()
@@ -133,6 +179,7 @@ private[fe] object DashboardView:
         scheduleTypography()
       },
       onUnmountCallback { _ =>
+        workoutRequests.invalidate()
         controller.close()
         dom.window.removeEventListener("resize", resizeListener)
         typographyFrame.foreach(dom.window.cancelAnimationFrame)
@@ -147,12 +194,16 @@ private[fe] object DashboardView:
             cls := "dashboard-title",
             h1(
               cls := "screen-title",
-              child.text <-- settingsPanel.settings.signal.map(_.selectedExercise.fold("Counting")(_.name))
+              child.text <-- selectedSettings.map:
+                case Some(settings) => settings.selectedExercise.fold("Counting")(_.name)
+                case None           => "Exercise unavailable"
             ),
             span(
               cls := "dashboard-basis",
-              child.text <-- settingsPanel.settings.signal.map: settings =>
-                s"factor ${Effort.factorText(settings.factor)} · ${Effort.modeText(settings.countsBy)}"
+              child.text <-- selectedSettings.map:
+                case Some(settings) =>
+                  s"factor ${Effort.factorText(settings.factor)} · ${Effort.modeText(settings.countsBy)}"
+                case None => "settings out of date"
             )
           ),
           div(
@@ -175,18 +226,21 @@ private[fe] object DashboardView:
         ),
         div(
           cls := "dashboard-status",
-          child <-- controller.workoutActive.map: active =>
-            val label = if active then "Stop workout" else "Start workout"
-            button(
-              cls := "workout-button",
-              typ := "button",
-              if active then "■" else "▶",
-              aria.label := label,
-              title := label,
-              onClick --> (_ => controller.ask(if active then LiveCommand.Stop else LiveCommand.Start))
-            )
+          child <-- controller.workoutActive
+            .combineWith(workoutBusy.signal)
+            .map: (active, busy) =>
+              val label = if active then "Stop workout" else "Start workout"
+              button(
+                cls := "workout-button",
+                typ := "button",
+                disabled := busy,
+                if active then "■" else "▶",
+                aria.label := label,
+                title := label,
+                onClick --> (_ => if active then stopWorkout() else controller.ask(LiveCommand.Start))
+              )
           ,
-          p(cls := "lock-state", child.text <-- controller.status)
+          p(cls := "lock-state", child.text <-- shownStatus)
         ),
         Menu.sheet(
           menuOpen,

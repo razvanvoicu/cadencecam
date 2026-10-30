@@ -9,10 +9,11 @@ import zio.{Cause, Clock, ZIO}
 import zio.http.{Header, Method, Request, Response, Routes, Status, handler}
 import zio.json.*
 
-/** Starts and stops the account's workout at the counter's request.
+/** Starts the account's workout at the counter's request and closes it for either end.
   *
-  * The dashboard reaches this route through the counter over their direct link. That keeps one authority for both the
-  * detector and the stored workout: a dashboard cannot accidentally open a session which no camera is counting into.
+  * Start remains counter-owned, so a dashboard cannot open a session which no camera is counting into. A dashboard
+  * closes the workout itself because the completed history snapshot belongs to the dashboard whose Stop was pressed;
+  * the counter is only allowed to close without a snapshot when it is acting from its own control.
   */
 object WorkoutControlRoute extends BackendPlugin:
   type Requires = Firestore & SessionStore
@@ -32,15 +33,9 @@ object WorkoutControlRoute extends BackendPlugin:
   private def control(email: String, request: Request): ZIO[Requires, Nothing, Response] =
     val changed =
       for
-        browser <- ZIO
-          .fromOption(CountingSessionListener.browserSession(request))
-          .orElseFail(IllegalArgumentException("The counter carries no browser session"))
         body <- request.body.asString
         command <- ZIO.fromEither(body.fromJson[WorkoutControl]).mapError(IllegalArgumentException(_))
-        snapshot <- ZIO
-          .fromOption(command.snapshot)
-          .orElseFail(IllegalArgumentException(s"${command.action} requires the workout settings snapshot"))
-          .flatMap(value => ZIO.fromEither(validate(value)))
+        snapshot <- ZIO.foreach(command.snapshot)(value => ZIO.fromEither(validate(value)))
         progress <- command.action match
           case WorkoutAction.Start => ZIO.succeed(None)
           case WorkoutAction.Stop  =>
@@ -54,8 +49,24 @@ object WorkoutControlRoute extends BackendPlugin:
         keeper <- AccountSessions.store(firestore)
         now <- Clock.instant
         session <- command.action match
-          case WorkoutAction.Start => keeper.startWorkout(account, browser, snapshot, now)
-          case WorkoutAction.Stop  => keeper.stopWorkout(account, browser, progress.get, snapshot, now)
+          case WorkoutAction.Start =>
+            for
+              _ <- ZIO
+                .fail(IllegalArgumentException("Start does not accept a workout snapshot"))
+                .when(snapshot.nonEmpty)
+              browser <- ZIO
+                .fromOption(CountingSessionListener.browserSession(request))
+                .orElseFail(IllegalArgumentException("The counter carries no browser session"))
+              started <- keeper.startWorkout(account, browser, now)
+            yield started
+          case WorkoutAction.Stop =>
+            snapshot match
+              case Some(completed) => keeper.stopWorkoutFromDashboard(account, progress.get, completed, now)
+              case None            =>
+                ZIO
+                  .fromOption(CountingSessionListener.browserSession(request))
+                  .orElseFail(IllegalArgumentException("A counter Stop carries no browser session"))
+                  .flatMap(browser => keeper.stopWorkoutFromCounter(account, browser, progress.get, now))
         response <- session match
           case Some(id) =>
             ZIO.logInfo(s"${command.action} workout $id for $email") *>
